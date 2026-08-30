@@ -76,18 +76,7 @@ export class TicketRiskValidator {
       await setCachedRestrictionRules(rulesCacheKey, candidateRules);
     }
 
-    // 2) Bloqueo pesimista FOR NO KEY UPDATE en las reglas encontradas
-    if (candidateRules.length > 0) {
-      const ruleIds = candidateRules.map((r) => r.id);
-      await tx.$queryRaw`
-        SELECT id FROM "RestrictionRule"
-        WHERE id IN (${Prisma.join(
-        ruleIds.map((id) => Prisma.sql`${id}::uuid`)
-      )})
-        FOR NO KEY UPDATE`;
-    }
-
-    // 3) Filtrar reglas aplicables por huso horario y alcance
+    // 2) Filtrar reglas aplicables por huso horario y alcance
     const now = new Date();
     const crNowHour = getCRLocalComponents(now).hour;
     const isImpersonatedByVentanaOrAdmin =

@@ -1,0 +1,223 @@
+config:
+  target: "http://localhost:3000/api/v1"
+  phases:
+    - duration: 30
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 60
+      arrivalRate: 25
+      name: "Sustained peak load"
+  defaults:
+    headers:
+      Content-Type: "application/json"
+
+scenarios:
+  - name: "Vendedor yorleny1 - Lotería HONDURAS"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwMGMxYWEwZi0xMDhmLTQwZTctOWVhYy0xMTYyYjhiNmZmNTQiLCJ1c2VybmFtZSI6InlvcmxlbnkxIiwicm9sZSI6IlZFTkRFRE9SIiwiYmFuY2FJZCI6ImRhMzU0NWFjLWZiMTAtNDY3NC1hMzQ1LTZiNjZjOWY4OTE0NiIsInZlbnRhbmFJZCI6IjA4ZDYyOWQ5LWYyODMtNGUyYi1iZDkwLTA3M2Q1ZGRiODNjNyIsImlhdCI6MTc4NjQ5MjM5OCwiZXhwIjoxNzg2NTc4Nzk4fQ.pndDWwuk9iiWwDFjcpTIrvrGxge2Thn0V5EXo1ugDlc"
+          json:
+            ventanaId: "08d629d9-f283-4e2b-bd90-073d5ddb83c7"
+            loteriaId: "c24dfb7a-fec3-4fdb-8731-92f2b8550104"
+            sorteoId: "332e239a-b993-4513-927b-68a346fc59bb"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 529
+                multiplierId: "2cc6bb1a-7d93-4100-b4a7-741781035223"
+              - type: "NUMERO"
+                number: "22"
+                amount: 582
+                multiplierId: "2cc6bb1a-7d93-4100-b4a7-741781035223"
+
+  - name: "Vendedor Dollar - Lotería NICA"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwMjVkMjcyMS1lYWEyLTRkNGUtYTkyZC04OTcxODkxMWEyMTAiLCJ1c2VybmFtZSI6IkRvbGxhciIsInJvbGUiOiJWRU5ERURPUiIsImJhbmNhSWQiOiJkYTM1NDVhYy1mYjEwLTQ2NzQtYTM0NS02YjY2YzlmODkxNDYiLCJ2ZW50YW5hSWQiOiIwOGQ2MjlkOS1mMjgzLTRlMmItYmQ5MC0wNzNkNWRkYjgzYzciLCJpYXQiOjE3ODY0OTIzOTgsImV4cCI6MTc4NjU3ODc5OH0.jOZzXTip4enqAz2aOSwTmt1eSWNgNJLc2pDXB9b_4YQ"
+          json:
+            ventanaId: "08d629d9-f283-4e2b-bd90-073d5ddb83c7"
+            loteriaId: "23744125-b8ae-4f44-977b-df4228ff9287"
+            sorteoId: "50aa958a-abff-448d-b5a1-28abc6a80f10"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 563
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"
+              - type: "NUMERO"
+                number: "22"
+                amount: 421
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"
+
+  - name: "Vendedor fabiiv - Lotería NICA"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwNjYzY2M2OC1hZGZhLTQzODEtYTA1MS1mOTU4MGY1Nzc3MzYiLCJ1c2VybmFtZSI6ImZhYmlpdiIsInJvbGUiOiJWRU5ERURPUiIsImJhbmNhSWQiOiJjYzFmNzkyNi02YWQxLTQ2MTEtYmFhMi1kMjQ0Njg1Mzk3ZGMiLCJ2ZW50YW5hSWQiOiI4NzI5Y2I4Ni0wODE5LTRiNTYtYjNjYi0yOWFjOTkyOGZjNWMiLCJpYXQiOjE3ODY0OTIzOTgsImV4cCI6MTc4NjU3ODc5OH0.49Ekv48DPkpGyUhUOacvKPbMnwD6gxYFqjhl7g0fq90"
+          json:
+            ventanaId: "8729cb86-0819-4b56-b3cb-29ac9928fc5c"
+            loteriaId: "588d5a2c-7706-4257-ac82-165d6d8d2e7a"
+            sorteoId: "1ff6b6f5-24f1-48f6-924a-a48d4a9911c5"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 503
+                multiplierId: "27cb5f4f-2969-45ea-9217-bc2ce32fa851"
+              - type: "NUMERO"
+                number: "22"
+                amount: 518
+                multiplierId: "27cb5f4f-2969-45ea-9217-bc2ce32fa851"
+
+  - name: "Vendedor machopicho1 - Lotería NICA"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwZDRkZDBmMC03YjEwLTRjM2UtYTZjNS0yZjI2MzRlY2Q5MGYiLCJ1c2VybmFtZSI6Im1hY2hvcGljaG8xIiwicm9sZSI6IlZFTkRFRE9SIiwiYmFuY2FJZCI6ImRhMzU0NWFjLWZiMTAtNDY3NC1hMzQ1LTZiNjZjOWY4OTE0NiIsInZlbnRhbmFJZCI6IjA4ZDYyOWQ5LWYyODMtNGUyYi1iZDkwLTA3M2Q1ZGRiODNjNyIsImlhdCI6MTc4NjQ5MjM5OCwiZXhwIjoxNzg2NTc4Nzk4fQ.YMes_QcZXQVMvfgcHfrJ_GDn2UKEbqvPPd0OpmXMM10"
+          json:
+            ventanaId: "08d629d9-f283-4e2b-bd90-073d5ddb83c7"
+            loteriaId: "23744125-b8ae-4f44-977b-df4228ff9287"
+            sorteoId: "50aa958a-abff-448d-b5a1-28abc6a80f10"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 470
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"
+              - type: "NUMERO"
+                number: "22"
+                amount: 589
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"
+
+  - name: "Vendedor yasir2 - Lotería NICA"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwZDZkY2NmOS1jZGMwLTRmZTUtOGY2Yy0xOGFiOTc4MTM1YzciLCJ1c2VybmFtZSI6Inlhc2lyMiIsInJvbGUiOiJWRU5ERURPUiIsImJhbmNhSWQiOiJjYzFmNzkyNi02YWQxLTQ2MTEtYmFhMi1kMjQ0Njg1Mzk3ZGMiLCJ2ZW50YW5hSWQiOiI4NzI5Y2I4Ni0wODE5LTRiNTYtYjNjYi0yOWFjOTkyOGZjNWMiLCJpYXQiOjE3ODY0OTIzOTgsImV4cCI6MTc4NjU3ODc5OH0.YWIzCmomgQ1zd6rK_LNvWs16QFmLF2AwPwMqcjUqvmM"
+          json:
+            ventanaId: "8729cb86-0819-4b56-b3cb-29ac9928fc5c"
+            loteriaId: "588d5a2c-7706-4257-ac82-165d6d8d2e7a"
+            sorteoId: "1ff6b6f5-24f1-48f6-924a-a48d4a9911c5"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 427
+                multiplierId: "27cb5f4f-2969-45ea-9217-bc2ce32fa851"
+              - type: "NUMERO"
+                number: "22"
+                amount: 586
+                multiplierId: "27cb5f4f-2969-45ea-9217-bc2ce32fa851"
+
+  - name: "Vendedor tutu1 - Lotería NICA"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMmQ4NzE3Ni0xNjg2LTQ2MjQtOTdhZS0wYWQ4M2Y1M2Q3MDgiLCJ1c2VybmFtZSI6InR1dHUxIiwicm9sZSI6IlZFTkRFRE9SIiwiYmFuY2FJZCI6ImRhMzU0NWFjLWZiMTAtNDY3NC1hMzQ1LTZiNjZjOWY4OTE0NiIsInZlbnRhbmFJZCI6IjA4ZDYyOWQ5LWYyODMtNGUyYi1iZDkwLTA3M2Q1ZGRiODNjNyIsImlhdCI6MTc4NjQ5MjM5OCwiZXhwIjoxNzg2NTc4Nzk4fQ.-2qTm800Jmt7oL2_LVPJF5M2uToDM70bwf7b866uowo"
+          json:
+            ventanaId: "08d629d9-f283-4e2b-bd90-073d5ddb83c7"
+            loteriaId: "23744125-b8ae-4f44-977b-df4228ff9287"
+            sorteoId: "50aa958a-abff-448d-b5a1-28abc6a80f10"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 519
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"
+              - type: "NUMERO"
+                number: "22"
+                amount: 452
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"
+
+  - name: "Vendedor mariad1 - Lotería HONDURAS"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyMDE3YTZmYS04NmY3LTQ2Y2UtODc1NS0yZjMzOWEyNTc0OTkiLCJ1c2VybmFtZSI6Im1hcmlhZDEiLCJyb2xlIjoiVkVOREVET1IiLCJiYW5jYUlkIjoiZGEzNTQ1YWMtZmIxMC00Njc0LWEzNDUtNmI2NmM5Zjg5MTQ2IiwidmVudGFuYUlkIjoiMDhkNjI5ZDktZjI4My00ZTJiLWJkOTAtMDczZDVkZGI4M2M3IiwiaWF0IjoxNzg2NDkyMzk4LCJleHAiOjE3ODY1Nzg3OTh9.HWp_Sl6FI86bGU0mxLyseL4z2nLf0sAK6Z0c6U_7-qw"
+          json:
+            ventanaId: "08d629d9-f283-4e2b-bd90-073d5ddb83c7"
+            loteriaId: "c24dfb7a-fec3-4fdb-8731-92f2b8550104"
+            sorteoId: "332e239a-b993-4513-927b-68a346fc59bb"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 535
+                multiplierId: "2cc6bb1a-7d93-4100-b4a7-741781035223"
+              - type: "NUMERO"
+                number: "22"
+                amount: 182
+                multiplierId: "2cc6bb1a-7d93-4100-b4a7-741781035223"
+
+  - name: "Vendedor michaelinvu - Lotería NICA"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyNWRkZWIwNy0wOTdjLTQxOGEtYjM3MC0wZjE1YmQzYTIwMDUiLCJ1c2VybmFtZSI6Im1pY2hhZWxpbnZ1Iiwicm9sZSI6IlZFTkRFRE9SIiwiYmFuY2FJZCI6ImRhMzU0NWFjLWZiMTAtNDY3NC1hMzQ1LTZiNjZjOWY4OTE0NiIsInZlbnRhbmFJZCI6IjA4ZDYyOWQ5LWYyODMtNGUyYi1iZDkwLTA3M2Q1ZGRiODNjNyIsImlhdCI6MTc4NjQ5MjM5OCwiZXhwIjoxNzg2NTc4Nzk4fQ.tkUF3SCHIvnYhqCsKuoMwF6IJRAbTACY8ZA9u46a2yA"
+          json:
+            ventanaId: "08d629d9-f283-4e2b-bd90-073d5ddb83c7"
+            loteriaId: "23744125-b8ae-4f44-977b-df4228ff9287"
+            sorteoId: "50aa958a-abff-448d-b5a1-28abc6a80f10"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 146
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"
+              - type: "NUMERO"
+                number: "22"
+                amount: 598
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"
+
+  - name: "Vendedor cruzm1 - Lotería NICA"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyOGMyYjI3ZC00MGIyLTQ1OWItYTdiNC0xZjk1ZWI1YWM5ZjUiLCJ1c2VybmFtZSI6ImNydXptMSIsInJvbGUiOiJWRU5ERURPUiIsImJhbmNhSWQiOiJjYzFmNzkyNi02YWQxLTQ2MTEtYmFhMi1kMjQ0Njg1Mzk3ZGMiLCJ2ZW50YW5hSWQiOiI4NzI5Y2I4Ni0wODE5LTRiNTYtYjNjYi0yOWFjOTkyOGZjNWMiLCJpYXQiOjE3ODY0OTIzOTgsImV4cCI6MTc4NjU3ODc5OH0.tgJ9GrAPTo76vDfA_FbIW3FTs2i_gg_geqHep1SlnDU"
+          json:
+            ventanaId: "8729cb86-0819-4b56-b3cb-29ac9928fc5c"
+            loteriaId: "588d5a2c-7706-4257-ac82-165d6d8d2e7a"
+            sorteoId: "1ff6b6f5-24f1-48f6-924a-a48d4a9911c5"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 481
+                multiplierId: "27cb5f4f-2969-45ea-9217-bc2ce32fa851"
+              - type: "NUMERO"
+                number: "22"
+                amount: 133
+                multiplierId: "27cb5f4f-2969-45ea-9217-bc2ce32fa851"
+
+  - name: "Vendedor luis1 - Lotería NICA"
+    weight: 1
+    flow:
+      - post:
+          url: "/tickets"
+          headers:
+            Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIzMGM3ODgyMS1hMWM4LTRjNjItYTQyMi0wMGZiZWY0MDQ1MTUiLCJ1c2VybmFtZSI6Imx1aXMxIiwicm9sZSI6IlZFTkRFRE9SIiwiYmFuY2FJZCI6ImRhMzU0NWFjLWZiMTAtNDY3NC1hMzQ1LTZiNjZjOWY4OTE0NiIsInZlbnRhbmFJZCI6IjA4ZDYyOWQ5LWYyODMtNGUyYi1iZDkwLTA3M2Q1ZGRiODNjNyIsImlhdCI6MTc4NjQ5MjM5OCwiZXhwIjoxNzg2NTc4Nzk4fQ.yKbwmvRrimxNifjgKD_U1cbw8sNDjtul2vugVQRaieo"
+          json:
+            ventanaId: "08d629d9-f283-4e2b-bd90-073d5ddb83c7"
+            loteriaId: "23744125-b8ae-4f44-977b-df4228ff9287"
+            sorteoId: "50aa958a-abff-448d-b5a1-28abc6a80f10"
+            jugadas:
+              - type: "NUMERO"
+                number: "15"
+                amount: 377
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"
+              - type: "NUMERO"
+                number: "22"
+                amount: 536
+                multiplierId: "dc52e195-d98e-4ca2-914b-859335dffdea"

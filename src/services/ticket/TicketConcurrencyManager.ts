@@ -29,22 +29,39 @@ export class TicketConcurrencyManager {
         targetBancaId = vent?.bancaId;
       }
 
-      if (targetBancaId) {
-        lockKey = `lock:ticket-create:sorteo:${sorteoId}:banca:${targetBancaId}`;
+      if (ventanaId) {
+        lockKey = `lock:ticket-create:sorteo:${sorteoId}:ventana:${ventanaId}`;
         let attempts = 0;
         const maxAttempts = 50;
+        const startTime = Date.now();
         while (attempts < maxAttempts) {
           lockAcquired = await acquireLock(lockKey, lockValue, 10);
           if (lockAcquired) break;
           attempts++;
-          await new Promise((resolve) => setTimeout(resolve, 20 + Math.random() * 60));
+          await new Promise((resolve) => setTimeout(resolve, 5 + Math.random() * 20));
+        }
+
+        const waitDurationMs = Date.now() - startTime;
+        if (attempts > 0 && lockAcquired) {
+          logger.info({
+            layer: 'repository',
+            action: 'TICKET_CREATE_LOCK_WAIT',
+            payload: {
+              lockKey,
+              attempts,
+              waitDurationMs,
+              sorteoId,
+              ventanaId,
+              bancaId: targetBancaId,
+            },
+          });
         }
 
         if (!lockAcquired) {
           logger.warn({
             layer: 'repository',
             action: 'TICKET_CREATE_LOCK_TIMEOUT',
-            payload: { lockKey, attempts },
+            payload: { lockKey, attempts, waitDurationMs },
           });
           throw new AppError(
             'El sistema está procesando demasiadas solicitudes concurrentes para esta banca. Por favor, reintente en unos segundos.',
