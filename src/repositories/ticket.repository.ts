@@ -404,7 +404,7 @@ export const TicketRepository = {
     options?: CreateTicketOptions
   ): Promise<{ ticket: any; warnings: TicketWarning[] }> {
     const dynamicTimeout = TicketTimeoutCalculator.calculate(data.jugadas.length);
-    const lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, options);
+    const lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
 
     try {
       const preFetchedMultipliers = await TicketPrefetchService.fetchMultipliersIfNeeded(data.jugadas, options);

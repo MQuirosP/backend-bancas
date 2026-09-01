@@ -4,15 +4,17 @@ import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
 import { isRedisAvailable } from "../../core/redisClient";
 import { acquireLock, releaseLock } from "../../repositories/helpers/ticket-restriction.helper";
+import { buildRulesCacheKey, getCachedRestrictionRules } from "../../repositories/ticket.repository";
 import { CreateTicketOptions, TicketLockHandle } from "./ticket.types";
 
 export class TicketConcurrencyManager {
   /**
-   * Adquiere un lock distribuido en Redis por banca y sorteo.
+   * Adquiere un lock distribuido en Redis por banca, ventana o vendedor según el alcance real de las reglas.
    */
   static async acquire(
     sorteoId: string,
     ventanaId: string,
+    userId: string,
     options?: CreateTicketOptions
   ): Promise<TicketLockHandle | null> {
     const lockValue = uuidv4();
@@ -29,8 +31,48 @@ export class TicketConcurrencyManager {
         targetBancaId = vent?.bancaId;
       }
 
-      if (ventanaId) {
-        lockKey = `lock:ticket-create:sorteo:${sorteoId}:ventana:${ventanaId}`;
+      // Evaluar dinámicamente si existe alguna regla activa de Monto Compartido a nivel de Ventana o Banca (appliesToVendedor = false)
+      let hasSharedVentanaLimit = false;
+      try {
+        const rulesCacheKey = buildRulesCacheKey({ userId, ventanaId, bancaId: targetBancaId });
+        const candidateRules = await getCachedRestrictionRules<any>(rulesCacheKey);
+
+        if (Array.isArray(candidateRules) && candidateRules.length > 0) {
+          hasSharedVentanaLimit = candidateRules.some((rule: any) => {
+            if (!rule || rule.isActive === false) return false;
+            const isAmountRule =
+              rule.maxTotal !== null ||
+              rule.maxAmount !== null ||
+              rule.baseAmount !== null ||
+              rule.salesPercentage !== null;
+            const isSharedVentana =
+              rule.ventanaId !== null &&
+              rule.userId === null &&
+              rule.appliesToVendedor !== true;
+            const isSharedBanca =
+              rule.bancaId !== null &&
+              rule.ventanaId === null &&
+              rule.userId === null &&
+              rule.appliesToVendedor !== true;
+
+            return isAmountRule && (isSharedVentana || isSharedBanca);
+          });
+        }
+      } catch (err: any) {
+        // Fallback seguro: ante cualquier error al consultar reglas, activar Lock por Ventana por seguridad
+        hasSharedVentanaLimit = true;
+        logger.warn({
+          layer: 'repository',
+          action: 'LOCK_SCOPE_FALLBACK_VENTANA',
+          payload: { error: err.message, sorteoId, ventanaId, userId },
+        });
+      }
+
+      if (ventanaId || userId) {
+        lockKey = hasSharedVentanaLimit
+          ? `lock:ticket-create:sorteo:${sorteoId}:ventana:${ventanaId}`
+          : `lock:ticket-create:sorteo:${sorteoId}:vendedor:${userId}`;
+
         let attempts = 0;
         const maxAttempts = 50;
         const startTime = Date.now();
@@ -52,6 +94,8 @@ export class TicketConcurrencyManager {
               waitDurationMs,
               sorteoId,
               ventanaId,
+              userId,
+              hasSharedVentanaLimit,
               bancaId: targetBancaId,
             },
           });
