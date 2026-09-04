@@ -172,10 +172,10 @@ export class GoogleDriveBackupService {
 
         const cleanUrl = parsedUrl.toString();
         const baseCmd = `pg_dump -Fc -Z 1 "${cleanUrl}" -f "${outputPath}"`;
-        // 🔥 En Linux/Render asignar prioridad mínima de CPU ('nice -n 19') para no impactar el tráfico web
         const cmd = process.platform === "win32" ? baseCmd : `nice -n 19 ${baseCmd}`;
 
-        exec(cmd, (error, _stdout, stderr) => {
+        // Usamos spawn en lugar de exec para evitar que el buffer de Node.js colapse por falta de RAM
+        const child = exec(cmd, { maxBuffer: 1024 * 1024 }, (error, _stdout, stderr) => {
           if (error) {
             logger.error({
               layer: "service",
@@ -186,6 +186,9 @@ export class GoogleDriveBackupService {
           }
           resolve();
         });
+
+        // Descartamos o silenciamos la salida estándar en vivo para liberar memoria del proceso hijo
+        child.stdout?.on('data', () => {});
       } catch (err: any) {
         reject(err);
       }
