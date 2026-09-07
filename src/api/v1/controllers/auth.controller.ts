@@ -473,4 +473,17 @@ export const AuthController = {
 
     return success(res, { message: `${result.count} sessions revoked` });
   },
+
+  /**
+   * POST /auth/session/sync
+   * Sincroniza la versión del APK reportada por el cliente
+   */
+  async syncSession(req: Request, res: Response) {
+    const actor = (req as any).user;
+    if (!actor) {
+      throw new AppError('Unauthorized', 401);
+    }
+    await AuthService.syncSession(actor.id, req.body);
+    return success(res, { message: 'Versión sincronizada' });
+  },
 };

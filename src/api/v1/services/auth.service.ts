@@ -720,6 +720,46 @@ export const AuthService = {
       payload: { sessionId, targetUserId: token.userId, isAdmin },
     });
   },
+
+  async syncSession(userId: string, data: { appVersion: string; platform?: string }): Promise<void> {
+    const user = await withConnectionRetry(() =>
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { appVersion: true, platform: true },
+      })
+    );
+    if (!user) return;
+
+    const changed =
+      user.appVersion !== data.appVersion ||
+      (data.platform && user.platform !== data.platform);
+
+    if (!changed) return;
+
+    await withConnectionRetry(() =>
+      prisma.user.update({
+        where: { id: userId },
+        data: {
+          appVersion: data.appVersion,
+          ...(data.platform ? { platform: data.platform } : {}),
+        },
+      })
+    );
+
+    // Invalidar caché de sesión para que el middleware lea el nuevo appVersion
+    await CacheService.del(`auth:session:${userId}`).catch(() => {});
+
+    logger.info({
+      layer: 'service',
+      action: 'APP_VERSION_SYNCED',
+      payload: {
+        userId,
+        prevVersion: user.appVersion,
+        newVersion: data.appVersion,
+        platform: data.platform,
+      },
+    });
+  },
 };
 
 // helper to convert ms-like strings (e.g. "7d") to ms

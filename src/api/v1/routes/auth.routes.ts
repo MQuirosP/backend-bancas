@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { AuthController } from '../controllers/auth.controller';
 import { validateBody } from '../../../middlewares/validate.middleware';
 import { authRateLimiter } from '../../../middlewares/rateLimit.middleware';
-import { registerSchema, loginSchema, setActiveBancaSchema } from '../validators/auth.validator';
+import { registerSchema, loginSchema, setActiveBancaSchema, syncSessionSchema } from '../validators/auth.validator';
 import { updateUserSchema } from '../validators/user.validator';
 import { protect, restrictTo } from '../../../middlewares/auth.middleware';
 import { Role } from '../../../generated/prisma/client';
@@ -16,6 +16,9 @@ router.post('/logout', AuthController.logout);
 router.get('/me', protect, AuthController.me);
 router.patch('/me', protect, validateBody(updateUserSchema), AuthController.updateMe);
 router.post('/set-active-banca', protect, restrictTo(Role.ADMIN, Role.BANCA), validateBody(setActiveBancaSchema), AuthController.setActiveBanca);
+
+// Sincronización activa de versión APK
+router.post('/session/sync', protect, validateBody(syncSessionSchema), AuthController.syncSession);
 
 // Endpoints de sesiones (multi-dispositivo)
 router.get('/sessions/user/:userId', protect, AuthController.getUserSessions);

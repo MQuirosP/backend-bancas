@@ -18,6 +18,7 @@ interface UserSession {
   ventanaId: string | null;
   bancaId: string | null;
   activeSessionIds: string[]; // List of active/valid session IDs
+  appVersion?: string | null;
 }
 
 /**
@@ -42,6 +43,7 @@ async function getCachedUser(userId: string): Promise<UserSession | null> {
           isActive: true,
           ventanaId: true,
           bancaId: true,
+          appVersion: true,
           ventana: {
             select: { bancaId: true }
           }
@@ -79,7 +81,8 @@ async function getCachedUser(userId: string): Promise<UserSession | null> {
     isActive: user.isActive,
     ventanaId: user.ventanaId,
     bancaId: user.bancaId ?? user.ventana?.bancaId ?? null,
-    activeSessionIds: activeTokens.map((t) => t.token)
+    activeSessionIds: activeTokens.map((t) => t.token),
+    appVersion: user.appVersion ?? null
   };
 
   // 3. Persistir en caché (300s en Redis, 60s en Memoria mediante el flag true)
@@ -143,6 +146,17 @@ export const protect = async (
     ventanaId: user.ventanaId, 
     bancaId: user.bancaId 
   };
+
+  // Respaldo pasivo: actualizar appVersion en background si viene el header y difiere
+  const headerVersion = req.headers['x-app-version'] as string | undefined;
+  if (headerVersion && headerVersion !== user.appVersion) {
+    setImmediate(() => {
+      prisma.user.update({
+        where: { id: user.id },
+        data: { appVersion: headerVersion },
+      }).then(() => CacheService.del(`auth:session:${user.id}`)).catch(() => {});
+    });
+  }
   
   next();
 };

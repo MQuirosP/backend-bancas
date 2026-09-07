@@ -53,3 +53,9 @@ export const loginSchema = z.object({
 export const setActiveBancaSchema = z.object({
   bancaId: z.uuid('bancaId debe ser un UUID válido'),
 });
+
+// Schema para sincronización activa de versión de APK
+export const syncSessionSchema = z.object({
+  appVersion: z.string().min(1, 'appVersion is required').max(50, 'appVersion must be at most 50 characters long'),
+  platform: z.string().max(50).optional(),
+});

@@ -1186,6 +1186,49 @@ export const TicketRepository = {
 
       // 6. Pre-calcular límites dinámicos
       const dynamicLimits = new Map<string, number>();
+
+      const cache: ScopeCache = {
+        salesTotals: new Map<string, number>(),
+        numberTotals: new Map<string, Map<string, number>>(),
+      };
+
+      // Pre-poblar cache.salesTotals desde Redis para que calculateDynamicLimit
+      // use la misma fuente en memoria que los acumulados por número, eliminando race condition.
+      if (isRedisAvailable()) {
+        const redis = getRedisClient();
+        if (redis) {
+          try {
+            const prefetchedLabels = new Set<string>();
+            for (const rule of applicableRules) {
+              if (!(rule.salesPercentage != null && rule.salesPercentage > 0)) continue;
+              const scopeId =
+                rule.appliesToVendedor || rule.userId
+                  ? vendedorId
+                  : rule.ventanaId ?? rule.bancaId ?? user.ventanaId;
+              const cacheLabel =
+                rule.appliesToVendedor || rule.userId
+                  ? `USER:${vendedorId}`
+                  : rule.ventanaId
+                    ? `VENTANA:${rule.ventanaId}`
+                    : rule.bancaId
+                      ? `BANCA:${rule.bancaId}`
+                      : `VENTANA:${user.ventanaId}`;
+              if (!scopeId || prefetchedLabels.has(cacheLabel)) continue;
+              prefetchedLabels.add(cacheLabel);
+              const hashKey = `sorteo:${sorteoId}:scope:${scopeId}:acumulados`;
+              const allValues = await redis.hgetall(hashKey);
+              if (allValues && Object.keys(allValues).length > 0) {
+                const totalFromRedis = Object.values(allValues)
+                  .reduce((acc, v) => acc + parseFloat(v ?? '0'), 0);
+                cache.salesTotals.set(cacheLabel, totalFromRedis);
+              }
+            }
+          } catch (_redisErr: any) {
+            // Fallback silencioso: calculateDynamicLimit consultará Postgres
+          }
+        }
+      }
+
       for (const rule of applicableRules) {
         if (rule.salesPercentage != null || rule.baseAmount != null) {
           const limit = await calculateDynamicLimit(prisma as any, {
@@ -1201,6 +1244,7 @@ export const TicketRepository = {
             bancaId: effectiveBancaId,
             sorteoId,
             at: now,
+            cache,
           });
           dynamicLimits.set(rule.id, limit);
         }
