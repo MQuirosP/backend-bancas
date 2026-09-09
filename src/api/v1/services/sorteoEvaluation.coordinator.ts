@@ -7,6 +7,7 @@ import logger from "../../../core/logger";
 import { CacheService } from "../../../core/cache.service";
 import ActivityService from "../../../core/activity.service";
 import { clearSorteoCache } from "../../../utils/sorteoCache";
+import { SocketService } from "../../../core/socket.service";
 
 const EVALUABLE_STATES = new Set<SorteoStatus>([SorteoStatus.OPEN]);
 
@@ -91,6 +92,26 @@ export class SorteoEvaluationCoordinator {
     evaluatedSorteo: any,
     userId: string
   ) {
+    // 0. Notificación en Tiempo Real a Vendedores Conectados (WebSocket)
+    try {
+      SocketService.notifySorteoEvaluated({
+        sorteoId: id,
+        sorteoNombre: existingSorteo?.name || existingSorteo?.nombre || 'Sorteo',
+        loteriaNombre: existingSorteo?.loteria?.name || existingSorteo?.loteriaName || undefined,
+        winningNumber,
+        extraOutcomeCode: (evaluatedSorteo as any)?.extraOutcomeCode || null,
+        scheduledAt: existingSorteo?.scheduledAt ? new Date(existingSorteo.scheduledAt).toISOString() : new Date().toISOString(),
+        bancaId: existingSorteo?.bancaId || null,
+        evaluatedAt: new Date().toISOString(),
+      });
+    } catch (wsErr: any) {
+      logger.warn({
+        layer: "coordinator",
+        action: "SOCKET_NOTIFY_ERROR",
+        payload: { sorteoId: id, error: wsErr?.message || String(wsErr) },
+      });
+    }
+
     // 1. Sincronización de Cuentas (Fire-and-Forget)
     import("./accounts/accounts.sync.service")
       .then(({ AccountStatementSyncService }) => {

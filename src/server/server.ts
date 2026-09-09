@@ -12,8 +12,12 @@ import { initCacheSubscriber } from '../core/cache.service'
 import { restrictionCacheV2 } from '../utils/restrictionCacheV2'
 import { activeOperationsService } from '../core/activeOperations.service'
 import { warmupConnection } from '../core/connectionWarmup'
+import { SocketService } from '../core/socket.service'
 
 const server = http.createServer(app)
+
+// Inicializar WebSocket Server
+SocketService.init(server)
 
 // Configuración de sockets TCP optimizada para Reverse Proxy (Render / Cloudflare)
 server.keepAliveTimeout = 65000 // 65s (mayor a los 60s del proxy de Render para evitar race conditions)

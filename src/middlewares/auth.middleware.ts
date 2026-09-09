@@ -11,7 +11,7 @@ import { CacheService } from "../core/cache.service";
 /**
  * Interfaz para la sesión cacheada del usuario
  */
-interface UserSession {
+export interface UserSession {
   id: string;
   role: Role;
   isActive: boolean;
@@ -25,7 +25,7 @@ interface UserSession {
  * OPTIMIZACIÓN: Obtiene el usuario con jerarquía de caché L1 -> L2 -> DB
  * Mitiga el Error P2024 al reducir drásticamente los hits a la base de datos.
  */
-async function getCachedUser(userId: string): Promise<UserSession | null> {
+export async function getCachedUser(userId: string): Promise<UserSession | null> {
   const cacheKey = `auth:session:${userId}`;
   
   // 1. Intentar obtener de L1 (Memoria) o L2 (Redis)
