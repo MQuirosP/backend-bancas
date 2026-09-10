@@ -6,6 +6,21 @@ import logger from './logger';
 import { Role } from '../generated/prisma/client';
 import { getCachedUser, UserSession } from '../middlewares/auth.middleware';
 
+export const SocketEvents = {
+  SORTEO_EVALUADO: 'sorteo:evaluado',
+  BANCA_SWITCH: 'banca:switch',
+} as const;
+
+export const SocketRooms = {
+  vendedores: 'vendedores',
+  ventanas: 'ventanas',
+  admins: 'admins',
+  banca: (bancaId: string) => `banca:${bancaId}`,
+  bancaVendedores: (bancaId: string) => `banca:${bancaId}:vendedores`,
+  bancaVentanas: (bancaId: string) => `banca:${bancaId}:ventanas`,
+  user: (userId: string) => `user:${userId}`,
+};
+
 export interface SorteoEvaluatedPayload {
   sorteoId: string;
   sorteoNombre: string;
@@ -78,18 +93,43 @@ export class SocketService {
       const user: UserSession | undefined = socket.data.user;
 
       if (user?.role === Role.VENDEDOR) {
-        socket.join('vendedores');
+        socket.join(SocketRooms.vendedores);
         if (user.bancaId) {
-          socket.join(`banca:${user.bancaId}:vendedores`);
+          socket.join(SocketRooms.bancaVendedores(user.bancaId));
         }
       }
 
+      if (user?.role === Role.VENTANA) {
+        socket.join(SocketRooms.ventanas);
+        if (user.bancaId) {
+          socket.join(SocketRooms.bancaVentanas(user.bancaId));
+        }
+      }
+
+      if (user?.role === Role.ADMIN || user?.role === Role.BANCA) {
+        socket.join(SocketRooms.admins);
+      }
+
+      // Manejador para que administradores o bancas cambien dinámicamente de banca activa
+      socket.on(SocketEvents.BANCA_SWITCH, (data: { bancaId?: string }) => {
+        if (user?.role === Role.ADMIN || user?.role === Role.BANCA) {
+          for (const room of socket.rooms) {
+            if (room.startsWith('banca:')) {
+              socket.leave(room);
+            }
+          }
+          if (data?.bancaId) {
+            socket.join(SocketRooms.banca(data.bancaId));
+          }
+        }
+      });
+
       if (user?.bancaId) {
-        socket.join(`banca:${user.bancaId}`);
+        socket.join(SocketRooms.banca(user.bancaId));
       }
 
       if (user?.id) {
-        socket.join(`user:${user.id}`);
+        socket.join(SocketRooms.user(user.id));
       }
 
       logger.info({
@@ -130,7 +170,7 @@ export class SocketService {
   }
 
   /**
-   * Notifica la evaluación de un sorteo exclusivamente a los vendedores de la banca
+   * Notifica la evaluación de un sorteo exclusivamente a la sala de la banca
    */
   static notifySorteoEvaluated(payload: SorteoEvaluatedPayload): void {
     if (!this.io) {
@@ -142,8 +182,8 @@ export class SocketService {
       return;
     }
 
-    const room = payload.bancaId ? `banca:${payload.bancaId}:vendedores` : 'vendedores';
-    this.io.to(room).emit('sorteo:evaluado', payload);
+    const room = payload.bancaId ? SocketRooms.banca(payload.bancaId) : SocketRooms.vendedores;
+    this.io.to(room).emit(SocketEvents.SORTEO_EVALUADO, payload);
 
     logger.info({
       layer: 'socket',
