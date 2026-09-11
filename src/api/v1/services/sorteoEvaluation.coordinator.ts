@@ -83,16 +83,91 @@ export class SorteoEvaluationCoordinator {
 
   /**
    * Ejecuta los efectos secundarios post-evaluación en background (asíncronos)
+   * de forma secuencial para garantizar consistencia contable antes de notificar a los clientes.
    */
-  static triggerPostEvaluation(
+  static async triggerPostEvaluation(
     id: string,
     winningNumber: string,
     extraMultiplierId: string | null | undefined,
     existingSorteo: any,
     evaluatedSorteo: any,
     userId: string
-  ) {
-    // 0. Notificación en Tiempo Real a Vendedores Conectados (WebSocket)
+  ): Promise<void> {
+    // 1. Sincronización de Cuentas (Espera a que los balances y cierres se calculen)
+    try {
+      logger.info({
+        layer: "coordinator",
+        action: "SORTEO_EVALUATE_TRIGGERING_SYNC",
+        payload: { sorteoId: id, scheduledAt: existingSorteo.scheduledAt },
+      });
+
+      const { AccountStatementSyncService } = await import("./accounts/accounts.sync.service");
+      await AccountStatementSyncService.syncSorteoStatements(id, existingSorteo.scheduledAt);
+
+      logger.info({
+        layer: "coordinator",
+        action: "SORTEO_EVALUATE_SYNC_COMPLETED",
+        payload: { sorteoId: id },
+      });
+    } catch (syncErr: any) {
+      logger.error({
+        layer: "coordinator",
+        action: "ACCOUNT_STATEMENT_SYNC_BACKGROUND_ERROR",
+        payload: { sorteoId: id, error: syncErr?.message || String(syncErr) },
+      });
+    }
+
+    // 2. Agregar ventas por número para reporte histórico
+    try {
+      const { DailyNumberSalesService } = await import("./dailyNumberSales.service");
+      await DailyNumberSalesService.aggregateSorteoSales(id);
+    } catch (salesErr: any) {
+      logger.error({
+        layer: "coordinator",
+        action: "DAILY_NUMBER_SALES_AGGREGATION_BACKGROUND_ERROR",
+        payload: { sorteoId: id, error: salesErr?.message || String(salesErr) },
+      });
+    }
+
+    // 3. Limpieza de Caché (Memoria y Redis)
+    try {
+      clearSorteoCache();
+      await CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
+      await CacheService.invalidateTag('dashboard').catch(() => {});
+      await CacheService.invalidateTag('cierre').catch(() => {});
+      await CacheService.invalidateTag('report:summary').catch(() => {});
+    } catch (cacheErr: any) {
+      logger.error({
+        layer: "coordinator",
+        action: "CACHE_INVALIDATION_ERROR",
+        payload: { sorteoId: id, error: cacheErr?.message || String(cacheErr) },
+      });
+    }
+
+    // 4. Registro de Actividad
+    try {
+      await ActivityService.log({
+        userId,
+        bancaId: existingSorteo.bancaId,
+        action: ActivityType.SORTEO_EVALUATE,
+        targetType: "SORTEO",
+        targetId: id,
+        details: {
+          winningNumber,
+          extraMultiplierId,
+          hasWinner: (evaluatedSorteo as any)?.hasWinner,
+        } as Prisma.InputJsonObject,
+      });
+    } catch (actErr: any) {
+      logger.error({
+        layer: "coordinator",
+        action: "ACTIVITY_LOG_ERROR",
+        payload: { sorteoId: id, error: actErr?.message || String(actErr) },
+      });
+    }
+
+    // 5. Notificación en Tiempo Real a Clientes Conectados (WebSocket)
+    // Se emite ÚNICAMENTE cuando las cuentas, estadísticas y cachés están 100% actualizados.
     try {
       SocketService.notifySorteoEvaluated({
         sorteoId: id,
@@ -111,77 +186,5 @@ export class SorteoEvaluationCoordinator {
         payload: { sorteoId: id, error: wsErr?.message || String(wsErr) },
       });
     }
-
-    // 1. Sincronización de Cuentas (Fire-and-Forget)
-    import("./accounts/accounts.sync.service")
-      .then(({ AccountStatementSyncService }) => {
-        logger.info({
-          layer: "coordinator",
-          action: "SORTEO_EVALUATE_TRIGGERING_SYNC",
-          payload: { sorteoId: id, scheduledAt: existingSorteo.scheduledAt },
-        });
-
-        return AccountStatementSyncService.syncSorteoStatements(id, existingSorteo.scheduledAt);
-      })
-      .then(() => {
-        logger.info({
-          layer: "coordinator",
-          action: "SORTEO_EVALUATE_SYNC_QUEUED_OR_COMPLETED",
-          payload: { sorteoId: id },
-        });
-
-        // 1.1 Agregar ventas por número para el reporte histórico
-        return import("./dailyNumberSales.service")
-          .then(({ DailyNumberSalesService }) => {
-            return DailyNumberSalesService.aggregateSorteoSales(id);
-          })
-          .catch((err) => {
-            logger.error({
-              layer: "coordinator",
-              action: "DAILY_NUMBER_SALES_AGGREGATION_BACKGROUND_ERROR",
-              payload: { sorteoId: id, error: err.message },
-            });
-          });
-      })
-      .catch((err) => {
-        logger.error({
-          layer: "coordinator",
-          action: "ACCOUNT_STATEMENT_SYNC_BACKGROUND_ERROR",
-          payload: { sorteoId: id, error: err.message },
-        });
-      });
-
-    // 2. Limpieza de Caché
-    try {
-      clearSorteoCache();
-      CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
-      CacheService.invalidateTag('dashboard').catch(() => {});
-    } catch (err: any) {
-      logger.error({
-        layer: "coordinator",
-        action: "CACHE_INVALIDATION_ERROR",
-        payload: { sorteoId: id, error: err.message },
-      });
-    }
-
-    // 3. Registro de Actividad
-    ActivityService.log({
-      userId,
-      bancaId: existingSorteo.bancaId,
-      action: ActivityType.SORTEO_EVALUATE,
-      targetType: "SORTEO",
-      targetId: id,
-      details: {
-        winningNumber,
-        extraMultiplierId,
-        hasWinner: (evaluatedSorteo as any)?.hasWinner,
-      } as Prisma.InputJsonObject,
-    }).catch((err) => {
-      logger.error({
-        layer: "coordinator",
-        action: "ACTIVITY_LOG_ERROR",
-        payload: { sorteoId: id, error: err.message },
-      });
-    });
   }
 }

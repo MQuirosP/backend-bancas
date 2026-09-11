@@ -8,6 +8,7 @@ import { getCachedUser, UserSession } from '../middlewares/auth.middleware';
 
 export const SocketEvents = {
   SORTEO_EVALUADO: 'sorteo:evaluado',
+  SORTEO_REVERTIDO: 'sorteo:revertido',
   BANCA_SWITCH: 'banca:switch',
 } as const;
 
@@ -30,6 +31,14 @@ export interface SorteoEvaluatedPayload {
   scheduledAt: string;
   bancaId: string | null;
   evaluatedAt: string;
+}
+
+export interface SorteoRevertedPayload {
+  sorteoId: string;
+  sorteoNombre: string;
+  scheduledAt: string;
+  bancaId: string | null;
+  revertedAt: string;
 }
 
 export class SocketService {
@@ -193,6 +202,32 @@ export class SocketService {
         sorteoId: payload.sorteoId,
         winningNumber: payload.winningNumber,
         extraOutcomeCode: payload.extraOutcomeCode,
+      },
+    });
+  }
+
+  /**
+   * Notifica la reversión de un sorteo exclusivamente a la sala de la banca
+   */
+  static notifySorteoReverted(payload: SorteoRevertedPayload): void {
+    if (!this.io) {
+      logger.warn({
+        layer: 'socket',
+        action: 'EMIT_SKIPPED_NOT_INITIALIZED',
+        payload: { sorteoId: payload.sorteoId },
+      });
+      return;
+    }
+
+    const room = payload.bancaId ? SocketRooms.banca(payload.bancaId) : SocketRooms.vendedores;
+    this.io.to(room).emit(SocketEvents.SORTEO_REVERTIDO, payload);
+
+    logger.info({
+      layer: 'socket',
+      action: 'SORTEO_REVERTED_BROADCAST',
+      payload: {
+        room,
+        sorteoId: payload.sorteoId,
       },
     });
   }

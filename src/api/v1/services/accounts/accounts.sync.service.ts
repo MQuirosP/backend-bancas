@@ -569,22 +569,16 @@ export class AccountStatementSyncService {
         affectedTickets
       );
 
-      // 🔄 NUEVO: Actualizar tabla de rollups en segundo plano (fire-and-forget) con agregación física ultra veloz
-      CierreRollupService.aggregateRange(dateStr, dateStr)
-        .then(() => {
-          logger.info({
-            layer: "service",
-            action: "ROLLUP_AGGREGATE_SUCCESS",
-            payload: { sorteoId, dateStr }
-          });
-        })
-        .catch(err => {
-          logger.error({
-            layer: "service",
-            action: "ROLLUP_AGGREGATE_ERROR",
-            payload: { sorteoId, dateStr, error: (err as Error).message }
-          });
+      // 🔄 Actualizar tabla de rollups (ResumenCierreDiario) esperando que termine para que reportes/cierres esté listo
+      try {
+        await CierreRollupService.aggregateRange(dateStr, dateStr);
+      } catch (rollupErr: any) {
+        logger.error({
+          layer: "service",
+          action: "ROLLUP_AGGREGATE_ERROR",
+          payload: { sorteoId, dateStr, error: rollupErr?.message || String(rollupErr) }
         });
+      }
 
     } catch (error) {
       logger.error({ layer: "service", action: "SYNC_SORTEO_STATEMENTS_ERROR", payload: { sorteoId, sorteoDateStrCR, error: (error as Error).message } });

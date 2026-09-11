@@ -689,23 +689,37 @@ const SorteoService = {
 
     const reverted = await SorteoRepository.revertEvaluation(id);
 
-    // Sincronizar AccountStatements después de revertir - SEGUNDO PLANO
-    try {
-      const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
-      AccountStatementSyncService.syncSorteoStatements(id, existing.scheduledAt).catch(err => {
+    // Sincronizar AccountStatements, limpiar caché y notificar por WebSocket tras revertir
+    (async () => {
+      try {
+        const { AccountStatementSyncService } = await import('./accounts/accounts.sync.service');
+        await AccountStatementSyncService.syncSorteoStatements(id, existing.scheduledAt);
+
+        // Invalidar cache de sorteos, dashboard y cierres
+        const { clearSorteoCache } = require('../../../utils/sorteoCache');
+        clearSorteoCache();
+        await CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
+        await CacheService.invalidateTag('dashboard').catch(() => {});
+        await CacheService.invalidateTag('cierre').catch(() => {});
+        await CacheService.invalidateTag('report:summary').catch(() => {});
+
+        // Notificar a clientes conectados que el sorteo fue revertido y los saldos están listos
+        const { SocketService } = await import('../../../core/socket.service');
+        SocketService.notifySorteoReverted({
+          sorteoId: id,
+          sorteoNombre: existing.name || 'Sorteo',
+          scheduledAt: existing.scheduledAt ? new Date(existing.scheduledAt).toISOString() : new Date().toISOString(),
+          bancaId: existing.bancaId || null,
+          revertedAt: new Date().toISOString(),
+        });
+      } catch (err: any) {
         logger.error({
           layer: 'service',
           action: 'ACCOUNT_STATEMENT_SYNC_REVERT_BACKGROUND_ERROR',
           payload: { sorteoId: id, error: (err as Error).message }
         });
-      });
-    } catch (err) {
-      logger.warn({ layer: 'service', action: 'SYNC_IMPORT_ERROR', payload: { error: (err as Error).message } });
-    }
-    // Invalidar cache de sorteos
-    const { clearSorteoCache } = require('../../../utils/sorteoCache');
-    clearSorteoCache();
-    CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
+      }
+    })();
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
     const lotName = existing.loteria?.name || 'Lotería';
