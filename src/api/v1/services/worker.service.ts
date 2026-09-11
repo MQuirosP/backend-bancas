@@ -142,10 +142,17 @@ function processNextTask() {
     }
   }
 
-  worker.postMessage({ 
-    type: nextTask.type,
-    ...nextTask.payload
-  }, transferList);
+  try {
+    worker.postMessage({ 
+      type: nextTask.type,
+      ...nextTask.payload
+    }, transferList);
+  } catch (_err) {
+    worker.postMessage({ 
+      type: nextTask.type,
+      ...nextTask.payload
+    });
+  }
 }
 
 /**

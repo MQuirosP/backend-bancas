@@ -27,10 +27,17 @@ parentPort.on('message', async (data) => {
         transferList.push(buffer.buffer);
       }
 
-      parentPort?.postMessage({ 
-        success: true, 
-        imageBuffer: buffer 
-      }, transferList);
+      try {
+        parentPort?.postMessage({ 
+          success: true, 
+          imageBuffer: buffer 
+        }, transferList);
+      } catch (_err) {
+        parentPort?.postMessage({ 
+          success: true, 
+          imageBuffer: buffer 
+        });
+      }
       return;
     }
 
@@ -55,10 +62,17 @@ parentPort.on('message', async (data) => {
       };
     });
 
-    parentPort?.postMessage({ 
-      success: true, 
-      pngPages: formattedPages
-    }, transferList);
+    try {
+      parentPort?.postMessage({ 
+        success: true, 
+        pngPages: formattedPages
+      }, transferList);
+    } catch (_err) {
+      parentPort?.postMessage({ 
+        success: true, 
+        pngPages: formattedPages
+      });
+    }
   } catch (error: any) {
     parentPort?.postMessage({ 
       success: false, 
