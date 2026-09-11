@@ -3,7 +3,7 @@
   "versionCode": 24,
   "buildNumber": 24,
   "minSupportedVersion": "1.0.15",
-  "forceUpdate": true,
+  "forceUpdate": false,
   "changelog": "Optimización de conexiones en tiempo real y corrección de reconexiones múltiples.",
   "releasedAt": "2026-09-11T09:20:00Z",
   "downloads": {
