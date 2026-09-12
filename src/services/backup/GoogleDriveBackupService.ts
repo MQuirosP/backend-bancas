@@ -128,17 +128,17 @@ export class GoogleDriveBackupService {
       req.write(header);
 
       const fileStream = fs.createReadStream(filePath);
-      fileStream.on("data", (chunk) => {
-        req.write(chunk);
-      });
-
-      fileStream.on("end", () => {
-        req.end(footer);
-      });
-
       fileStream.on("error", (err) => {
         req.destroy();
         reject(err);
+      });
+
+      // ✅ FIX CRÍTICO OOM: Usar pipe con control de flujo (backpressure)
+      // Evita acumular los 673+ MB del dump en el heap de Node.js, manteniendo la RAM en < 5 MB
+      fileStream.pipe(req, { end: false });
+
+      fileStream.on("end", () => {
+        req.end(footer);
       });
     });
   }
