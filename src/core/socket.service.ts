@@ -54,7 +54,7 @@ export class SocketService {
         origin: '*',
         methods: ['GET', 'POST'],
       },
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
       pingTimeout: 60000,
       pingInterval: 25000,
     });
