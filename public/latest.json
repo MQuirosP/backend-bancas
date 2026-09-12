@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.18",
-  "versionCode": 24,
-  "buildNumber": 24,
+  "versionName": "1.0.19",
+  "versionCode": 25,
+  "buildNumber": 25,
   "minSupportedVersion": "1.0.15",
-  "forceUpdate": false,
-  "changelog": "Optimización de conexiones en tiempo real y corrección de reconexiones múltiples.",
-  "releasedAt": "2026-09-11T09:20:00Z",
+  "forceUpdate": true,
+  "changelog": "Sincronización en tiempo real tras evaluación de sorteos y corrección de alertas de bloqueo.",
+  "releasedAt": "2026-09-12T04:05:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "6d8d78f5b10a8cd8a06697429cb5cfb559f3660b57eb459c85e698473c21537b"
+      "sha256": "3706d9371afac394c13a89fde2f39f0e9fa1faa6d03c7e06d42ca10459ba6197"
     },
     "arm64-v8a": {
-      "sha256": "6d8d78f5b10a8cd8a06697429cb5cfb559f3660b57eb459c85e698473c21537b"
+      "sha256": "3706d9371afac394c13a89fde2f39f0e9fa1faa6d03c7e06d42ca10459ba6197"
     }
   }
 }
