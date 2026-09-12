@@ -1,6 +1,8 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import type { Server as HTTPServer } from 'http';
 import jwt from 'jsonwebtoken';
+import { createAdapter } from '@socket.io/redis-adapter';
+import Redis, { RedisOptions } from 'ioredis';
 import { config } from '../config';
 import logger from './logger';
 import { Role } from '../generated/prisma/client';
@@ -43,6 +45,8 @@ export interface SorteoRevertedPayload {
 
 export class SocketService {
   private static io: SocketIOServer | null = null;
+  private static pubClient: Redis | null = null;
+  private static subClient: Redis | null = null;
 
   static init(server: HTTPServer): SocketIOServer {
     if (this.io) {
@@ -58,6 +62,72 @@ export class SocketService {
       pingTimeout: 60000,
       pingInterval: 25000,
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ADAPTADOR REDIS: Escalabilidad Horizontal (Múltiples réplicas en Render)
+    // ─────────────────────────────────────────────────────────────────────────
+    const redisUrl = process.env.REDIS_URL || config.redis.url;
+
+    if (redisUrl) {
+      try {
+        const redisOptions: RedisOptions = {
+          maxRetriesPerRequest: null,
+          enableReadyCheck: true,
+          retryStrategy: (times: number) => {
+            const delay = Math.min(times * 100, 3000);
+            return delay;
+          },
+          tls: redisUrl.startsWith('rediss://') ? { rejectUnauthorized: false } : undefined,
+        };
+
+        this.pubClient = new Redis(redisUrl, redisOptions);
+        this.subClient = this.pubClient.duplicate();
+
+        this.pubClient.on('error', (err: Error) => {
+          logger.error({
+            layer: 'socket',
+            action: 'REDIS_ADAPTER_PUB_ERROR',
+            meta: { error: err.message },
+          });
+        });
+
+        this.subClient.on('error', (err: Error) => {
+          logger.error({
+            layer: 'socket',
+            action: 'REDIS_ADAPTER_SUB_ERROR',
+            meta: { error: err.message },
+          });
+        });
+
+        this.pubClient.on('connect', () => {
+          logger.info({ layer: 'socket', action: 'REDIS_ADAPTER_PUB_CONNECTED' });
+        });
+
+        this.subClient.on('connect', () => {
+          logger.info({ layer: 'socket', action: 'REDIS_ADAPTER_SUB_CONNECTED' });
+        });
+
+        this.io.adapter(createAdapter(this.pubClient, this.subClient));
+
+        logger.info({
+          layer: 'socket',
+          action: 'REDIS_ADAPTER_ATTACHED',
+          payload: { message: 'Socket.io Redis adapter inyectado exitosamente para balanceo horizontal' },
+        });
+      } catch (err: any) {
+        logger.error({
+          layer: 'socket',
+          action: 'REDIS_ADAPTER_INIT_FAILED',
+          meta: { error: err?.message || String(err) },
+        });
+      }
+    } else {
+      logger.warn({
+        layer: 'socket',
+        action: 'REDIS_ADAPTER_SKIPPED',
+        payload: { message: 'REDIS_URL no configurada; operando con adaptador de memoria local' },
+      });
+    }
 
     // Middleware de autenticación JWT
     this.io.use(async (socket: Socket, next) => {
@@ -176,6 +246,33 @@ export class SocketService {
 
   static getIO(): SocketIOServer | null {
     return this.io;
+  }
+
+  /**
+   * Cierre graceful de las conexiones Redis y del servidor de sockets
+   */
+  static async close(): Promise<void> {
+    try {
+      if (this.subClient) {
+        await this.subClient.quit();
+        this.subClient = null;
+      }
+      if (this.pubClient) {
+        await this.pubClient.quit();
+        this.pubClient = null;
+      }
+      if (this.io) {
+        this.io.close();
+        this.io = null;
+      }
+      logger.info({ layer: 'socket', action: 'SOCKET_SERVICE_CLOSED' });
+    } catch (error: any) {
+      logger.warn({
+        layer: 'socket',
+        action: 'SOCKET_SERVICE_CLOSE_ERROR',
+        meta: { error: error?.message || String(error) },
+      });
+    }
   }
 
   /**

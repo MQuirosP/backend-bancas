@@ -144,6 +144,7 @@ const gracefulShutdown = async (signal: string) => {
   try { stopMonthlyClosingJob(); } catch (e) {}
   try { restrictionCacheV2.stopWarmingProcess(); } catch (e) {}
   try { closeRedisClient(); } catch (e) {}
+  try { await SocketService.close(); } catch (e) {}
 
   try {
     // 2. Paso 1: server.close() para dejar de aceptar nuevo tráfico HTTP de inmediato
