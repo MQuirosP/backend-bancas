@@ -13,6 +13,11 @@ toobusy.maxLag(config.hardening.eventLoopLagThresholdMs);
  * Middleware de Admission Control Global y Circuit Breakers
  */
 export const resilienceMiddleware = (req: Request, res: Response, next: NextFunction) => {
+    // 0. Ignorar peticiones OPTIONS y Health checks (no consumen DB ni saturan el event loop)
+    if (req.method === 'OPTIONS' || req.path === '/api/v1/healthz' || req.path === '/metrics') {
+        return next();
+    }
+
     // 1. Verificar Saturación del Event Loop (toobusy)
     if (toobusy()) {
         logger.warn({
