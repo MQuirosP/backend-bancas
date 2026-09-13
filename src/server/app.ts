@@ -54,10 +54,9 @@ app.set('trust proxy', config.trustProxy)
 // middlewares (order matters)
 app.use(requestIdMiddleware)
 app.use(attachRequestLogger)
-app.use(resilienceMiddleware) // Hardening: Global Admission Control & CB
 app.use(helmet())
 
-// ️ CORS antes de parsers / rateLimit / requireJson
+// ⚠️ CORS antes de parsers / rateLimit / requireJson
 app.use(corsMiddleware)
 app.use('/public', express.static(path.join(process.cwd(), 'public')));
 
@@ -83,10 +82,11 @@ app.get('/api/v1/healthz', (_req, res) => res.status(200).json({ status: 'ok' })
 // Metrics check (public, basic in-memory metrics)
 app.get('/metrics', (_req, res) => res.status(200).json(metricsService.getMetrics()))
 
-
-
-// Single-Flight Coalescing: Previene tormentas de peticiones GET idénticas concurrentes
+// Single-Flight Coalescing: Previene tormentas de peticiones GET idénticas concurrentes (fusiona waiters antes de consumir slots)
 app.use(singleFlightMiddleware)
+
+// Hardening: Global Admission Control & CB (aplica a peticiones reales no coalescidas)
+app.use(resilienceMiddleware)
 
 // routes
 app.use('/api/v1', apiV1Router)
