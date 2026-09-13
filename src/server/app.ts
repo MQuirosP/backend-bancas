@@ -19,6 +19,7 @@ import { attachRequestLogger } from '../middlewares/attachLogger.middleware'
 import { apiV1Router } from '../api/v1/routes'
 import { requireJson } from '../middlewares/contentTypeJson.middleware'
 import { resilienceMiddleware } from '../middlewares/resilience.middleware'
+import { singleFlightMiddleware } from '../middlewares/singleFlight.middleware'
 import { metricsService } from '../core/metrics.service'
 import { ResilienceService } from '../core/resilience.service'
 
@@ -83,6 +84,9 @@ app.get('/api/v1/healthz', (_req, res) => res.status(200).json({ status: 'ok' })
 app.get('/metrics', (_req, res) => res.status(200).json(metricsService.getMetrics()))
 
 
+
+// Single-Flight Coalescing: Previene tormentas de peticiones GET idénticas concurrentes
+app.use(singleFlightMiddleware)
 
 // routes
 app.use('/api/v1', apiV1Router)
