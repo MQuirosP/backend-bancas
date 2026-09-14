@@ -108,9 +108,13 @@ export async function initRedisClient(): Promise<void> {
             enableOfflineQueue: false, //  EVITAR MEMORY LEAK: No encolar comandos en memoria si Redis está caído
         });
 
-        // Cliente duplicado exclusivo para Pub/Sub
-        redisSubscriber = redisClient.duplicate();
-        redisSubscriber.on('error', () => { /* Manejo silencioso */ });
+        // Cliente duplicado exclusivo para Pub/Sub con offline queue para que espere conexión
+        redisSubscriber = redisClient.duplicate({
+            enableOfflineQueue: true,
+        });
+        redisSubscriber.on('error', (err: any) => {
+            logger.warn({ layer: 'redis', action: 'SUBSCRIBER_ERROR', payload: { error: err.message } });
+        });
 
         // Event handlers
         redisClient.on('error', (err: Error) => {
@@ -143,9 +147,14 @@ export async function initRedisClient(): Promise<void> {
             logger.info({ layer: 'redis', action: 'RECONNECTING', payload: { waitMs: ms } });
         });
 
-        // Intentar conectar con timeout
+        // Intentar conectar ambos clientes con timeout
         await Promise.race([
-            redisClient.connect(),
+            Promise.all([
+                redisClient.connect(),
+                redisSubscriber.connect().catch((err: any) => {
+                    logger.warn({ layer: 'redis', action: 'SUBSCRIBER_CONNECT_FAIL', payload: { error: err.message } });
+                }),
+            ]),
             new Promise((_, reject) => 
                 setTimeout(() => reject(new Error('Redis connection timeout')), config.redis.connectTimeout)
             )

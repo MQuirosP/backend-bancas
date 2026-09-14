@@ -11,13 +11,21 @@ export function initCacheSubscriber() {
     if (!redisSubscriber || isSubscribed) return;
     isSubscribed = true;
     
-    redisSubscriber.subscribe('cache:invalidate');
-    redisSubscriber.on('message', (channel: string, message: string) => {
-        if (channel === 'cache:invalidate') {
-            l1Cache.delete(message);
-            CacheEvents.emit('invalidate', message);
-        }
-    });
+    try {
+        redisSubscriber.subscribe('cache:invalidate', (err: any) => {
+            if (err) {
+                logger.warn({ layer: 'cache', action: 'SUBSCRIBE_WARN', payload: { error: err.message } });
+            }
+        });
+        redisSubscriber.on('message', (channel: string, message: string) => {
+            if (channel === 'cache:invalidate') {
+                deleteL1Entry(message);
+                CacheEvents.emit('invalidate', message);
+            }
+        });
+    } catch (err: any) {
+        logger.warn({ layer: 'cache', action: 'INIT_SUBSCRIBER_WARN', payload: { error: err?.message || String(err) } });
+    }
 }
 
 // OPTIMIZACIÓN L1: Caché en memoria para mitigar latencia de red y DB
