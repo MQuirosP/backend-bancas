@@ -18,16 +18,14 @@ export const resilienceMiddleware = (req: Request, res: Response, next: NextFunc
         return next();
     }
 
-    // 1. Verificar Saturación del Event Loop (toobusy)
+    // 1. Monitoreo de Saturación del Event Loop (toobusy)
+    // Se mantiene como observabilidad (warning log) para Better Stack / APM,
+    // pero NO se rechaza la petición con 503 para no interrumpir a vendedores por micro-pausas transitorias.
     if (toobusy()) {
         logger.warn({
             layer: 'middleware',
-            action: 'REJECT_TOOBUSY',
-            payload: { lag: toobusy.lag() }
-        });
-        return res.status(503).json({
-            status: 'error',
-            message: 'Server is too busy, please try again later.'
+            action: 'EVENT_LOOP_LAG_WARNING',
+            payload: { lag: toobusy.lag(), thresholdMs: config.hardening.eventLoopLagThresholdMs }
         });
     }
 
