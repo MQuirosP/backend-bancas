@@ -1,12 +1,69 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import type { Server as HTTPServer } from 'http';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { createAdapter } from '@socket.io/redis-adapter';
 import Redis, { RedisOptions } from 'ioredis';
 import { config } from '../config';
 import logger from './logger';
 import { Role } from '../generated/prisma/client';
 import { getCachedUser, UserSession } from '../middlewares/auth.middleware';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rate limiter en memoria para fallos de auth repetidos en Socket.IO
+// Evita que clientes con tokens expirados generen reconexiones infinitas cada 2s.
+// ─────────────────────────────────────────────────────────────────────────────
+interface AuthFailRecord {
+  attempts: number;
+  nextAllowedAt: number; // ms epoch
+}
+
+const socketAuthFailCache = new Map<string, AuthFailRecord>();
+const SOCKET_AUTH_MAX_ATTEMPTS = 3;          // intentos antes de penalizar
+const SOCKET_AUTH_BASE_DELAY_MS = 5_000;     // 5s base
+const SOCKET_AUTH_MAX_DELAY_MS = 30_000;     // techo 30s
+const SOCKET_AUTH_CACHE_TTL_MS = 10 * 60 * 1000; // limpiar entradas tras 10 min
+
+// Limpieza periódica para no acumular tokens viejos en memoria
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of socketAuthFailCache.entries()) {
+    if (record.nextAllowedAt + SOCKET_AUTH_CACHE_TTL_MS < now) {
+      socketAuthFailCache.delete(key);
+    }
+  }
+}, 5 * 60 * 1000); // cada 5 minutos
+
+function getTokenFingerprint(token: string): string {
+  // Hash del token para no guardar tokens completos en memoria
+  return crypto.createHash('sha256').update(token).digest('hex').slice(0, 16);
+}
+
+async function applySocketAuthRateLimit(fingerprint: string): Promise<void> {
+  const now = Date.now();
+  const record = socketAuthFailCache.get(fingerprint);
+
+  if (record && now < record.nextAllowedAt) {
+    // Aún en penalización: forzar espera del tiempo restante
+    const waitMs = record.nextAllowedAt - now;
+    await new Promise(resolve => setTimeout(resolve, waitMs));
+  }
+}
+
+function recordSocketAuthFailure(fingerprint: string): void {
+  const now = Date.now();
+  const existing = socketAuthFailCache.get(fingerprint);
+  const attempts = (existing?.attempts ?? 0) + 1;
+
+  if (attempts >= SOCKET_AUTH_MAX_ATTEMPTS) {
+    // Backoff exponencial: 5s, 10s, 20s, techo 30s
+    const exponent = attempts - SOCKET_AUTH_MAX_ATTEMPTS;
+    const delay = Math.min(SOCKET_AUTH_BASE_DELAY_MS * Math.pow(2, exponent), SOCKET_AUTH_MAX_DELAY_MS);
+    socketAuthFailCache.set(fingerprint, { attempts, nextAllowedAt: now + delay });
+  } else {
+    socketAuthFailCache.set(fingerprint, { attempts, nextAllowedAt: 0 });
+  }
+}
 
 export const SocketEvents = {
   SORTEO_EVALUADO: 'sorteo:evaluado',
@@ -142,27 +199,55 @@ export class SocketService {
           return next(new Error('Authentication token missing'));
         }
 
+        // Aplicar rate limiting para tokens que fallan repetidamente
+        const fingerprint = getTokenFingerprint(token);
+        await applySocketAuthRateLimit(fingerprint);
+
         const decoded = jwt.verify(token, config.jwtAccessSecret, { clockTolerance: 90 }) as {
           sub?: string;
         };
 
         if (!decoded.sub) {
+          recordSocketAuthFailure(fingerprint);
           return next(new Error('Invalid token payload'));
         }
 
         const user = await getCachedUser(decoded.sub);
         if (!user || !user.isActive) {
+          recordSocketAuthFailure(fingerprint);
           return next(new Error('User not found or inactive'));
         }
 
+        // Éxito: limpiar penalizaciones previas
+        socketAuthFailCache.delete(fingerprint);
         socket.data.user = user;
         next();
       } catch (err: any) {
-        logger.warn({
-          layer: 'socket',
-          action: 'AUTH_FAILED',
-          meta: { error: err?.message || String(err) },
-        });
+        const token =
+          socket.handshake.auth?.token ||
+          (socket.handshake.headers?.authorization
+            ? socket.handshake.headers.authorization.replace(/^Bearer\s+/i, '')
+            : null);
+
+        if (token) {
+          const fingerprint = getTokenFingerprint(token);
+          recordSocketAuthFailure(fingerprint);
+          const record = socketAuthFailCache.get(fingerprint);
+          // Solo loguear las primeras N fallas; después silenciar para no contaminar logs
+          if (!record || record.attempts <= SOCKET_AUTH_MAX_ATTEMPTS) {
+            logger.warn({
+              layer: 'socket',
+              action: 'AUTH_FAILED',
+              meta: { error: err?.message || String(err) },
+            });
+          }
+        } else {
+          logger.warn({
+            layer: 'socket',
+            action: 'AUTH_FAILED',
+            meta: { error: err?.message || String(err) },
+          });
+        }
         next(new Error('Invalid or expired token'));
       }
     });
