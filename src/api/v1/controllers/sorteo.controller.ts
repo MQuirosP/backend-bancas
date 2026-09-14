@@ -255,7 +255,7 @@ export const SorteoController = {
         loteriaId,
         status,
         isActive,
-        summaryOnly,
+        summaryOnly: summaryOnly === 'true' || summaryOnly === true || summaryOnly === '1',
         userRole: req.user!.role,
         ignoreReset: canIgnoreReset && ignoreReset === 'true',
       },

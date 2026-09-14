@@ -1368,10 +1368,22 @@ gs."hour24" ASC
     },
     vendedorId?: string
   ) {
-    //  FASE BE-2: Implementación de Cache-Aside con Coalescing
+    //  FASE BE-2: Implementación de Cache-Aside con Coalescing y Normalización
+    const normalizedKeyData = {
+      date: params.date || "today",
+      fromDate: params.fromDate || null,
+      toDate: params.toDate || null,
+      scope: params.scope || "mine",
+      loteriaId: params.loteriaId || null,
+      isActive: params.isActive !== "false" && params.isActive !== "0",
+      summaryOnly: Boolean(params.summaryOnly),
+      vendedorId: vendedorId || null,
+      ignoreReset: Boolean(params.ignoreReset),
+    };
+
     const cacheKey = `banca:${params.bancaId || 'all'}:ventana:${params.ventanaId || 'all'}:vendedor:${vendedorId || 'all'}:summary:${crypto
       .createHash('md5')
-      .update(JSON.stringify({ ...params, vendedorId }))
+      .update(JSON.stringify(normalizedKeyData))
       .digest('hex')}`;
 
     const tags = ['report:summary'];
@@ -2334,8 +2346,93 @@ gs."hour24" ASC
       });
       throw err;
     }
-  }, 30, tags);
+  }, 60, tags, true, 60_000);
 },
+
+  /**
+   * Pre-calienta el caché de evaluated-summary para los vendedores de la banca
+   * justo después de que un sorteo se evalúa y liquida contablemente.
+   * Evita el Thundering Herd cuando los clientes reciben el evento de WebSocket.
+   */
+  async warmupEvaluatedSummaries(sorteoId: string, bancaId?: string | null): Promise<void> {
+    try {
+      let vendorIds: string[] = [];
+
+      if (bancaId) {
+        const activeVendors = await prisma.user.findMany({
+          where: {
+            bancaId,
+            role: Role.VENDEDOR,
+            isActive: true,
+          },
+          select: { id: true },
+        });
+        vendorIds = activeVendors.map((v) => v.id);
+      }
+
+      if (vendorIds.length === 0) {
+        const rcdVendors = await prisma.resumenCierreDiario.findMany({
+          where: { sorteoId },
+          select: { vendedorId: true },
+          distinct: ['vendedorId'],
+        });
+        vendorIds = rcdVendors.map((r) => r.vendedorId);
+      }
+
+      if (vendorIds.length === 0) {
+        logger.info({
+          layer: 'service',
+          action: 'WARMUP_SKIPPED_NO_VENDORS',
+          payload: { sorteoId, bancaId },
+        });
+        return;
+      }
+
+      logger.info({
+        layer: 'service',
+        action: 'WARMUP_EVALUATED_SUMMARY_START',
+        payload: { sorteoId, bancaId, totalVendors: vendorIds.length },
+      });
+
+      const startTime = Date.now();
+
+      // Pre-calcular evaluatedSummary para cada vendedor en paralelo (date=today, scope=mine, summaryOnly=true)
+      // Se almacena tanto en memoria L1 como en Upstash Redis (L2)
+      await Promise.allSettled(
+        vendorIds.map((vId) =>
+          this.evaluatedSummary(
+            {
+              date: 'today',
+              scope: 'mine',
+              status: 'EVALUATED,OPEN',
+              isActive: 'true',
+              summaryOnly: true,
+              userRole: Role.VENDEDOR,
+              ignoreReset: false,
+            },
+            vId
+          )
+        )
+      );
+
+      logger.info({
+        layer: 'service',
+        action: 'WARMUP_EVALUATED_SUMMARY_COMPLETED',
+        payload: {
+          sorteoId,
+          bancaId,
+          totalVendors: vendorIds.length,
+          durationMs: Date.now() - startTime,
+        },
+      });
+    } catch (err: any) {
+      logger.warn({
+        layer: 'service',
+        action: 'WARMUP_EVALUATED_SUMMARY_ERROR',
+        payload: { sorteoId, bancaId, error: err?.message || String(err) },
+      });
+    }
+  },
 };
 
 export default SorteoService;

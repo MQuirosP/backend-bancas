@@ -166,8 +166,23 @@ export class SorteoEvaluationCoordinator {
       });
     }
 
-    // 5. Notificación en Tiempo Real a Clientes Conectados (WebSocket)
-    // Se emite ÚNICAMENTE cuando las cuentas, estadísticas y cachés están 100% actualizados.
+    // 5. Pre-calentamiento de Caché (Pre-warming)
+    // Pre-calcula y almacena en Upstash Redis y memoria L1 el resumen de los vendedores
+    // para que cuando reciban el evento de WebSocket, la respuesta sea inmediata (<15ms)
+    // y no se genere avalancha (Thundering Herd) sobre PostgreSQL.
+    try {
+      const SorteoService = (await import("./sorteo.service")).default;
+      await SorteoService.warmupEvaluatedSummaries(id, existingSorteo.bancaId);
+    } catch (warmupErr: any) {
+      logger.warn({
+        layer: "coordinator",
+        action: "WARMUP_EVALUATED_SUMMARY_BACKGROUND_ERROR",
+        payload: { sorteoId: id, error: warmupErr?.message || String(warmupErr) },
+      });
+    }
+
+    // 6. Notificación en Tiempo Real a Clientes Conectados (WebSocket)
+    // Se emite ÚNICAMENTE cuando las cuentas, estadísticas y cachés están 100% calientes y actualizados.
     try {
       SocketService.notifySorteoEvaluated({
         sorteoId: id,

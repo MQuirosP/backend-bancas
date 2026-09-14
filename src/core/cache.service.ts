@@ -305,13 +305,16 @@ export class CacheService {
     }
 
     /**
-     * Wrapper para Cache-Aside con Coalescing (evita Cache Stampede)
+     * Wrapper para Cache-Aside con Coalescing (evita Cache Stampede).
+     * Integra L1 (Memoria RAM Node.js) + L2 (Redis Upstash) para latencia sub-milisegundo.
      */
     static async wrap<T>(
         key: string,
         fetcher: () => Promise<T>,
         ttlSeconds: number = config.redis.ttlCutoff,
-        tags: string[] = []
+        tags: string[] = [],
+        useL1: boolean = true,
+        l1TtlMs?: number
     ): Promise<T> {
         // 1. Coalescing: Si hay una promesa en vuelo para esta misma clave, reutilizarla
         const existingPromise = inFlightPromises.get(key);
@@ -319,17 +322,19 @@ export class CacheService {
             return existingPromise as Promise<T>;
         }
 
+        const effectiveL1TtlMs = l1TtlMs ?? (ttlSeconds * 1000);
+
         const promise = (async () => {
             try {
-                // 2. Intentar obtener de caché (protegido por runRedis internamente en get)
-                const cached = await this.get<T>(key);
+                // 2. Intentar obtener de caché (L1 RAM primero, luego Redis L2)
+                const cached = await this.get<T>(key, useL1, effectiveL1TtlMs);
                 if (cached !== null) return cached;
 
                 // 3. Si no hay caché, ejecutar fetcher
                 const result = await fetcher();
 
-                // 4. Guardar en caché y asegurar persistencia en Redis L2
-                await this.set(key, result, ttlSeconds, tags).catch((err) => {
+                // 4. Guardar en caché y asegurar persistencia en L1 RAM y Redis L2
+                await this.set(key, result, ttlSeconds, tags, useL1, effectiveL1TtlMs).catch((err) => {
                     logger.warn({ layer: 'cache', action: 'WRAP_SET_ERROR', payload: { key, error: err.message } });
                 });
 
