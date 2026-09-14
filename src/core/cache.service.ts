@@ -21,14 +21,62 @@ export function initCacheSubscriber() {
 }
 
 // OPTIMIZACIÓN L1: Caché en memoria para mitigar latencia de red y DB
-interface L1Entry { data: any; expiresAt: number; }
+interface L1Entry { data: any; expiresAt: number; tags?: string[]; }
 const l1Cache = new Map<string, L1Entry>();
+const l1TagMap = new Map<string, Set<string>>(); // tag -> Set of keys
 const MAX_L1_SIZE = 500; // Límite de seguridad para evitar fugas de memoria
 const inFlightPromises = new Map<string, Promise<any>>();
 
 // TTLs para L1: restricciones de vendedor 30s, cutoffs 60s
 export const L1_TTL_RESTRICTIONS_MS = 30_000;  // 30 segundos — bloqueos de números rápidos
 export const L1_TTL_CUTOFF_MS      = 60_000;   // 60 segundos — cutoffs son más estables
+
+/**
+ * Elimina una entrada de L1 y desvincula sus tags asociados
+ */
+function deleteL1Entry(key: string): void {
+    const entry = l1Cache.get(key);
+    if (entry?.tags) {
+        for (const t of entry.tags) {
+            const set = l1TagMap.get(t);
+            if (set) {
+                set.delete(key);
+                if (set.size === 0) l1TagMap.delete(t);
+            }
+        }
+    }
+    l1Cache.delete(key);
+}
+
+/**
+ * Almacena una entrada en L1 indexando sus tags
+ */
+function setL1Entry(key: string, value: any, ttlMs: number, tags: string[] = []): void {
+    if (l1Cache.size >= MAX_L1_SIZE) evictOldestL1Entry();
+
+    // Si la clave ya existía, desasociar tags antiguos
+    const existing = l1Cache.get(key);
+    if (existing?.tags) {
+        for (const t of existing.tags) {
+            const set = l1TagMap.get(t);
+            if (set) {
+                set.delete(key);
+                if (set.size === 0) l1TagMap.delete(t);
+            }
+        }
+    }
+
+    l1Cache.set(key, { data: value, expiresAt: Date.now() + ttlMs, tags });
+
+    for (const tag of tags) {
+        let set = l1TagMap.get(tag);
+        if (!set) {
+            set = new Set();
+            l1TagMap.set(tag, set);
+        }
+        set.add(key);
+    }
+}
 
 /**
  * Desaloja la entrada más antigua del L1 cache (política FIFO).
@@ -38,14 +86,14 @@ export const L1_TTL_CUTOFF_MS      = 60_000;   // 60 segundos — cutoffs son m�
  */
 function evictOldestL1Entry(): void {
     const firstKey = l1Cache.keys().next().value;
-    if (firstKey !== undefined) l1Cache.delete(firstKey);
+    if (firstKey !== undefined) deleteL1Entry(firstKey);
 }
 
 // Limpieza periódica de entradas expiradas (cada 5 minutos)
 setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of l1Cache.entries()) {
-        if (now > entry.expiresAt) l1Cache.delete(key);
+        if (now > entry.expiresAt) deleteL1Entry(key);
     }
 }, 300_000).unref(); // unref() permite que el proceso de Node.js termine si solo queda este timer
 
@@ -62,7 +110,7 @@ export class CacheService {
             const entry = l1Cache.get(key);
             if (entry) {
                 if (Date.now() < entry.expiresAt) return entry.data as T;
-                l1Cache.delete(key);
+                deleteL1Entry(key);
             }
         }
 
@@ -90,8 +138,7 @@ export class CacheService {
 
                 // BACKFILL L1: Si se solicitó L1 y hubo hit en L2, guardar en L1 con el TTL correcto
                 if (useL1) {
-                    if (l1Cache.size >= MAX_L1_SIZE) evictOldestL1Entry();
-                    l1Cache.set(key, { data: parsed, expiresAt: Date.now() + l1TtlMs });
+                    setL1Entry(key, parsed, l1TtlMs);
                 }
 
                 return parsed;
@@ -126,7 +173,7 @@ export class CacheService {
                 if (entry && now < entry.expiresAt) {
                     result.set(key, entry.data as T);
                 } else {
-                    if (entry) l1Cache.delete(key);
+                    if (entry) deleteL1Entry(key);
                     missingKeys.push(key);
                 }
             }
@@ -169,8 +216,7 @@ export class CacheService {
                     result.set(key, parsed);
                     // Backfill L1
                     if (useL1) {
-                        if (l1Cache.size >= MAX_L1_SIZE) evictOldestL1Entry();
-                        l1Cache.set(key, { data: parsed, expiresAt: Date.now() + l1TtlMs });
+                        setL1Entry(key, parsed, l1TtlMs);
                     }
                 } else {
                     result.set(key, null);
@@ -194,9 +240,6 @@ export class CacheService {
     }
 
     /**
-     * Guardar valor en caché con TTL y opcionalmente asociarlo a tags
-     */
-    /**
      * Guardar valor en caché con TTL configurable.
      * @param l1TtlMs TTL en milisegundos para la capa L1 (memoria).
      *   - Restricciones de vendedor: L1_TTL_RESTRICTIONS_MS (30s)
@@ -210,10 +253,9 @@ export class CacheService {
         useL1: boolean = false,
         l1TtlMs: number = L1_TTL_RESTRICTIONS_MS,
     ): Promise<void> {
-        // 1. OPTIMIZACIÓN L1 (Memory) con TTL explícito por tipo de dato
+        // 1. OPTIMIZACIÓN L1 (Memory) con TTL explícito y asociación a tags
         if (useL1) {
-            if (l1Cache.size >= MAX_L1_SIZE) evictOldestL1Entry();
-            l1Cache.set(key, { data: value, expiresAt: Date.now() + l1TtlMs });
+            setL1Entry(key, value, l1TtlMs, tags);
         }
 
         if (!isRedisAvailable()) return;
@@ -245,7 +287,7 @@ export class CacheService {
      */
     static async del(key: string): Promise<void> {
         // 1. Limpiar L1
-        l1Cache.delete(key);
+        deleteL1Entry(key);
 
         if (!isRedisAvailable()) return;
         const redis = getRedisClient();
@@ -263,12 +305,28 @@ export class CacheService {
      * Invalidar todas las claves asociadas a un tag
      */
     static async invalidateTag(tag: string): Promise<void> {
-        // 1. Limpiar L1 (fuerza bruta para esta versión: limpiar todo si hay un tag de usuario/ventana)
-        // Opcionalmente podríamos trackear l1Keys por tag, pero para auth:ventana es preferible limpiar L1
-        // si la key contiene el userId o simplemente limpiar todo el L1 si es muy dinámico.
-        // Dado el volumen, es más seguro limpiar las keys que coincidan con patrones de auth
-        for (const key of l1Cache.keys()) {
-            if (key.includes(tag)) l1Cache.delete(key);
+        // 1. Limpiar L1 usando el índice de tags
+        const keysForTag = l1TagMap.get(tag);
+        if (keysForTag) {
+            for (const k of Array.from(keysForTag)) {
+                deleteL1Entry(k);
+            }
+            l1TagMap.delete(tag);
+        }
+
+        // 2. Heurística de prefijo/tipo para L1
+        if (tag === 'report:summary') {
+            for (const key of Array.from(l1Cache.keys())) {
+                if (key.includes(':summary:')) deleteL1Entry(key);
+            }
+        }
+        if (tag === 'cierre' || tag === 'dashboard') {
+            for (const key of Array.from(l1Cache.keys())) {
+                if (key.includes(':dashboard:') || key.includes(':cierre:')) deleteL1Entry(key);
+            }
+        }
+        for (const key of Array.from(l1Cache.keys())) {
+            if (key.includes(tag)) deleteL1Entry(key);
         }
 
         if (!isRedisAvailable()) return;
@@ -286,6 +344,7 @@ export class CacheService {
                 await pipeline.exec();
                 
                 for (const k of keys) {
+                    deleteL1Entry(k);
                     redis.publish('cache:invalidate', k);
                 }
                 
@@ -353,6 +412,17 @@ export class CacheService {
      * Eliminar múltiples claves por patrón (usando SCAN)
      */
     static async delPattern(pattern: string): Promise<string[] | null> {
+        // Limpiar de L1 las keys que coincidan con el patrón (ej. account:day:2026-09-13:*)
+        try {
+            const regexStr = '^' + pattern.replace(/([.+?^=!:${}()|\[\]\/\\])/g, '\\$1').replace(/\*/g, '.*') + '$';
+            const regex = new RegExp(regexStr);
+            for (const key of Array.from(l1Cache.keys())) {
+                if (regex.test(key)) deleteL1Entry(key);
+            }
+        } catch {
+            // Continuar con Redis si regex falla
+        }
+
         if (!isRedisAvailable()) return null;
         const redis = getRedisClient();
         if (!redis) return null;

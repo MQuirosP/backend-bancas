@@ -39,6 +39,7 @@ server.listen(config.port, 511, async () => {
   //  OPTIMIZACIÓN: Inicializar Redis (opcional, no bloquea el servidor)
   try {
     await initRedisClient()
+    initCacheSubscriber()
   } catch (error: any) {
     logger.warn({
       layer: 'server',

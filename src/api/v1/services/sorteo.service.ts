@@ -2346,7 +2346,7 @@ gs."hour24" ASC
       });
       throw err;
     }
-  }, 60, tags, true, 60_000);
+  }, 60, tags, true, 15_000);
 },
 
   /**
@@ -2359,15 +2359,25 @@ gs."hour24" ASC
       let vendorIds: string[] = [];
 
       if (bancaId) {
-        const activeVendors = await prisma.user.findMany({
+        const users = await prisma.user.findMany({
           where: {
-            bancaId,
+            role: Role.VENDEDOR,
+            isActive: true,
+            ventana: { bancaId },
+          },
+          select: { id: true },
+        });
+        vendorIds = users.map((u) => u.id);
+      } else {
+        const users = await prisma.user.findMany({
+          where: {
             role: Role.VENDEDOR,
             isActive: true,
           },
           select: { id: true },
+          take: 50,
         });
-        vendorIds = activeVendors.map((v) => v.id);
+        vendorIds = users.map((u) => u.id);
       }
 
       if (vendorIds.length === 0) {
@@ -2387,6 +2397,9 @@ gs."hour24" ASC
         });
         return;
       }
+
+      // Asegurar que el caché previo de summary quede limpio antes de calcular los nuevos resúmenes
+      await CacheService.invalidateTag('report:summary').catch(() => {});
 
       logger.info({
         layer: 'service',

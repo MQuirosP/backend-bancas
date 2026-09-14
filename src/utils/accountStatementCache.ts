@@ -314,7 +314,6 @@ export async function invalidateAllAccountStatementCache(): Promise<void> {
 /**
  *  NUEVO: Invalidar caché basándose en un ticket
  * Útil para invalidar caché cuando se crea, cancela o restaura un ticket
- * 
  * @param ticket - Ticket con businessDate, ventanaId, vendedorId
  */
 export async function invalidateCacheForTicket(ticket: {
@@ -324,21 +323,16 @@ export async function invalidateCacheForTicket(ticket: {
 }): Promise<void> {
     try {
         // Obtener fecha del ticket (businessDate o usar fecha actual como fallback)
+        const { tz } = await import('./timezone');
         let dateStr: string;
-        
         if (ticket.businessDate) {
-            // Si es string, usarlo directamente
             if (typeof ticket.businessDate === 'string') {
-                dateStr = ticket.businessDate.split('T')[0]; // YYYY-MM-DD
+                dateStr = ticket.businessDate.split('T')[0];
             } else {
-                // Si es Date, convertir a YYYY-MM-DD en CR
-                const { crDateService } = await import('./crDateService');
-                dateStr = crDateService.postgresDateToCRString(ticket.businessDate);
+                dateStr = tz.fromPrismaDate(ticket.businessDate);
             }
         } else {
-            // Fallback: usar fecha actual en CR
-            const { crDateService } = await import('./crDateService');
-            dateStr = crDateService.postgresDateToCRString(new Date());
+            dateStr = tz.toDateStr();
         }
 
         await invalidateAccountStatementCache({
@@ -359,7 +353,7 @@ export async function invalidateCacheForTicket(ticket: {
 }
 
 /**
- *  NUEVO: Invalidar caché basándose en un sorteo
+ * ⚡ NUEVO: Invalidar caché basándose en un sorteo
  * Útil para invalidar caché cuando se evalúa un sorteo (marca jugadas como ganadoras)
  * 
  * @param sorteo - Sorteo con scheduledAt
@@ -376,23 +370,9 @@ export async function invalidateCacheForSorteo(
     }>
 ): Promise<void> {
     try {
-        // Obtener fecha del sorteo (scheduledAt)
-        let dateStr: string;
-        
-        if (sorteo.scheduledAt) {
-            // Si es string, usarlo directamente
-            if (typeof sorteo.scheduledAt === 'string') {
-                dateStr = sorteo.scheduledAt.split('T')[0]; // YYYY-MM-DD
-            } else {
-                // Si es Date, convertir a YYYY-MM-DD en CR
-                const { crDateService } = await import('./crDateService');
-                dateStr = crDateService.postgresDateToCRString(sorteo.scheduledAt);
-            }
-        } else {
-            // Fallback: usar fecha actual en CR
-            const { crDateService } = await import('./crDateService');
-            dateStr = crDateService.postgresDateToCRString(new Date());
-        }
+        // Obtener fecha del sorteo en hora local de Costa Rica
+        const { tz } = await import('./timezone');
+        const dateStr = sorteo.scheduledAt ? tz.toDateStr(sorteo.scheduledAt) : tz.toDateStr();
 
         // Si hay tickets, invalidar para cada ventanaId/vendedorId único
         if (tickets && tickets.length > 0) {
