@@ -130,6 +130,7 @@ async function main() {
 
   rl.close();
   await prisma.$disconnect();
+  process.exit(0);
 }
 
 main().catch((err) => {
