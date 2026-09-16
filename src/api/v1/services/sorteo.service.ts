@@ -2560,7 +2560,6 @@ gs."hour24" ASC
           WHERE ap."date" >= ${monthlyStartDateStr}::date
             AND ap."date" <= ${monthlyEndDateStr}::date
             AND ap."isReversed" = false
-            AND (ap.id NOT LIKE 'previous-month-balance-%' OR ap.id IS NULL)
             AND ap."vendedorId" IN (${Prisma.join(vendorUuids)})
           GROUP BY ap."vendedorId"
         `),
