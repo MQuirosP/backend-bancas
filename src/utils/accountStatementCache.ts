@@ -374,44 +374,26 @@ export async function invalidateCacheForSorteo(
         const { tz } = await import('./timezone');
         const dateStr = sorteo.scheduledAt ? tz.toDateStr(sorteo.scheduledAt) : tz.toDateStr();
 
-        // Si hay tickets, invalidar para cada ventanaId/vendedorId único
-        if (tickets && tickets.length > 0) {
-            const uniqueKeys = new Set<string>();
-            for (const ticket of tickets) {
-                const key = `${ticket.ventanaId || 'null'}:${ticket.vendedorId || 'null'}`;
-                if (!uniqueKeys.has(key)) {
-                    uniqueKeys.add(key);
-                    await Promise.all([
-                        invalidateAccountStatementCache({
-                            date: dateStr,
-                            ventanaId: ticket.ventanaId || null,
-                            vendedorId: ticket.vendedorId || null,
-                        }),
-                        invalidateBySorteoCache({
-                            date: dateStr,
-                            ventanaId: ticket.ventanaId || null,
-                            vendedorId: ticket.vendedorId || null,
-                            bancaId: null, // No tenemos bancaId en tickets directamente
-                        }),
-                    ]);
-                }
-            }
-        } else {
-            // Si no hay tickets, invalidar todo el día (sin filtros específicos)
-            await Promise.all([
-                invalidateAccountStatementCache({
-                    date: dateStr,
-                    ventanaId: null,
-                    vendedorId: null,
-                }),
-                invalidateBySorteoCache({
-                    date: dateStr,
-                    ventanaId: null,
-                    vendedorId: null,
-                    bancaId: null,
-                }),
-            ]);
-        }
+        // Consolidación atómica en lote: invalidar los patrones del día y mes en una sola pasada
+        // evitando 78+ eventos repetitivos y más de 150 scans redundantes en Redis.
+        const month = dateStr.substring(0, 7);
+        await Promise.all([
+            CacheService.delPattern(`account:day:${dateStr}:*`),
+            CacheService.delPattern(`account:statement:${month}:*`),
+            CacheService.delPattern(`account:statement:null:*`),
+            CacheService.delPattern(`account:bySorteo:${dateStr}:*`),
+        ]);
+
+        logger.info({
+            layer: 'cache',
+            action: 'INVALIDATE_CACHE_FOR_SORTEO_BATCH_SUCCESS',
+            payload: {
+                dateStr,
+                month,
+                sorteoId: (sorteo as any)?.id,
+                affectedTicketsCount: tickets?.length || 0,
+            },
+        });
     } catch (error) {
         logger.warn({
             layer: 'cache',

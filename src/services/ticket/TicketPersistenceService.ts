@@ -97,7 +97,8 @@ export class TicketPersistenceService {
       });
     }
 
-    await DailyNumberSalesService.incrementFromTicket(createdTicket.id, tx);
+    // NOTA: DailyNumberSalesService.incrementFromTicket fue desacoplado de la transacción interactiva
+    // y se despacha post-commit de forma asíncrona para no retener conexiones ni bloquear filas.
 
     logger.info({
       layer: "repository",

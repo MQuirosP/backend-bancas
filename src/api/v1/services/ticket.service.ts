@@ -464,20 +464,29 @@ export const TicketService = {
         )
         .join(", ");
 
-      await ActivityService.log({
-        userId,
-        bancaId: ventanaWithBanca.bancaId,
-        action: ActivityType.TICKET_CREATE,
-        targetType: "TICKET",
-        targetId: ticket.id,
-        details: {
-          ticketNumber: ticket.ticketNumber,
-          totalAmount: ticket.totalAmount,
-          jugadas: jugadasCount,
-          description: `Ticket #${ticket.ticketNumber} creado por [${effectiveVendedorId}] - ${vendedorToPass?.name || "N/A"} para ${sorteo.loteria.name} - ${TicketPrintService.formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt)} por un monto de ₡${ticket.totalAmount.toLocaleString()}. Jugadas: [${jugadasSummary}]`,
-        },
-        requestId,
-        layer: "service",
+      // ActivityLog desacoplado del hilo síncrono HTTP (no bloquea el 201 Created al cliente)
+      setImmediate(() => {
+        ActivityService.log({
+          userId,
+          bancaId: ventanaWithBanca.bancaId,
+          action: ActivityType.TICKET_CREATE,
+          targetType: "TICKET",
+          targetId: ticket.id,
+          details: {
+            ticketNumber: ticket.ticketNumber,
+            totalAmount: ticket.totalAmount,
+            jugadas: jugadasCount,
+            description: `Ticket #${ticket.ticketNumber} creado por [${effectiveVendedorId}] - ${vendedorToPass?.name || "N/A"} para ${sorteo.loteria.name} - ${TicketPrintService.formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt)} por un monto de ₡${ticket.totalAmount.toLocaleString()}. Jugadas: [${jugadasSummary}]`,
+          },
+          requestId,
+          layer: "service",
+        }).catch((actErr: any) => {
+          logger.error({
+            layer: "service",
+            action: "ACTIVITY_LOG_BACKGROUND_ERROR",
+            payload: { ticketId: ticket.id, error: actErr?.message || String(actErr) },
+          });
+        });
       });
 
       logger.info({

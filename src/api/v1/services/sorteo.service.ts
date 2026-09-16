@@ -2409,24 +2409,28 @@ gs."hour24" ASC
 
       const startTime = Date.now();
 
-      // Pre-calcular evaluatedSummary para cada vendedor en paralelo (date=today, scope=mine, summaryOnly=true)
+      // Pre-calcular evaluatedSummary para cada vendedor en lotes de concurrencia controlada (máx 2 simultáneos)
+      // para no saturar el pool de conexiones de base de datos frente a las ventas en curso.
       // Se almacena tanto en memoria L1 como en Upstash Redis (L2)
-      await Promise.allSettled(
-        vendorIds.map((vId) =>
-          this.evaluatedSummary(
-            {
-              date: 'today',
-              scope: 'mine',
-              status: 'EVALUATED,OPEN',
-              isActive: 'true',
-              summaryOnly: true,
-              userRole: Role.VENDEDOR,
-              ignoreReset: false,
-            },
-            vId
-          )
+      const warmupTasks = vendorIds.map((vId) => () =>
+        this.evaluatedSummary(
+          {
+            date: 'today',
+            scope: 'mine',
+            status: 'EVALUATED,OPEN',
+            isActive: 'true',
+            summaryOnly: true,
+            userRole: Role.VENDEDOR,
+            ignoreReset: false,
+          },
+          vId
         )
       );
+
+      await ConcurrencyManager.runLimitedSettled(warmupTasks, {
+        limit: 2,
+        label: 'WarmupEvaluatedSummary',
+      });
 
       logger.info({
         layer: 'service',

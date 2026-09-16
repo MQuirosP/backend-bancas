@@ -453,6 +453,17 @@ export const TicketRepository = {
       const ticket = TicketResponseBuilder.build(txResult, data, userId, options);
       await TicketRedisAccumulator.increment(ticket, txResult.sorteoScheduledAt, options);
 
+      // Acopio asíncrono para Data Warehousing en DailyNumberSales (desacoplado de la transacción de venta)
+      setImmediate(() => {
+        DailyNumberSalesService.incrementFromTicket(txResult.createdTicketId).catch((err) => {
+          logger.error({
+            layer: "repository",
+            action: "DAILY_NUMBER_SALES_INCREMENT_BACKGROUND_ERROR",
+            payload: { ticketId: txResult.createdTicketId, error: err?.message || String(err) },
+          });
+        });
+      });
+
       return { ticket, warnings: txResult.warnings };
     } finally {
       if (lock) {

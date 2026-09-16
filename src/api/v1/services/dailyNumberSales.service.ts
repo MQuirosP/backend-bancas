@@ -5,11 +5,12 @@ import logger from "../../../core/logger";
 export class DailyNumberSalesService {
   /**
    * Acumula de forma incremental y atómica los números de un ticket en DailyNumberSales.
-   * Ejecutado dentro de la transacción de creación o restauración del ticket.
+   * Ejecutado de forma desacoplada post-commit o dentro de transacción si se provee.
    * Garantiza uso de Index Scan / Index Only Scan sobre la restricción única ("businessDate", "sorteoId", "vendedorId", "number", "type").
    */
-  static async incrementFromTicket(ticketId: string, tx: Prisma.TransactionClient): Promise<void> {
-    await tx.$executeRaw`
+  static async incrementFromTicket(ticketId: string, tx?: Prisma.TransactionClient): Promise<void> {
+    const client = tx || prisma;
+    await client.$executeRaw`
       INSERT INTO "DailyNumberSales" (
         "id", "businessDate", "bancaId", "ventanaId", "vendedorId", "loteriaId", "sorteoId",
         "number", "type", "totalAmount", "ticketsCount", "jugadasCount"

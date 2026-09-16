@@ -569,16 +569,17 @@ export class AccountStatementSyncService {
         affectedTickets
       );
 
-      // 🔄 Actualizar tabla de rollups (ResumenCierreDiario) esperando que termine para que reportes/cierres esté listo
-      try {
-        await CierreRollupService.aggregateRange(dateStr, dateStr);
-      } catch (rollupErr: any) {
-        logger.error({
-          layer: "service",
-          action: "ROLLUP_AGGREGATE_ERROR",
-          payload: { sorteoId, dateStr, error: rollupErr?.message || String(rollupErr) }
+      // 🔄 Actualizar tabla de rollups (ResumenCierreDiario) desacoplada en background
+      // para no demorar la finalización del sorteo ni competir contra las ventas activas ni saturar I/O.
+      setImmediate(() => {
+        CierreRollupService.aggregateRange(dateStr, dateStr).catch((rollupErr: any) => {
+          logger.error({
+            layer: "service",
+            action: "ROLLUP_AGGREGATE_BACKGROUND_ERROR",
+            payload: { sorteoId, dateStr, error: rollupErr?.message || String(rollupErr) }
+          });
         });
-      }
+      });
 
     } catch (error) {
       logger.error({ layer: "service", action: "SYNC_SORTEO_STATEMENTS_ERROR", payload: { sorteoId, sorteoDateStrCR, error: (error as Error).message } });
