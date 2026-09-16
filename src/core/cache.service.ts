@@ -381,23 +381,28 @@ export class CacheService {
         ttlSeconds: number = config.redis.ttlCutoff,
         tags: string[] = [],
         useL1: boolean = true,
-        l1TtlMs?: number
+        l1TtlMs?: number,
+        forceRefresh: boolean = false
     ): Promise<T> {
-        // 1. Coalescing: Si hay una promesa en vuelo para esta misma clave, reutilizarla
-        const existingPromise = inFlightPromises.get(key);
-        if (existingPromise) {
-            return existingPromise as Promise<T>;
+        // 1. Coalescing: Si hay una promesa en vuelo para esta misma clave, reutilizarla (salvo forceRefresh)
+        if (!forceRefresh) {
+            const existingPromise = inFlightPromises.get(key);
+            if (existingPromise) {
+                return existingPromise as Promise<T>;
+            }
         }
 
         const effectiveL1TtlMs = l1TtlMs ?? (ttlSeconds * 1000);
 
         const promise = (async () => {
             try {
-                // 2. Intentar obtener de caché (L1 RAM primero, luego Redis L2)
-                const cached = await this.get<T>(key, useL1, effectiveL1TtlMs);
-                if (cached !== null) return cached;
+                // 2. Intentar obtener de caché (L1 RAM primero, luego Redis L2), omitir si es forceRefresh
+                if (!forceRefresh) {
+                    const cached = await this.get<T>(key, useL1, effectiveL1TtlMs);
+                    if (cached !== null) return cached;
+                }
 
-                // 3. Si no hay caché, ejecutar fetcher
+                // 3. Si no hay caché o es refresco forzado, ejecutar fetcher
                 const result = await fetcher();
 
                 // 4. Guardar en caché y asegurar persistencia en L1 RAM y Redis L2

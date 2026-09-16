@@ -23,7 +23,7 @@ import { getPreviousMonthFinalBalance } from "./accounts/accounts.balances";
 import { getMonthlyRemainingBalance } from "./accounts/accounts.service";
 import { CacheService } from "../../../core/cache.service";
 import crypto from 'crypto';
-import { ConcurrencyManager } from "../../../utils/concurrency";
+import { ConcurrencyManager, SharedWarmupPool } from "../../../utils/concurrency";
 import { SorteoEvaluationCoordinator } from "./sorteoEvaluation.coordinator";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
@@ -1365,6 +1365,7 @@ gs."hour24" ASC
       sorteoId?: string;
       userRole?: string;
       ignoreReset?: boolean;
+      forceRefresh?: boolean;
     },
     vendedorId?: string
   ) {
@@ -1391,6 +1392,8 @@ gs."hour24" ASC
     if (params.ventanaId) tags.push(`ventana:${params.ventanaId}`);
     if (params.bancaId) tags.push(`banca:${params.bancaId}`);
     if (params.sorteoId) tags.push(`sorteo:${params.sorteoId}`);
+
+    const isForceRefresh = Boolean(params.forceRefresh);
 
     return CacheService.wrap(
       cacheKey,
@@ -2346,7 +2349,7 @@ gs."hour24" ASC
       });
       throw err;
     }
-  }, 60, tags, true, 15_000);
+  }, 60, tags, true, 15_000, isForceRefresh);
 },
 
   /**
@@ -2398,9 +2401,6 @@ gs."hour24" ASC
         return;
       }
 
-      // Asegurar que el caché previo de summary quede limpio antes de calcular los nuevos resúmenes
-      await CacheService.invalidateTag('report:summary').catch(() => {});
-
       logger.info({
         layer: 'service',
         action: 'WARMUP_EVALUATED_SUMMARY_START',
@@ -2409,9 +2409,9 @@ gs."hour24" ASC
 
       const startTime = Date.now();
 
-      // Pre-calcular evaluatedSummary para cada vendedor en lotes de concurrencia controlada (máx 2 simultáneos)
-      // para no saturar el pool de conexiones de base de datos frente a las ventas en curso.
-      // Se almacena tanto en memoria L1 como en Upstash Redis (L2)
+      // Pre-calcular evaluatedSummary para cada vendedor canalizado por SharedWarmupPool (máx 5 workers globales)
+      // para no saturar el pool de conexiones de Prisma aun con sorteos evaluados en simultáneo.
+      // Se utiliza forceRefresh: true para refrescar y poblar directamente L1 y L2 sin invalidaciones globales destructivas.
       const warmupTasks = vendorIds.map((vId) => () =>
         this.evaluatedSummary(
           {
@@ -2422,15 +2422,13 @@ gs."hour24" ASC
             summaryOnly: true,
             userRole: Role.VENDEDOR,
             ignoreReset: false,
+            forceRefresh: true,
           },
           vId
         )
       );
 
-      await ConcurrencyManager.runLimitedSettled(warmupTasks, {
-        limit: 2,
-        label: 'WarmupEvaluatedSummary',
-      });
+      await SharedWarmupPool.runAllSettled(warmupTasks);
 
       logger.info({
         layer: 'service',

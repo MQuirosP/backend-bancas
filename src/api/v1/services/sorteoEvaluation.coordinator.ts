@@ -135,7 +135,8 @@ export class SorteoEvaluationCoordinator {
       await CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
       await CacheService.invalidateTag('dashboard').catch(() => {});
       await CacheService.invalidateTag('cierre').catch(() => {});
-      await CacheService.invalidateTag('report:summary').catch(() => {});
+      // NOTA: report:summary NO se invalida de forma destructiva global para evitar que la evaluación
+      // de un sorteo concurrentemente elimine la caché ya caliente de otro. El warmup la refresca con forceRefresh.
     } catch (cacheErr: any) {
       logger.error({
         layer: "coordinator",

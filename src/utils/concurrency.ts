@@ -65,3 +65,46 @@ export class ConcurrencyManager {
     return results;
   }
 }
+
+/**
+ * SharedWarmupPool - Pool singleton de concurrencia compartida para warmups.
+ * Garantiza que sin importar cuántos sorteos se evalúen simultáneamente, el número de tareas
+ * de precalentamiento concurrentes contra PostgreSQL nunca exceda MAX_CONCURRENCY (5).
+ */
+export class SharedWarmupPool {
+  private static readonly MAX_CONCURRENCY = 5;
+  private static activeWorkers = 0;
+  private static queue: (() => void)[] = [];
+
+  /**
+   * Ejecuta una tarea individual dentro del pool compartido con límite estricto de concurrencia.
+   */
+  static async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.activeWorkers >= this.MAX_CONCURRENCY) {
+      await new Promise<void>((resolve) => this.queue.push(resolve));
+    }
+    this.activeWorkers++;
+    try {
+      return await task();
+    } finally {
+      this.activeWorkers--;
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+
+  /**
+   * Encola un conjunto de tareas y retorna una promesa que se resuelve cuando todas terminen (allSettled).
+   */
+  static async runAllSettled<T>(tasks: (() => Promise<T>)[]): Promise<PromiseSettledResult<T>[]> {
+    return Promise.allSettled(tasks.map((task) => this.run(task)));
+  }
+
+  static get activeCount(): number {
+    return this.activeWorkers;
+  }
+
+  static get pendingCount(): number {
+    return this.queue.length;
+  }
+}
