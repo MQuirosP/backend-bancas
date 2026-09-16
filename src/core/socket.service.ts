@@ -130,6 +130,9 @@ export class SocketService {
         const redisOptions: RedisOptions = {
           maxRetriesPerRequest: null,
           enableReadyCheck: true,
+          keepAlive: 10000,                      // TCP keep-alive nativo en ioredis (ms)
+          autoResubscribe: true,                 // Re-suscribe automáticamente a los canales tras reconexión
+          autoResendUnfulfilledCommands: true,   // Reenvía comandos en cola si hubo microcorte
           retryStrategy: (times: number) => {
             const delay = Math.min(times * 100, 3000);
             return delay;

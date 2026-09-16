@@ -291,6 +291,52 @@ export class CacheService {
     }
 
     /**
+     * Guardar múltiples valores en caché atómicamente usando L1 y pipeline de Redis L2.
+     * Diseñado para operaciones masivas de precalentamiento (warmup batch).
+     */
+    static async setBatch(
+        entries: Array<{
+            key: string;
+            value: any;
+            ttlSeconds?: number;
+            tags?: string[];
+            useL1?: boolean;
+            l1TtlMs?: number;
+        }>
+    ): Promise<void> {
+        if (entries.length === 0) return;
+
+        // 1. Guardar en L1
+        for (const entry of entries) {
+            if (entry.useL1 !== false) {
+                setL1Entry(entry.key, entry.value, entry.l1TtlMs ?? 15_000, entry.tags ?? []);
+            }
+        }
+
+        if (!isRedisAvailable()) return;
+        const redis = getRedisClient();
+        if (!redis) return;
+
+        try {
+            const pipeline = redis.pipeline();
+            for (const entry of entries) {
+                const ttl = entry.ttlSeconds ?? config.redis.ttlCutoff;
+                pipeline.setex(entry.key, ttl, JSON.stringify(entry.value));
+                if (entry.tags && entry.tags.length > 0) {
+                    for (const tag of entry.tags) {
+                        const tagKey = `tag:${tag}`;
+                        pipeline.sadd(tagKey, entry.key);
+                        pipeline.expire(tagKey, 86400);
+                    }
+                }
+            }
+            await pipeline.exec();
+        } catch (error: any) {
+            logger.warn({ layer: 'cache', action: 'SET_BATCH_ERROR', payload: { error: error?.message } });
+        }
+    }
+
+    /**
      * Eliminar valor del caché
      */
     static async del(key: string): Promise<void> {

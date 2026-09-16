@@ -19,9 +19,10 @@ import { commissionResolver } from "../../../services/commission/CommissionResol
 import { CommissionPolicy, CommissionRule } from "../../../services/commission/types/CommissionTypes";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { crDateService } from "../../../utils/crDateService";
-import { getPreviousMonthFinalBalance } from "./accounts/accounts.balances";
-import { getMonthlyRemainingBalance } from "./accounts/accounts.service";
+import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.balances";
+import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "./accounts/accounts.service";
 import { CacheService } from "../../../core/cache.service";
+import { getRedisClient } from "../../../core/redisClient";
 import crypto from 'crypto';
 import { ConcurrencyManager, SharedWarmupPool } from "../../../utils/concurrency";
 import { SorteoEvaluationCoordinator } from "./sorteoEvaluation.coordinator";
@@ -2353,11 +2354,440 @@ gs."hour24" ASC
 },
 
   /**
+   * Precalentamiento atómico O(1) de resúmenes evaluados para todos los vendedores
+   * involucrados en un sorteo y su banca.
+   * Ejecuta agregaciones en lote en PostgreSQL (<50ms) y puebla simultáneamente L1 (RAM)
+   * y L2 (Upstash Redis) mediante un pipeline atómico, eliminando 234+ queries individuales.
+   */
+  async warmupSorteoSummariesBatch(sorteoId: string, bancaId?: string | null): Promise<void> {
+    const redis = getRedisClient();
+    const lockKey = `lock:warmup:batch:${sorteoId}`;
+    let lockAcquired = false;
+
+    if (redis) {
+      try {
+        // 1. Idempotencia y exclusión mutua distribuida: prevenir que 2 instancias en Render
+        // procesen concurrentemente el mismo batch del sorteo.
+        const lockRes = await (redis as any).set(lockKey, "locked", "PX", 15000, "NX");
+        if (lockRes !== "OK") {
+          logger.info({
+            layer: "service",
+            action: "WARMUP_BATCH_LOCK_SKIPPED",
+            payload: { sorteoId, message: `Omitido para sorteo ${sorteoId}: ya en ejecución por otra instancia` },
+          });
+          return;
+        }
+        lockAcquired = true;
+      } catch (lockErr: any) {
+        logger.warn({
+          layer: "service",
+          action: "WARMUP_BATCH_LOCK_WARN",
+          payload: { sorteoId, error: lockErr?.message },
+        });
+      }
+    }
+
+    const startTime = Date.now();
+
+    try {
+      // Resolver rangos de fecha de negocio en Costa Rica (UTC-6)
+      const todayRange = resolveDateRange("today");
+      const todayComponents = getCRLocalComponents(todayRange.fromAt);
+      const todayDateStr = `${todayComponents.year}-${String(todayComponents.month).padStart(2, '0')}-${String(todayComponents.day).padStart(2, '0')}`;
+      const effectiveMonth = `${todayComponents.year}-${String(todayComponents.month).padStart(2, '0')}`;
+
+      const [year, month, day] = todayDateStr.split('-').map(Number);
+      const todayUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+
+      const monthlyRange = resolveDateRange("month");
+      const monthlyStartDateStr = crDateService.dateUTCToCRString(monthlyRange.fromAt);
+      const monthlyEndDateStr = crDateService.dateUTCToCRString(monthlyRange.toAt);
+
+      // 1. Vendedores activos de la estructura
+      const activeVendors = await prisma.user.findMany({
+        where: {
+          role: Role.VENDEDOR,
+          isActive: true,
+          ...(bancaId ? { ventana: { bancaId } } : {}),
+        },
+        select: {
+          id: true,
+          settings: true,
+        },
+      });
+
+      // 2. Vendedores con AccountStatement hoy (para incluir vendedores sin ventas en este sorteo pero con balance)
+      const statementsToday = await prisma.accountStatement.findMany({
+        where: {
+          date: todayUTC,
+          vendedorId: { not: null },
+          ...(bancaId ? { bancaId } : {}),
+        },
+        select: {
+          id: true,
+          vendedorId: true,
+          totalSales: true,
+          totalPayouts: true,
+          vendedorCommission: true,
+          ticketCount: true,
+          totalPaid: true,
+          totalCollected: true,
+          balance: true,
+          remainingBalance: true,
+          accumulatedBalance: true,
+        },
+      });
+
+      // 3. Vendedores con registro en ResumenCierreDiario para este sorteo específico
+      const rcdSorteoVendors = await prisma.resumenCierreDiario.findMany({
+        where: { sorteoId },
+        select: { vendedorId: true },
+        distinct: ['vendedorId'],
+      });
+
+      const allVendorIdsSet = new Set<string>();
+      const vendorResetMap = new Map<string, Date | null>();
+
+      for (const v of activeVendors) {
+        allVendorIdsSet.add(v.id);
+        const resetAt =
+          v.settings && (v.settings as Record<string, any>).balanceResetAt
+            ? new Date((v.settings as Record<string, any>).balanceResetAt)
+            : null;
+        vendorResetMap.set(v.id, resetAt);
+      }
+      for (const s of statementsToday) {
+        if (s.vendedorId) allVendorIdsSet.add(s.vendedorId);
+      }
+      for (const r of rcdSorteoVendors) {
+        if (r.vendedorId) allVendorIdsSet.add(r.vendedorId);
+      }
+
+      const allVendorIds = Array.from(allVendorIdsSet);
+
+      if (allVendorIds.length === 0) {
+        logger.info({
+          layer: 'service',
+          action: 'WARMUP_BATCH_SKIPPED_NO_VENDORS',
+          payload: { sorteoId, bancaId },
+        });
+        return;
+      }
+
+      logger.info({
+        layer: 'service',
+        action: 'WARMUP_BATCH_START',
+        payload: { sorteoId, bancaId, totalVendors: allVendorIds.length },
+      });
+
+      // Indexar statements de hoy por vendedorId
+      const statementByVendor = new Map<string, (typeof statementsToday)[0]>();
+      for (const s of statementsToday) {
+        if (s.vendedorId) statementByVendor.set(s.vendedorId, s);
+      }
+
+      const vendorUuids = allVendorIds.map((id) => Prisma.sql`${id}::uuid`);
+
+      // 4. Ejecución en paralelo de métricas consolidadas (PostgreSQL batch)
+      const [
+        rcdTodayRows,
+        rcdMonthRows,
+        paymentsMonthRows,
+        prevMonthBalancesMap,
+        realMonthlyRemainingBalancesMap,
+        totalSorteosEvaluatedToday,
+      ] = await Promise.all([
+        // Desglose de comisiones hoy por tipo (NUMERO vs REVENTADO)
+        prisma.$queryRaw<
+          Array<{
+            vendedorId: string;
+            commission_by_number: number;
+            commission_by_reventado: number;
+            total_sorteos: bigint | number;
+          }>
+        >(Prisma.sql`
+          SELECT 
+            rcd."vendedorId",
+            COALESCE(SUM(CASE WHEN rcd.tipo = 'NUMERO' THEN rcd."comisionVendedor" ELSE 0 END), 0) as commission_by_number,
+            COALESCE(SUM(CASE WHEN rcd.tipo = 'REVENTADO' THEN rcd."comisionVendedor" ELSE 0 END), 0) as commission_by_reventado,
+            COUNT(DISTINCT rcd."sorteoId") as total_sorteos
+          FROM "ResumenCierreDiario" rcd
+          WHERE rcd."businessDate" = ${todayDateStr}::date
+            AND rcd."vendedorId" IN (${Prisma.join(vendorUuids)})
+          GROUP BY rcd."vendedorId"
+        `),
+
+        // Totales mensuales de ventas, premios y comisiones
+        prisma.$queryRaw<
+          Array<{
+            vendedorId: string;
+            total_sales: number;
+            total_commission: number;
+            commission_by_number: number;
+            commission_by_reventado: number;
+            total_prizes: number;
+            total_tickets: bigint | number;
+          }>
+        >(Prisma.sql`
+          SELECT 
+            rcd."vendedorId",
+            COALESCE(SUM(rcd."totalVendida"), 0) as total_sales,
+            COALESCE(SUM(rcd."comisionVendedor"), 0) as total_commission,
+            COALESCE(SUM(CASE WHEN rcd.tipo = 'NUMERO' THEN rcd."comisionVendedor" ELSE 0 END), 0) as commission_by_number,
+            COALESCE(SUM(CASE WHEN rcd.tipo = 'REVENTADO' THEN rcd."comisionVendedor" ELSE 0 END), 0) as commission_by_reventado,
+            COALESCE(SUM(rcd.ganado), 0) as total_prizes,
+            COALESCE(SUM(rcd."ticketsCount"), 0) as total_tickets
+          FROM "ResumenCierreDiario" rcd
+          WHERE rcd."businessDate" >= ${monthlyStartDateStr}::date
+            AND rcd."businessDate" <= ${monthlyEndDateStr}::date
+            AND rcd."vendedorId" IN (${Prisma.join(vendorUuids)})
+          GROUP BY rcd."vendedorId"
+        `),
+
+        // Pagos y cobros mensuales
+        prisma.$queryRaw<
+          Array<{
+            vendedorId: string;
+            total_paid: number;
+            total_collected: number;
+          }>
+        >(Prisma.sql`
+          SELECT 
+            ap."vendedorId",
+            COALESCE(SUM(CASE WHEN ap.type = 'payment' THEN ap.amount ELSE 0 END), 0) as total_paid,
+            COALESCE(SUM(CASE WHEN ap.type = 'collection' THEN ap.amount ELSE 0 END), 0) as total_collected
+          FROM "AccountPayment" ap
+          WHERE ap."date" >= ${monthlyStartDateStr}::date
+            AND ap."date" <= ${monthlyEndDateStr}::date
+            AND ap."isReversed" = false
+            AND (ap.id NOT LIKE 'previous-month-balance-%' OR ap.id IS NULL)
+            AND ap."vendedorId" IN (${Prisma.join(vendorUuids)})
+          GROUP BY ap."vendedorId"
+        `),
+
+        // Balances del mes anterior en lote
+        getPreviousMonthFinalBalancesBatch(effectiveMonth, "vendedor", allVendorIds, bancaId),
+
+        // Balances mensuales remanentes reales en lote
+        getMonthlyRemainingBalancesBatch(effectiveMonth, "vendedor", allVendorIds),
+
+        // Total de sorteos evaluados hoy
+        prisma.sorteo.count({
+          where: {
+            status: SorteoStatus.EVALUATED,
+            scheduledAt: {
+              gte: todayRange.fromAt,
+              lte: todayRange.toAt,
+            },
+            ...(bancaId ? { bancaId } : {}),
+          },
+        }),
+      ]);
+
+      // Mapear resultados indexados por vendedorId
+      const rcdTodayByVendor = new Map<string, (typeof rcdTodayRows)[0]>();
+      for (const r of rcdTodayRows) rcdTodayByVendor.set(r.vendedorId, r);
+
+      const rcdMonthByVendor = new Map<string, (typeof rcdMonthRows)[0]>();
+      for (const r of rcdMonthRows) rcdMonthByVendor.set(r.vendedorId, r);
+
+      const paymentsMonthByVendor = new Map<string, (typeof paymentsMonthRows)[0]>();
+      for (const r of paymentsMonthRows) paymentsMonthByVendor.set(r.vendedorId, r);
+
+      // 5. Construcción de Payloads y Claves de Caché
+      const cacheEntries: Array<{
+        key: string;
+        value: any;
+        ttlSeconds: number;
+        tags: string[];
+        useL1: boolean;
+        l1TtlMs: number;
+      }> = [];
+
+      for (const vId of allVendorIds) {
+        const stmt = statementByVendor.get(vId);
+        const rcdToday = rcdTodayByVendor.get(vId);
+        const rcdMonth = rcdMonthByVendor.get(vId);
+        const payMonth = paymentsMonthByVendor.get(vId);
+
+        const totalSales = stmt ? stmt.totalSales : 0;
+        const totalCommission = stmt ? stmt.vendedorCommission : 0;
+        const commissionByNumber = Number(rcdToday?.commission_by_number || 0);
+        const commissionByReventado = Number(rcdToday?.commission_by_reventado || 0);
+        const totalPrizes = stmt ? stmt.totalPayouts : 0;
+        const totalTickets = stmt ? stmt.ticketCount : 0;
+        const totalPaid = stmt ? stmt.totalPaid : 0;
+        const totalCollected = stmt ? stmt.totalCollected : 0;
+        const totalBalance = stmt ? stmt.balance : totalSales - totalPrizes - totalCommission;
+        const totalRemainingBalance = stmt ? stmt.remainingBalance : totalBalance - totalCollected + totalPaid;
+        const totalSubtotal = totalRemainingBalance;
+        const accumulated = stmt ? Number(stmt.remainingBalance) || Number(stmt.accumulatedBalance) || 0 : 0;
+
+        const dayTotals = {
+          totalSales,
+          totalCommission,
+          commissionByNumber,
+          commissionByReventado,
+          totalPrizes,
+          totalTickets,
+          totalPaid,
+          totalCollected,
+          totalBalance,
+          totalRemainingBalance,
+          totalSubtotal,
+          accumulated,
+        };
+
+        const hasActivityToday =
+          totalSales > 0 || totalPrizes > 0 || totalCommission > 0 || totalTickets > 0 || totalPaid > 0 || totalCollected > 0;
+        const hasBalance = accumulated !== 0;
+
+        let daysArray: any[] = [];
+        if (hasActivityToday || hasBalance) {
+          daysArray = [
+            {
+              date: todayDateStr,
+              sorteos: [], // summaryOnly: true -> siempre vacío
+              dayTotals,
+            },
+          ];
+        }
+
+        // Respetar balanceResetAt si aplica al vendedor
+        const resetAt = vendorResetMap.get(vId);
+        let finalDaysArray = daysArray;
+        if (resetAt) {
+          const resetAtDayStr = crDateService.dateUTCToCRString(resetAt);
+          finalDaysArray = daysArray.filter((day) => day.date >= resetAtDayStr);
+        }
+
+        const totals = {
+          totalSales: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalSales, 0),
+          totalCommission: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalCommission, 0),
+          commissionByNumber: finalDaysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByNumber || 0), 0),
+          commissionByReventado: finalDaysArray.reduce((sum, d) => sum + (d.dayTotals.commissionByReventado || 0), 0),
+          totalPrizes: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalPrizes, 0),
+          totalTickets: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalTickets, 0),
+          totalPaid: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalPaid, 0),
+          totalCollected: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalCollected, 0),
+          totalBalance: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalBalance, 0),
+          totalRemainingBalance: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
+          totalSubtotal: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
+        };
+
+        // Métricas de monthlyAccumulated
+        const mTotalSales = Number(rcdMonth?.total_sales) || 0;
+        const mTotalCommission = Number(rcdMonth?.total_commission) || 0;
+        const mCommissionByNumber = Number(rcdMonth?.commission_by_number) || 0;
+        const mCommissionByReventado = Number(rcdMonth?.commission_by_reventado) || 0;
+        const mTotalPrizes = Number(rcdMonth?.total_prizes) || 0;
+        const mTotalTickets = Number(rcdMonth?.total_tickets) || 0;
+
+        const mTotalPaid = Number(payMonth?.total_paid) || 0;
+        const mTotalCollected = Number(payMonth?.total_collected) || 0;
+
+        const mTotalBalance = mTotalSales - mTotalPrizes - mTotalCommission;
+        const mTotalRemainingBalance = mTotalBalance - mTotalCollected + mTotalPaid;
+
+        const prevBalance = prevMonthBalancesMap.get(vId) || 0;
+        const realMonRemaining = realMonthlyRemainingBalancesMap.get(vId) ?? null;
+
+        const finalMonthlyBalance = prevBalance + mTotalBalance;
+        const finalMonthlyRemainingBalance =
+          realMonRemaining !== null ? realMonRemaining : prevBalance + mTotalRemainingBalance;
+
+        const monthlyAccumulated = {
+          totalSales: mTotalSales,
+          totalCommission: mTotalCommission,
+          commissionByNumber: mCommissionByNumber,
+          commissionByReventado: mCommissionByReventado,
+          totalPrizes: mTotalPrizes,
+          totalTickets: mTotalTickets,
+          totalPaid: mTotalPaid,
+          totalCollected: mTotalCollected,
+          totalBalance: finalMonthlyBalance,
+          totalRemainingBalance: finalMonthlyRemainingBalance,
+          totalSubtotal: finalMonthlyRemainingBalance,
+        };
+
+        const payload = {
+          data: finalDaysArray,
+          meta: {
+            totals,
+            monthlyAccumulated,
+            dateFilter: "today",
+            totalSorteos: Number(rcdToday?.total_sorteos) || totalSorteosEvaluatedToday,
+            totalDays: finalDaysArray.length,
+          },
+        };
+
+        // Construir hash normalizado para summaryOnly: true
+        const normalizedKeyData = {
+          date: "today",
+          fromDate: null,
+          toDate: null,
+          scope: "mine",
+          loteriaId: null,
+          isActive: true,
+          summaryOnly: true,
+          vendedorId: vId,
+          ignoreReset: false,
+        };
+
+        const hash = crypto.createHash('md5').update(JSON.stringify(normalizedKeyData)).digest('hex');
+        const cacheKey = `banca:all:ventana:all:vendedor:${vId}:summary:${hash}`;
+
+        cacheEntries.push({
+          key: cacheKey,
+          value: payload,
+          ttlSeconds: 60,
+          tags: ['report:summary', `vendedor:${vId}`],
+          useL1: true,
+          l1TtlMs: 20_000, // TTL L1 acotado a 20s para coherencia multi-instancia
+        });
+      }
+
+      // 6. Inyección masiva y atómica a través de L1 RAM y Pipeline Upstash Redis L2
+      await CacheService.setBatch(cacheEntries);
+
+      logger.info({
+        layer: 'service',
+        action: 'WARMUP_BATCH_COMPLETED',
+        payload: {
+          sorteoId,
+          bancaId,
+          totalVendors: allVendorIds.length,
+          entriesCached: cacheEntries.length,
+          durationMs: Date.now() - startTime,
+        },
+      });
+    } finally {
+      // 7. Liberación obligatoria del candado distribuido
+      if (lockAcquired && redis) {
+        await redis.del(lockKey).catch(() => {});
+      }
+    }
+  },
+
+  /**
    * Pre-calienta el caché de evaluated-summary para los vendedores de la banca
    * justo después de que un sorteo se evalúa y liquida contablemente.
-   * Evita el Thundering Herd cuando los clientes reciben el evento de WebSocket.
+   * Ejecuta primero el batch O(1) masivo, con fallback transparente a SharedWarmupPool.
    */
   async warmupEvaluatedSummaries(sorteoId: string, bancaId?: string | null): Promise<void> {
+    try {
+      // 1. Camino primario: Batch Aggregation O(1) con Distributed Lock y MSET/Pipeline
+      await this.warmupSorteoSummariesBatch(sorteoId, bancaId);
+      return;
+    } catch (batchErr: any) {
+      logger.warn({
+        layer: 'service',
+        action: 'WARMUP_BATCH_FAILED_FALLBACK_POOL',
+        payload: { sorteoId, bancaId, error: batchErr?.message || String(batchErr) },
+      });
+    }
+
+    // 2. Fallback de seguridad: pool global con límite estricto de concurrencia
     try {
       let vendorIds: string[] = [];
 
@@ -2403,15 +2833,12 @@ gs."hour24" ASC
 
       logger.info({
         layer: 'service',
-        action: 'WARMUP_EVALUATED_SUMMARY_START',
+        action: 'WARMUP_EVALUATED_SUMMARY_FALLBACK_START',
         payload: { sorteoId, bancaId, totalVendors: vendorIds.length },
       });
 
       const startTime = Date.now();
 
-      // Pre-calcular evaluatedSummary para cada vendedor canalizado por SharedWarmupPool (máx 5 workers globales)
-      // para no saturar el pool de conexiones de Prisma aun con sorteos evaluados en simultáneo.
-      // Se utiliza forceRefresh: true para refrescar y poblar directamente L1 y L2 sin invalidaciones globales destructivas.
       const warmupTasks = vendorIds.map((vId) => () =>
         this.evaluatedSummary(
           {
@@ -2432,7 +2859,7 @@ gs."hour24" ASC
 
       logger.info({
         layer: 'service',
-        action: 'WARMUP_EVALUATED_SUMMARY_COMPLETED',
+        action: 'WARMUP_EVALUATED_SUMMARY_FALLBACK_COMPLETED',
         payload: {
           sorteoId,
           bancaId,
