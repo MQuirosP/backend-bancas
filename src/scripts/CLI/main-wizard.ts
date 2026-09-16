@@ -7,6 +7,7 @@ import { runFixStatements } from './fix-statements-cli';
 import { runCheckCierres } from './check-cierres-cli';
 import { runSorteosWizard } from './sorteos-cli';
 import { runAcopioSalesRebuild } from './acopio-cli';
+import { runMonitorEvaluation } from './monitor-evaluation-cli';
 
 /**
  * main-wizard.ts
@@ -72,9 +73,10 @@ async function main() {
     console.log(`  [3] 🔧  Corrección y Re-Sincronización de Saldos (AccountStatement Fix)`);
     console.log(`  [4] 📈  Auditoría de Cierres Diarios por Banca (ResumenCierreDiario)`);
     console.log(`  [5] 🧮  Re-Agregación de Acopio de Ventas (DailyNumberSales)`);
+    console.log(`  [6] 📡  Monitoreo en Tiempo Real de Sorteos y Terminales (Better Stack Logs)`);
     console.log(`  [0] 🚪  Salir`);
 
-    const optionChoice = await ask(`\nOpción (0-5): `);
+    const optionChoice = await ask(`\nOpción (0-6): `);
 
     if (optionChoice === '0' || isBack(optionChoice)) {
       console.log(`\n👋  Saliendo de la Suite de Soporte.`);
@@ -115,6 +117,11 @@ async function main() {
       const banca = await selectBancaPrompt();
       if (banca.isBack) continue;
       await runAcopioSalesRebuild({ fromStr: dates.fromStr, toStr: dates.toStr, bancaId: banca.id });
+      await ask(`\nPresione ENTER para continuar...`);
+    } else if (optionChoice === '6') {
+      const minInput = await ask(`\n⏱️  Ventana en minutos a consultar [ENTER para 15 minutos]: `);
+      const minutes = parseInt(minInput, 10) || 15;
+      await runMonitorEvaluation(minutes);
       await ask(`\nPresione ENTER para continuar...`);
     } else {
       console.log(`❌  Opción no válida.`);
