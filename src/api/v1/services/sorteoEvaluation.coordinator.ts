@@ -128,11 +128,11 @@ export class SorteoEvaluationCoordinator {
       const { invalidateCacheForSorteo } = await import("../../../utils/accountStatementCache");
       await invalidateCacheForSorteo({ scheduledAt: existingSorteo.scheduledAt });
 
-      // Actualizar tabla de rollups (ResumenCierreDiario) desacoplada en background con debounce de 8s
+      // Actualizar tabla de rollups (ResumenCierreDiario) desacoplada en background con debounce de 25s
       const { CierreRollupService } = await import("./cierre.rollup.service");
       const { tz } = await import("../../../utils/timezone");
       const dateStr = syncOutput?.businessDate || (existingSorteo.scheduledAt ? tz.toDateStr(existingSorteo.scheduledAt) : tz.toDateStr());
-      CierreRollupService.scheduleDebouncedAggregate(dateStr, dateStr, 8000);
+      CierreRollupService.scheduleDebouncedAggregate(dateStr, dateStr, 25000);
     } catch (syncErr: any) {
       logger.error({
         layer: "coordinator",
