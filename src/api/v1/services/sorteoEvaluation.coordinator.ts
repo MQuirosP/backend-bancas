@@ -132,6 +132,7 @@ export class SorteoEvaluationCoordinator {
     // 3. Limpieza de Caché (Memoria y Redis)
     try {
       clearSorteoCache();
+      await CacheService.invalidateTag('sorteos').catch(() => {});
       await CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
       await CacheService.invalidateTag('dashboard').catch(() => {});
       await CacheService.invalidateTag('cierre').catch(() => {});

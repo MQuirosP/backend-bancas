@@ -223,6 +223,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag('sorteos').catch(() => {});
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const details: Record<string, any> = {};
@@ -308,6 +309,7 @@ const SorteoService = {
     }
 
     const s = await SorteoRepository.forceOpen(id);
+    CacheService.invalidateTag('sorteos').catch(() => {});
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
@@ -367,6 +369,9 @@ const SorteoService = {
         },
       },
     });
+    const { clearSorteoCache } = require('../../../utils/sorteoCache');
+    clearSorteoCache();
+    CacheService.invalidateTag('sorteos').catch(() => {});
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const details: Prisma.InputJsonObject = {
@@ -464,6 +469,7 @@ const SorteoService = {
         },
       },
     });
+    CacheService.invalidateTag('sorteos').catch(() => {});
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(s.scheduledAt);
@@ -506,6 +512,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag('sorteos').catch(() => {});
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
@@ -550,6 +557,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag('sorteos').catch(() => {});
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
@@ -630,6 +638,7 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag('sorteos').catch(() => {});
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
 
     const details: Record<string, any> = {};
@@ -699,6 +708,7 @@ const SorteoService = {
         // Invalidar cache de sorteos, dashboard y cierres
         const { clearSorteoCache } = require('../../../utils/sorteoCache');
         clearSorteoCache();
+        await CacheService.invalidateTag('sorteos').catch(() => {});
         await CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
         await CacheService.invalidateTag('dashboard').catch(() => {});
         await CacheService.invalidateTag('cierre').catch(() => {});
