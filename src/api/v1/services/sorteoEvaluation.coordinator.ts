@@ -93,7 +93,7 @@ export class SorteoEvaluationCoordinator {
     evaluatedSorteo: any,
     userId: string
   ): Promise<void> {
-    // 1. Sincronización de Cuentas (Espera a que los balances y cierres se calculen)
+    // 1. Sincronización de Cuentas (Nativo en PostgreSQL vía fn_sync_sorteo_statements)
     try {
       logger.info({
         layer: "coordinator",
@@ -101,14 +101,38 @@ export class SorteoEvaluationCoordinator {
         payload: { sorteoId: id, scheduledAt: existingSorteo.scheduledAt },
       });
 
-      const { AccountStatementSyncService } = await import("./accounts/accounts.sync.service");
-      await AccountStatementSyncService.syncSorteoStatements(id, existingSorteo.scheduledAt);
+      const syncStart = Date.now();
+      const syncResultRaw = await prisma.$queryRawUnsafe<Array<{ fn_sync_sorteo_statements: any }>>(
+        `SELECT fn_sync_sorteo_statements($1::uuid, false)`,
+        id
+      );
+
+      const syncOutput = syncResultRaw?.[0]?.fn_sync_sorteo_statements;
+      const syncDuration = Date.now() - syncStart;
 
       logger.info({
         layer: "coordinator",
         action: "SORTEO_EVALUATE_SYNC_COMPLETED",
-        payload: { sorteoId: id },
+        payload: {
+          sorteoId: id,
+          durationMs: syncDuration,
+          dbExecutionMs: syncOutput?.executionTimeMs,
+          vendedores: syncOutput?.counts?.vendedores,
+          ventanas: syncOutput?.counts?.ventanas,
+          bancas: syncOutput?.counts?.bancas,
+          totalEntities: syncOutput?.counts?.total,
+        },
       });
+
+      // Invalidar caché de statements del día
+      const { invalidateCacheForSorteo } = await import("../../../utils/accountStatementCache");
+      await invalidateCacheForSorteo({ scheduledAt: existingSorteo.scheduledAt });
+
+      // Actualizar tabla de rollups (ResumenCierreDiario) desacoplada en background con debounce de 8s
+      const { CierreRollupService } = await import("./cierre.rollup.service");
+      const { tz } = await import("../../../utils/timezone");
+      const dateStr = syncOutput?.businessDate || (existingSorteo.scheduledAt ? tz.toDateStr(existingSorteo.scheduledAt) : tz.toDateStr());
+      CierreRollupService.scheduleDebouncedAggregate(dateStr, dateStr, 8000);
     } catch (syncErr: any) {
       logger.error({
         layer: "coordinator",
