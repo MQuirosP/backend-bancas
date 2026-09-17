@@ -175,19 +175,37 @@ export class SorteoEvaluationCoordinator {
     // y no se genere avalancha (Thundering Herd / Cache Stampede) sobre PostgreSQL.
     const warmupStart = Date.now();
     try {
+      const activeVendorsCount = await prisma.user.count({
+        where: {
+          role: Role.VENDEDOR,
+          isActive: true,
+          ...(existingSorteo.bancaId ? { ventana: { bancaId: existingSorteo.bancaId } } : {}),
+        },
+      });
+
       logger.info({
         layer: "coordinator",
         action: "WARMUP_EVALUATED_SUMMARY_START",
-        payload: { sorteoId: id, bancaId: existingSorteo.bancaId },
+        payload: {
+          sorteoId: id,
+          bancaId: existingSorteo.bancaId,
+          totalVendors: activeVendorsCount,
+        },
       });
 
       const SorteoService = (await import("./sorteo.service")).default;
-      await SorteoService.warmupEvaluatedSummaries(id, existingSorteo.bancaId);
+      const warmupResult = await SorteoService.warmupEvaluatedSummaries(id, existingSorteo.bancaId);
 
       logger.info({
         layer: "coordinator",
         action: "WARMUP_EVALUATED_SUMMARY_COMPLETED",
-        payload: { sorteoId: id, durationMs: Date.now() - warmupStart },
+        payload: {
+          sorteoId: id,
+          bancaId: existingSorteo.bancaId,
+          totalVendors: warmupResult?.totalVendors ?? activeVendorsCount,
+          entriesCached: warmupResult?.entriesCached ?? activeVendorsCount,
+          durationMs: Date.now() - warmupStart,
+        },
       });
     } catch (warmupErr: any) {
       logger.error({

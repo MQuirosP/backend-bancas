@@ -5,6 +5,31 @@ import logger from '../../../core/logger';
 export class CierreRollupService {
   private static activeRollups = new Map<string, Promise<void>>();
   private static pendingRollups = new Set<string>();
+  private static debounceTimers = new Map<string, NodeJS.Timeout>();
+
+  /**
+   * Programa la agregación con debounce de retardo para no solapar el bloqueo destructivo
+   * con la ráfaga de evaluación y tráfico inmediato post-sorteo.
+   */
+  static scheduleDebouncedAggregate(startDate: string, endDate: string, delayMs = 8000): void {
+    const key = `${startDate}_${endDate}`;
+    if (this.debounceTimers.has(key)) {
+      clearTimeout(this.debounceTimers.get(key)!);
+    }
+
+    const timer = setTimeout(() => {
+      this.debounceTimers.delete(key);
+      this.aggregateRange(startDate, endDate).catch((err: any) => {
+        logger.error({
+          layer: 'service',
+          action: 'DEBOUNCED_ROLLUP_ERROR',
+          payload: { startDate, endDate, error: err?.message || String(err) },
+        });
+      });
+    }, delayMs);
+
+    this.debounceTimers.set(key, timer);
+  }
 
   /**
    * Recalcula la tabla ResumenCierreDiario para una o varias fechas específicas.

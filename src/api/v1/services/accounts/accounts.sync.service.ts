@@ -545,7 +545,7 @@ export class AccountStatementSyncService {
       for (const ventanaId of Array.from(uniqueVentanas)) tasks.push(() => this.syncDayStatementFromBySorteo(dateStr, "ventana", ventanaId));
       for (const bancaId of Array.from(uniqueBancas)) tasks.push(() => this.syncDayStatementFromBySorteo(dateStr, "banca", bancaId));
 
-      const syncResults = await ConcurrencyManager.runLimitedSettled(tasks, { limit: 5, label: "SyncSorteoStatements" });
+      const syncResults = await ConcurrencyManager.runLimitedSettled(tasks, { limit: 2, label: "SyncSorteoStatements" });
       const syncFailures = syncResults.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
 
       const todayCR = crDateService.dateUTCToCRString(new Date());
@@ -570,16 +570,9 @@ export class AccountStatementSyncService {
       );
 
       // 🔄 Actualizar tabla de rollups (ResumenCierreDiario) desacoplada en background
-      // para no demorar la finalización del sorteo ni competir contra las ventas activas ni saturar I/O.
-      setImmediate(() => {
-        CierreRollupService.aggregateRange(dateStr, dateStr).catch((rollupErr: any) => {
-          logger.error({
-            layer: "service",
-            action: "ROLLUP_AGGREGATE_BACKGROUND_ERROR",
-            payload: { sorteoId, dateStr, error: rollupErr?.message || String(rollupErr) }
-          });
-        });
-      });
+      // con debounce de 8s para no solapar el lock analítico destructivo con la ráfaga inmediata del sorteo
+      // y amortiguar sorteos en ráfaga (5 sorteos ejecutarán 1 solo rollup consolidado al calmarse el tráfico).
+      CierreRollupService.scheduleDebouncedAggregate(dateStr, dateStr, 8000);
 
     } catch (error) {
       logger.error({ layer: "service", action: "SYNC_SORTEO_STATEMENTS_ERROR", payload: { sorteoId, sorteoDateStrCR, error: (error as Error).message } });

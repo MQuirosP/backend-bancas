@@ -1425,7 +1425,7 @@ gs."hour24" ASC
                 const waitStart = Date.now();
                 while (Date.now() - waitStart < 2500) {
                   await new Promise((r) => setTimeout(r, 80));
-                  const cached = await CacheService.get<any>(cacheKey, true, 15_000);
+                  const cached = await CacheService.get<any>(cacheKey, true, 90_000);
                   if (cached !== null) {
                     logger.info({
                       layer: "service",
@@ -2402,7 +2402,7 @@ gs."hour24" ASC
         await redis.del(inflightLockKey).catch(() => {});
       }
     }
-  }, 60, tags, true, 15_000, isForceRefresh);
+  }, 300, tags, true, 90_000, isForceRefresh);
     });
   },
 
@@ -2432,7 +2432,10 @@ gs."hour24" ASC
    * Ejecuta agregaciones en lote en PostgreSQL (<50ms) y puebla simultáneamente L1 (RAM)
    * y L2 (Upstash Redis) mediante un pipeline atómico, eliminando 234+ queries individuales.
    */
-  async warmupSorteoSummariesBatch(sorteoId: string, bancaId?: string | null): Promise<void> {
+  async warmupSorteoSummariesBatch(
+    sorteoId: string,
+    bancaId?: string | null
+  ): Promise<{ totalVendors: number; entriesCached: number }> {
     const redis = getRedisClient();
     const lockKey = `lock:warmup:batch:${sorteoId}`;
     let lockAcquired = false;
@@ -2451,7 +2454,7 @@ gs."hour24" ASC
           // Esperar activamente a que la instancia que adquirió el lock termine de escribir en Redis/L1
           // para no disparar el broadcast WebSocket prematuramente y causar Cache Stampede.
           await this.waitForWarmupLockRelease(lockKey, 5000);
-          return;
+          return { totalVendors: 0, entriesCached: 0 };
         }
         lockAcquired = true;
       } catch (lockErr: any) {
@@ -2547,7 +2550,7 @@ gs."hour24" ASC
           action: 'WARMUP_BATCH_SKIPPED_NO_VENDORS',
           payload: { sorteoId, bancaId },
         });
-        return;
+        return { totalVendors: 0, entriesCached: 0 };
       }
 
       logger.info({
@@ -2815,10 +2818,10 @@ gs."hour24" ASC
         cacheEntries.push({
           key: cacheKey,
           value: payload,
-          ttlSeconds: 60,
+          ttlSeconds: 300, // 5 minutos en Upstash Redis L2
           tags: ['report:summary', `vendedor:${vId}`],
           useL1: true,
-          l1TtlMs: 20_000, // TTL L1 acotado a 20s para coherencia multi-instancia
+          l1TtlMs: 90_000, // 90s en L1 RAM para resiliencia ante ráfagas
         });
       }
 
@@ -2836,6 +2839,11 @@ gs."hour24" ASC
           durationMs: Date.now() - startTime,
         },
       });
+
+      return {
+        totalVendors: allVendorIds.length,
+        entriesCached: cacheEntries.length,
+      };
     } finally {
       // 7. Liberación obligatoria del candado distribuido
       if (lockAcquired && redis) {
@@ -2849,11 +2857,14 @@ gs."hour24" ASC
    * justo después de que un sorteo se evalúa y liquida contablemente.
    * Ejecuta primero el batch O(1) masivo, con fallback transparente a SharedWarmupPool.
    */
-  async warmupEvaluatedSummaries(sorteoId: string, bancaId?: string | null): Promise<void> {
+  async warmupEvaluatedSummaries(
+    sorteoId: string,
+    bancaId?: string | null
+  ): Promise<{ totalVendors: number; entriesCached: number }> {
     try {
       // 1. Camino primario: Batch Aggregation O(1) con Distributed Lock y MSET/Pipeline
-      await this.warmupSorteoSummariesBatch(sorteoId, bancaId);
-      return;
+      const batchRes = await this.warmupSorteoSummariesBatch(sorteoId, bancaId);
+      return batchRes || { totalVendors: 0, entriesCached: 0 };
     } catch (batchErr: any) {
       logger.warn({
         layer: 'service',
@@ -2883,7 +2894,6 @@ gs."hour24" ASC
             isActive: true,
           },
           select: { id: true },
-          take: 50,
         });
         vendorIds = users.map((u) => u.id);
       }
@@ -2903,7 +2913,7 @@ gs."hour24" ASC
           action: 'WARMUP_SKIPPED_NO_VENDORS',
           payload: { sorteoId, bancaId },
         });
-        return;
+        return { totalVendors: 0, entriesCached: 0 };
       }
 
       logger.info({
@@ -2942,12 +2952,15 @@ gs."hour24" ASC
           durationMs: Date.now() - startTime,
         },
       });
+
+      return { totalVendors: vendorIds.length, entriesCached: vendorIds.length };
     } catch (err: any) {
       logger.warn({
         layer: 'service',
         action: 'WARMUP_EVALUATED_SUMMARY_ERROR',
         payload: { sorteoId, bancaId, error: err?.message || String(err) },
       });
+      return { totalVendors: 0, entriesCached: 0 };
     }
   },
 };
