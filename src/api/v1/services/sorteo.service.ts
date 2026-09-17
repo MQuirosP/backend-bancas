@@ -24,7 +24,7 @@ import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "./
 import { CacheService } from "../../../core/cache.service";
 import { getRedisClient } from "../../../core/redisClient";
 import crypto from 'crypto';
-import { ConcurrencyManager, SharedWarmupPool } from "../../../utils/concurrency";
+import { ConcurrencyManager, SharedWarmupPool, SingleFlight } from "../../../utils/concurrency";
 import { SorteoEvaluationCoordinator } from "./sorteoEvaluation.coordinator";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
@@ -1396,16 +1396,54 @@ gs."hour24" ASC
 
     const isForceRefresh = Boolean(params.forceRefresh);
 
-    return CacheService.wrap(
-      cacheKey,
-      async () => {
-        try {
-          // Resolver rango de fechas
-      const dateRange = resolveDateRange(
-        params.date || "today",
-        params.fromDate,
-        params.toDate
-      );
+    return SingleFlight.do(cacheKey, async () => {
+      return CacheService.wrap(
+        cacheKey,
+        async () => {
+          // Mutex distribuido ligero: si múltiples réplicas en Render reciben miss simultáneo,
+          // una sola calcula en DB y las demás esperan el resultado en caché L1/L2.
+          const redis = getRedisClient();
+          const inflightLockKey = `lock:calc:summary:${cacheKey}`;
+          let acquiredDistLock = false;
+
+          if (redis && !isForceRefresh) {
+            try {
+              const lockRes = await (redis as any).set(inflightLockKey, "1", "PX", 8000, "NX");
+              if (lockRes !== "OK") {
+                // Otra instancia ya está calculando este mismo resumen.
+                // Esperar hasta 2500ms sondeando la caché antes de recurrir a la DB.
+                const waitStart = Date.now();
+                while (Date.now() - waitStart < 2500) {
+                  await new Promise((r) => setTimeout(r, 80));
+                  const cached = await CacheService.get<any>(cacheKey, true, 15_000);
+                  if (cached !== null) {
+                    logger.info({
+                      layer: "service",
+                      action: "DISTRIBUTED_SINGLE_FLIGHT_CACHE_HIT",
+                      payload: { cacheKey, waitMs: Date.now() - waitStart },
+                    });
+                    return cached;
+                  }
+                }
+              } else {
+                acquiredDistLock = true;
+              }
+            } catch (distLockErr: any) {
+              logger.warn({
+                layer: "service",
+                action: "DISTRIBUTED_LOCK_WARN",
+                payload: { cacheKey, error: distLockErr?.message },
+              });
+            }
+          }
+
+          try {
+            // Resolver rango de fechas
+            const dateRange = resolveDateRange(
+              params.date || "today",
+              params.fromDate,
+              params.toDate
+            );
 
       //  CAMBIO: Forzar status EVALUATED (Global Filter)
       // Ya no permitimos que el cliente solicite otros estados para este reporte
@@ -2349,9 +2387,34 @@ gs."hour24" ASC
         payload: { message: err.message, params },
       });
       throw err;
+    } finally {
+      if (acquiredDistLock && redis) {
+        await redis.del(inflightLockKey).catch(() => {});
+      }
     }
   }, 60, tags, true, 15_000, isForceRefresh);
-},
+    });
+  },
+
+  /**
+   * Espera activa no bloqueante a que otra instancia de Render libere el lock de warmup.
+   * Evita que la instancia secundaria emita el broadcast de WebSocket antes de que los datos
+   * terminen de escribirse en Redis/L1 por la instancia primaria.
+   */
+  async waitForWarmupLockRelease(lockKey: string, maxWaitMs = 5000): Promise<void> {
+    const redis = getRedisClient();
+    if (!redis) return;
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+      try {
+        const exists = await redis.exists(lockKey);
+        if (!exists) return; // Lock liberado por la instancia activa
+      } catch {
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  },
 
   /**
    * Precalentamiento atómico O(1) de resúmenes evaluados para todos los vendedores
@@ -2373,8 +2436,11 @@ gs."hour24" ASC
           logger.info({
             layer: "service",
             action: "WARMUP_BATCH_LOCK_SKIPPED",
-            payload: { sorteoId, message: `Omitido para sorteo ${sorteoId}: ya en ejecución por otra instancia` },
+            payload: { sorteoId, message: `Omitido para sorteo ${sorteoId}: ya en ejecución por otra instancia. Esperando finalización activa antes de permitir broadcast...` },
           });
+          // Esperar activamente a que la instancia que adquirió el lock termine de escribir en Redis/L1
+          // para no disparar el broadcast WebSocket prematuramente y causar Cache Stampede.
+          await this.waitForWarmupLockRelease(lockKey, 5000);
           return;
         }
         lockAcquired = true;

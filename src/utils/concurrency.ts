@@ -108,3 +108,38 @@ export class SharedWarmupPool {
     return this.queue.length;
   }
 }
+
+/**
+ * SingleFlight - Supresión de llamadas duplicadas concurrentes (Promise Deduplication).
+ * Si múltiples peticiones concurrentes solicitan el mismo recurso que no está en caché,
+ * solo la primera ejecuta la operación costosa y todas las demás resuelven con el
+ * resultado de la misma Promesa sin saturar la base de datos.
+ */
+export class SingleFlight {
+  private static inFlight = new Map<string, Promise<any>>();
+
+  /**
+   * Ejecuta fn o acopla la llamada a la Promesa en vuelo si ya existe una para `key`.
+   */
+  static async do<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = this.inFlight.get(key);
+    if (existing) {
+      return existing as Promise<T>;
+    }
+
+    const promise = (async () => {
+      try {
+        return await fn();
+      } finally {
+        this.inFlight.delete(key);
+      }
+    })();
+
+    this.inFlight.set(key, promise);
+    return promise;
+  }
+
+  static get inFlightCount(): number {
+    return this.inFlight.size;
+  }
+}

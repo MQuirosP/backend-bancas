@@ -168,22 +168,37 @@ export class SorteoEvaluationCoordinator {
     }
 
     // 5. Pre-calentamiento de Caché (Pre-warming)
+    // SECUENCIA ESTRICTA: Debe resolverse y completarse totalmente antes de disparar el broadcast (Paso 6).
     // Pre-calcula y almacena en Upstash Redis y memoria L1 el resumen de los vendedores
     // para que cuando reciban el evento de WebSocket, la respuesta sea inmediata (<15ms)
-    // y no se genere avalancha (Thundering Herd) sobre PostgreSQL.
+    // y no se genere avalancha (Thundering Herd / Cache Stampede) sobre PostgreSQL.
+    const warmupStart = Date.now();
     try {
+      logger.info({
+        layer: "coordinator",
+        action: "WARMUP_EVALUATED_SUMMARY_START",
+        payload: { sorteoId: id, bancaId: existingSorteo.bancaId },
+      });
+
       const SorteoService = (await import("./sorteo.service")).default;
       await SorteoService.warmupEvaluatedSummaries(id, existingSorteo.bancaId);
+
+      logger.info({
+        layer: "coordinator",
+        action: "WARMUP_EVALUATED_SUMMARY_COMPLETED",
+        payload: { sorteoId: id, durationMs: Date.now() - warmupStart },
+      });
     } catch (warmupErr: any) {
-      logger.warn({
+      logger.error({
         layer: "coordinator",
         action: "WARMUP_EVALUATED_SUMMARY_BACKGROUND_ERROR",
-        payload: { sorteoId: id, error: warmupErr?.message || String(warmupErr) },
+        payload: { sorteoId: id, error: warmupErr?.message || String(warmupErr), durationMs: Date.now() - warmupStart },
       });
+      // No re-lanzamos para permitir que las notificaciones salgan aunque el warmup falle
     }
 
     // 6. Notificación en Tiempo Real a Clientes Conectados (WebSocket)
-    // Se emite ÚNICAMENTE cuando las cuentas, estadísticas y cachés están 100% calientes y actualizados.
+    // Se emite ÚNICAMENTE y de forma estrictamente secuencial tras completarse el precalentamiento.
     try {
       SocketService.notifySorteoEvaluated({
         sorteoId: id,
