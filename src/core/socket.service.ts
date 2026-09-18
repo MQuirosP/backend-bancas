@@ -341,17 +341,29 @@ export class SocketService {
    */
   static async close(): Promise<void> {
     try {
+      // 1. Cerrar primero el servidor de Socket.IO para que el RedisAdapter pueda ejecutar
+      // punsubscribe() y unsubscribe() mientras subClient sigue abierto y conectado.
+      if (this.io) {
+        await new Promise<void>((resolve) => {
+          this.io!.close(() => {
+            resolve();
+          });
+        });
+        this.io = null;
+      }
+
+      // 2. Cerrar subClient y pubClient una vez que el adapter ya liberó sus suscripciones
       if (this.subClient) {
-        await this.subClient.quit();
+        this.subClient.removeAllListeners('error');
+        this.subClient.on('error', () => {});
+        await this.subClient.quit().catch(() => {});
         this.subClient = null;
       }
       if (this.pubClient) {
-        await this.pubClient.quit();
+        this.pubClient.removeAllListeners('error');
+        this.pubClient.on('error', () => {});
+        await this.pubClient.quit().catch(() => {});
         this.pubClient = null;
-      }
-      if (this.io) {
-        this.io.close();
-        this.io = null;
       }
       logger.info({ layer: 'socket', action: 'SOCKET_SERVICE_CLOSED' });
     } catch (error: any) {
