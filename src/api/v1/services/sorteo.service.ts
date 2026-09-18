@@ -1788,27 +1788,37 @@ gs."hour24" ASC
           const inflightLockKey = `lock:calc:summary:${cacheKey}`;
           let acquiredDistLock = false;
 
-          if (redis && !isForceRefresh) {
+          if (redis) {
             try {
-              const lockRes = await (redis as any).set(inflightLockKey, "1", "PX", 8000, "NX");
-              if (lockRes !== "OK") {
-                // Otra instancia ya está calculando este mismo resumen.
-                // Esperar hasta 2500ms sondeando la caché antes de recurrir a la DB.
-                const waitStart = Date.now();
-                while (Date.now() - waitStart < 2500) {
-                  await new Promise((r) => setTimeout(r, 80));
-                  const cached = await CacheService.get<any>(cacheKey, true, 90_000);
-                  if (cached !== null) {
-                    logger.info({
-                      layer: "service",
-                      action: "DISTRIBUTED_SINGLE_FLIGHT_CACHE_HIT",
-                      payload: { cacheKey, waitMs: Date.now() - waitStart },
-                    });
-                    return cached;
-                  }
+              if (isForceRefresh) {
+                // Durante warmup/forceRefresh, adquirimos el lock distribuido para que si una petición
+                // de terminal entra concurrentemente, espere activamente el resultado en caché L1/L2
+                // en lugar de saturar PostgreSQL con un cálculo frío paralelo.
+                const lockRes = await (redis as any).set(inflightLockKey, "1", "PX", 8000);
+                if (lockRes === "OK") {
+                  acquiredDistLock = true;
                 }
               } else {
-                acquiredDistLock = true;
+                const lockRes = await (redis as any).set(inflightLockKey, "1", "PX", 8000, "NX");
+                if (lockRes !== "OK") {
+                  // Otra instancia o el warmup ya está calculando este mismo resumen.
+                  // Esperar hasta 2500ms sondeando la caché antes de recurrir a la DB.
+                  const waitStart = Date.now();
+                  while (Date.now() - waitStart < 2500) {
+                    await new Promise((r) => setTimeout(r, 80));
+                    const cached = await CacheService.get<any>(cacheKey, true, 90_000);
+                    if (cached !== null) {
+                      logger.info({
+                        layer: "service",
+                        action: "DISTRIBUTED_SINGLE_FLIGHT_CACHE_HIT",
+                        payload: { cacheKey, waitMs: Date.now() - waitStart },
+                      });
+                      return cached;
+                    }
+                  }
+                } else {
+                  acquiredDistLock = true;
+                }
               }
             } catch (distLockErr: any) {
               logger.warn({
@@ -3272,8 +3282,15 @@ gs."hour24" ASC
       const targetVendorsWithSales = Array.from(vendorsWithSalesTodaySet)
         .filter((vId) => allVendorIdsSet.has(vId));
 
-      if (targetVendorsWithSales.length > 0) {
-        const detailedTasks = targetVendorsWithSales.map((vId) => async () => {
+      // Priorizar primero los vendedores con ventas en este sorteo específico (los que esperan activamente el resultado),
+      // seguidos del resto de vendedores con ventas acumuladas hoy.
+      const thisSorteoVendorsSet = new Set(rcdSorteoVendors.map((r) => r.vendedorId).filter(Boolean));
+      const priorityVendors = targetVendorsWithSales.filter((vId) => thisSorteoVendorsSet.has(vId));
+      const otherVendors = targetVendorsWithSales.filter((vId) => !thisSorteoVendorsSet.has(vId));
+      const orderedTargetVendors = [...priorityVendors, ...otherVendors];
+
+      if (orderedTargetVendors.length > 0) {
+        const detailedTasks = orderedTargetVendors.map((vId) => async () => {
           try {
             await this.evaluatedSummary(
               {

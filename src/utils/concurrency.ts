@@ -69,10 +69,10 @@ export class ConcurrencyManager {
 /**
  * SharedWarmupPool - Pool singleton de concurrencia compartida para warmups.
  * Garantiza que sin importar cuántos sorteos se evalúen simultáneamente, el número de tareas
- * de precalentamiento concurrentes contra PostgreSQL nunca exceda MAX_CONCURRENCY (5).
+ * de precalentamiento concurrentes contra PostgreSQL nunca exceda MAX_CONCURRENCY (6).
  */
 export class SharedWarmupPool {
-  private static readonly MAX_CONCURRENCY = 2;
+  private static readonly MAX_CONCURRENCY = 6;
   private static activeWorkers = 0;
   private static queue: (() => void)[] = [];
 
