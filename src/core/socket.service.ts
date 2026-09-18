@@ -364,7 +364,7 @@ export class SocketService {
   }
 
   /**
-   * Notifica la evaluación de un sorteo exclusivamente a la sala de la banca
+   * Notifica la evaluación de un sorteo exclusivamente a la sala de la banca con Jitter (50ms - 500ms)
    */
   static notifySorteoEvaluated(payload: SorteoEvaluatedPayload): void {
     if (!this.io) {
@@ -377,7 +377,22 @@ export class SocketService {
     }
 
     const room = payload.bancaId ? SocketRooms.banca(payload.bancaId) : SocketRooms.vendedores;
-    this.io.to(room).emit(SocketEvents.SORTEO_EVALUADO, payload);
+
+    // Escalonar la emisión con un Jitter corto (50ms - 500ms) por socket conectado para evitar el Thundering Herd
+    this.io.in(room).fetchSockets().then((sockets) => {
+      if (!sockets || sockets.length === 0) {
+        this.io?.to(room).emit(SocketEvents.SORTEO_EVALUADO, payload);
+        return;
+      }
+      for (const s of sockets) {
+        const jitterMs = Math.floor(Math.random() * 450) + 50; // 50ms a 500ms
+        setTimeout(() => {
+          s.emit(SocketEvents.SORTEO_EVALUADO, payload);
+        }, jitterMs);
+      }
+    }).catch(() => {
+      this.io?.to(room).emit(SocketEvents.SORTEO_EVALUADO, payload);
+    });
 
     logger.info({
       layer: 'socket',
@@ -392,7 +407,7 @@ export class SocketService {
   }
 
   /**
-   * Notifica la reversión de un sorteo exclusivamente a la sala de la banca
+   * Notifica la reversión de un sorteo exclusivamente a la sala de la banca con Jitter (50ms - 500ms)
    */
   static notifySorteoReverted(payload: SorteoRevertedPayload): void {
     if (!this.io) {
@@ -405,7 +420,21 @@ export class SocketService {
     }
 
     const room = payload.bancaId ? SocketRooms.banca(payload.bancaId) : SocketRooms.vendedores;
-    this.io.to(room).emit(SocketEvents.SORTEO_REVERTIDO, payload);
+
+    this.io.in(room).fetchSockets().then((sockets) => {
+      if (!sockets || sockets.length === 0) {
+        this.io?.to(room).emit(SocketEvents.SORTEO_REVERTIDO, payload);
+        return;
+      }
+      for (const s of sockets) {
+        const jitterMs = Math.floor(Math.random() * 450) + 50; // 50ms a 500ms
+        setTimeout(() => {
+          s.emit(SocketEvents.SORTEO_REVERTIDO, payload);
+        }, jitterMs);
+      }
+    }).catch(() => {
+      this.io?.to(room).emit(SocketEvents.SORTEO_REVERTIDO, payload);
+    });
 
     logger.info({
       layer: 'socket',
