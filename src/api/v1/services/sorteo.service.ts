@@ -1905,6 +1905,14 @@ gs."hour24" ASC
 
       const sorteoIds = sorteoMetricsRaw.map((sm) => sm.sorteoId);
 
+      // ⚡ FAST-PATH FALLBACK: Si no hay sorteos evaluados con ventas para este vendedor en el rango
+      // y tampoco hay movimientos en el día, delegamos inmediatamente a evaluatedSummaryFastPath.
+      // Esto evita escanear Ticket/Jugada y ejecutar 5 queries secuenciales contra PostgreSQL,
+      // resolviendo cualquier miss Cold/DB en < 5 ms en lugar de saturar la base de datos.
+      if (sorteoIds.length === 0 && movementsByDate.size === 0 && vendedorId) {
+        return await this.evaluatedSummaryFastPath(params, vendedorId, dateRange, rangeEffectiveMonth);
+      }
+
       let ticketMetrics: any[] = [];
       let multiplierMetricsRaw: any[] = [];
       let loteriaMultipliers: any[] = [];
@@ -1950,9 +1958,16 @@ gs."hour24" ASC
           GROUP BY t."sorteoId", j."multiplierId"
         `);
 
-        const loteriaMultipliersPromise = prisma.loteriaMultiplier.findMany({
-          select: { id: true, name: true, valueX: true, loteriaId: true, kind: true, isActive: true }
-        });
+        const loteriaMultipliersPromise = CacheService.wrap(
+          "catalog:loteria:multipliers:all",
+          () => prisma.loteriaMultiplier.findMany({
+            select: { id: true, name: true, valueX: true, loteriaId: true, kind: true, isActive: true }
+          }),
+          3600,
+          ['multipliers', 'loterias'],
+          true,
+          600_000
+        );
 
         const detailsResults = await Promise.all([
           ticketMetricsPromise,
@@ -2623,18 +2638,19 @@ gs."hour24" ASC
       // Cuando date=month, rangeEffectiveMonth === effectiveMonth, así que reusamos rangePreviousMonthBalance
       const monthlyStartComponents = getCRLocalComponents(monthlyStartDate);
       const effectiveMonth = `${monthlyStartComponents.year}-${String(monthlyStartComponents.month).padStart(2, '0')}`;
-      const previousMonthBalance = isMonthRange
-        ? rangePreviousMonthBalance  // Mismo mes → reusar
-        : await getPreviousMonthFinalBalance(effectiveMonth, "vendedor", undefined, vendedorId, undefined);
-      const numericPreviousMonthBalance = Number(previousMonthBalance) || 0;
-
-      const realMonthlyRemainingBalance = vendedorId
-        ? await getMonthlyRemainingBalance(effectiveMonth, "vendedor", undefined, vendedorId)
-        : null;
 
       let monthlyAccumulated;
 
       if (canSkipMonthlyQueries) {
+        const previousMonthBalance = isMonthRange
+          ? rangePreviousMonthBalance  // Mismo mes → reusar
+          : await getPreviousMonthFinalBalance(effectiveMonth, "vendedor", undefined, vendedorId, undefined);
+        const numericPreviousMonthBalance = Number(previousMonthBalance) || 0;
+
+        const realMonthlyRemainingBalance = vendedorId
+          ? await getMonthlyRemainingBalance(effectiveMonth, "vendedor", undefined, vendedorId)
+          : null;
+
         //  C3.1: date=month sin filtros → reusar totals del rango principal (ahorra 4+ queries)
         // Calcular totalPaid y totalCollected desde movimientos (ya disponibles)
         let monthlyTotalPaid = 0;
@@ -2669,32 +2685,41 @@ gs."hour24" ASC
           totalSubtotal: realMonthlyRemainingBalance !== null ? realMonthlyRemainingBalance : (numericPreviousMonthBalance + monthlyTotalRemainingBalance),
         };
       } else {
-        // ⚡ OPTIMIZACIÓN EXTREMA: Lectura O(1) desde ResumenCierreDiario precalculado
-        // Resuelve ventas, premios, comisiones totales y por tipo (Número/Reventado) en <1ms
+        // ⚡ OPTIMIZACIÓN EXTREMA: Lecturas paralelas O(1) desde ResumenCierreDiario y AccountStatement
+        // Resuelve ventas, premios, comisiones y balances en un solo Promise.all (< 2 ms)
         const monthlyStartDateStr = crDateService.dateUTCToCRString(monthlyStartDate);
         const monthlyEndDateStr = crDateService.dateUTCToCRString(monthlyEndDate);
 
-        const rcdTotals = await prisma.$queryRaw<Array<{
-          total_sales: number;
-          total_commission: number;
-          commission_by_number: number;
-          commission_by_reventado: number;
-          total_prizes: number;
-          total_tickets: bigint;
-        }>>(Prisma.sql`
-          SELECT 
-            COALESCE(SUM("totalVendida"), 0) as total_sales,
-            COALESCE(SUM("comisionVendedor"), 0) as total_commission,
-            COALESCE(SUM(CASE WHEN tipo = 'NUMERO' THEN "comisionVendedor" ELSE 0 END), 0) as commission_by_number,
-            COALESCE(SUM(CASE WHEN tipo = 'REVENTADO' THEN "comisionVendedor" ELSE 0 END), 0) as commission_by_reventado,
-            COALESCE(SUM(ganado), 0) as total_prizes,
-            COALESCE(SUM("ticketsCount"), 0) as total_tickets
-          FROM "ResumenCierreDiario"
-          WHERE "businessDate" >= ${monthlyStartDateStr}::date
-            AND "businessDate" <= ${monthlyEndDateStr}::date
-            ${vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
-            ${params.loteriaId ? Prisma.sql`AND "loteriaId" = CAST(${params.loteriaId} AS uuid)` : Prisma.empty}
-        `);
+        const [previousMonthBalance, realMonthlyRemainingBalance, rcdTotals] = await Promise.all([
+          isMonthRange
+            ? Promise.resolve(rangePreviousMonthBalance)
+            : getPreviousMonthFinalBalance(effectiveMonth, "vendedor", undefined, vendedorId, undefined),
+          vendedorId
+            ? getMonthlyRemainingBalance(effectiveMonth, "vendedor", undefined, vendedorId)
+            : Promise.resolve(null),
+          prisma.$queryRaw<Array<{
+            total_sales: number;
+            total_commission: number;
+            commission_by_number: number;
+            commission_by_reventado: number;
+            total_prizes: number;
+            total_tickets: bigint;
+          }>>(Prisma.sql`
+            SELECT 
+              COALESCE(SUM("totalVendida"), 0) as total_sales,
+              COALESCE(SUM("comisionVendedor"), 0) as total_commission,
+              COALESCE(SUM(CASE WHEN tipo = 'NUMERO' THEN "comisionVendedor" ELSE 0 END), 0) as commission_by_number,
+              COALESCE(SUM(CASE WHEN tipo = 'REVENTADO' THEN "comisionVendedor" ELSE 0 END), 0) as commission_by_reventado,
+              COALESCE(SUM(ganado), 0) as total_prizes,
+              COALESCE(SUM("ticketsCount"), 0) as total_tickets
+            FROM "ResumenCierreDiario"
+            WHERE "businessDate" >= ${monthlyStartDateStr}::date
+              AND "businessDate" <= ${monthlyEndDateStr}::date
+              ${vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
+              ${params.loteriaId ? Prisma.sql`AND "loteriaId" = CAST(${params.loteriaId} AS uuid)` : Prisma.empty}
+          `),
+        ]);
+        const numericPreviousMonthBalance = Number(previousMonthBalance) || 0;
 
         const monthlyTotals = rcdTotals[0] || {
           total_sales: 0,
@@ -3200,16 +3225,52 @@ gs."hour24" ASC
           useL1: true,
           l1TtlMs: 90_000, // 90s en L1 RAM para resiliencia ante ráfagas
         });
+
+        // 🚀 PRE-CALENTAMIENTO O(1) DE summaryOnly=false para vendedores sin sorteos evaluados hoy
+        // Si el vendedor no tiene sorteos evaluados hoy, su desglose de sorteos en summaryOnly=false
+        // es idéntico a summaryOnly=true (vacío: []). Se precalienta atómicamente en el mismo batch
+        // para que las terminales que consultan summaryOnly=false obtengan L1 Hit en sub-milisegundo.
+        const vendorSorteosTodayCount = Number(rcdToday?.total_sorteos || 0);
+        if (vendorSorteosTodayCount === 0) {
+          const normalizedFalseKeyData = {
+            date: "today",
+            fromDate: null,
+            toDate: null,
+            scope: "mine",
+            loteriaId: null,
+            isActive: true,
+            summaryOnly: false,
+            vendedorId: vId,
+            ignoreReset: false,
+          };
+          const hashFalse = crypto.createHash('md5').update(JSON.stringify(normalizedFalseKeyData)).digest('hex');
+          const cacheKeyFalse = `banca:all:ventana:all:vendedor:${vId}:summary:${hashFalse}`;
+
+          cacheEntries.push({
+            key: cacheKeyFalse,
+            value: payload,
+            ttlSeconds: 300,
+            tags: ['report:summary', `vendedor:${vId}`],
+            useL1: true,
+            l1TtlMs: 90_000,
+          });
+        }
       }
 
       // 6. Inyección masiva y atómica a través de L1 RAM y Pipeline Upstash Redis L2
       await CacheService.setBatch(cacheEntries);
 
-      // Pre-calentamiento selectivo de summaryOnly=false para vendedores con ventas en este sorteo evaluado
+      // Pre-calentamiento selectivo de summaryOnly=false para TODOS los vendedores con sorteos evaluados hoy
       let detailedWarmupCount = 0;
-      const targetVendorsWithSales = rcdSorteoVendors
-        .map((r) => r.vendedorId)
-        .filter((vId): vId is string => Boolean(vId) && allVendorIdsSet.has(vId));
+      const vendorsWithSalesTodaySet = new Set<string>();
+      for (const r of rcdSorteoVendors) {
+        if (r.vendedorId) vendorsWithSalesTodaySet.add(r.vendedorId);
+      }
+      for (const r of rcdTodayRows) {
+        if (r.vendedorId && Number(r.total_sorteos) > 0) vendorsWithSalesTodaySet.add(r.vendedorId);
+      }
+      const targetVendorsWithSales = Array.from(vendorsWithSalesTodaySet)
+        .filter((vId) => allVendorIdsSet.has(vId));
 
       if (targetVendorsWithSales.length > 0) {
         const detailedTasks = targetVendorsWithSales.map((vId) => async () => {
@@ -3218,6 +3279,7 @@ gs."hour24" ASC
               {
                 date: 'today',
                 scope: 'mine',
+                status: 'EVALUATED,OPEN',
                 isActive: 'true',
                 summaryOnly: false,
                 userRole: Role.VENDEDOR,
@@ -3336,21 +3398,36 @@ gs."hour24" ASC
 
       const startTime = Date.now();
 
-      const warmupTasks = vendorIds.map((vId) => () =>
-        this.evaluatedSummary(
-          {
-            date: 'today',
-            scope: 'mine',
-            status: 'EVALUATED,OPEN',
-            isActive: 'true',
-            summaryOnly: true,
-            userRole: Role.VENDEDOR,
-            ignoreReset: false,
-            forceRefresh: true,
-          },
-          vId
-        )
-      );
+      const warmupTasks = vendorIds.flatMap((vId) => [
+        () =>
+          this.evaluatedSummary(
+            {
+              date: 'today',
+              scope: 'mine',
+              status: 'EVALUATED,OPEN',
+              isActive: 'true',
+              summaryOnly: false,
+              userRole: Role.VENDEDOR,
+              ignoreReset: false,
+              forceRefresh: true,
+            },
+            vId
+          ),
+        () =>
+          this.evaluatedSummary(
+            {
+              date: 'today',
+              scope: 'mine',
+              status: 'EVALUATED,OPEN',
+              isActive: 'true',
+              summaryOnly: true,
+              userRole: Role.VENDEDOR,
+              ignoreReset: false,
+              forceRefresh: true,
+            },
+            vId
+          ),
+      ]);
 
       await SharedWarmupPool.runAllSettled(warmupTasks);
 
@@ -3361,11 +3438,12 @@ gs."hour24" ASC
           sorteoId,
           bancaId,
           totalVendors: vendorIds.length,
+          entriesCached: warmupTasks.length,
           durationMs: Date.now() - startTime,
         },
       });
 
-      return { totalVendors: vendorIds.length, entriesCached: vendorIds.length };
+      return { totalVendors: vendorIds.length, entriesCached: warmupTasks.length };
     } catch (err: any) {
       logger.warn({
         layer: 'service',
