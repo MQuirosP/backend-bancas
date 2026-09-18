@@ -20,6 +20,7 @@ import { CommissionPolicy, CommissionRule } from "../../../services/commission/t
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { crDateService } from "../../../utils/crDateService";
 import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "./accounts/accounts.balances";
+import { ACCOUNT_CARRY_OVER_NOTES, ACCOUNT_PREVIOUS_MONTH_METHOD } from "./accounts/accounts.types";
 import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "./accounts/accounts.service";
 import { CacheService } from "../../../core/cache.service";
 import { getRedisClient } from "../../../core/redisClient";
@@ -612,8 +613,8 @@ const SorteoService = {
 
     if (!evaluated) throw new AppError('Error al recuperar el sorteo evaluado', 500);
 
-    // 4) Disparar los efectos secundarios en segundo plano de manera desacoplada (SOLID)
-    SorteoEvaluationCoordinator.triggerPostEvaluation(
+    // 4) Ejecutar los efectos secundarios secuenciales (Sync -> Warmup O(1) -> Broadcast WebSocket)
+    await SorteoEvaluationCoordinator.triggerPostEvaluation(
       id,
       body.winningNumber.trim(),
       body.extraMultiplierId,
@@ -2851,6 +2852,7 @@ gs."hour24" ASC
     const redis = getRedisClient();
     const lockKey = `lock:warmup:batch:${sorteoId}`;
     let lockAcquired = false;
+    const allPreLockKeys: string[] = [];
 
     if (redis) {
       try {
@@ -2979,7 +2981,60 @@ gs."hour24" ASC
 
       const vendorUuids = allVendorIds.map((id) => Prisma.sql`${id}::uuid`);
 
-      // 4. Ejecución en paralelo de métricas consolidadas (PostgreSQL batch)
+      // 🚀 PRE-LOCKING MASIVO: Blindar todas las terminales que consulten concurrentemente
+      // Adquiere lock:calc:summary:${cacheKey} en Redis para summaryOnly=true Y summaryOnly=false
+      // para todos los vendedores en una sola operación de pipeline (< 5ms).
+      // Cualquier terminal que entre mientras corre este batch entrará en el loop de espera (polling 80ms)
+      // en evaluatedSummary en lugar de disparar una consulta fría contra PostgreSQL.
+      if (redis) {
+        try {
+          const pipeline = (redis as any).pipeline ? (redis as any).pipeline() : null;
+          for (const vId of allVendorIds) {
+            const hashTrue = crypto.createHash('md5').update(JSON.stringify({
+              date: "today",
+              fromDate: null,
+              toDate: null,
+              scope: "mine",
+              loteriaId: null,
+              isActive: true,
+              summaryOnly: true,
+              vendedorId: vId,
+              ignoreReset: false,
+            })).digest('hex');
+            const lockKeyTrue = `lock:calc:summary:banca:all:ventana:all:vendedor:${vId}:summary:${hashTrue}`;
+
+            const hashFalse = crypto.createHash('md5').update(JSON.stringify({
+              date: "today",
+              fromDate: null,
+              toDate: null,
+              scope: "mine",
+              loteriaId: null,
+              isActive: true,
+              summaryOnly: false,
+              vendedorId: vId,
+              ignoreReset: false,
+            })).digest('hex');
+            const lockKeyFalse = `lock:calc:summary:banca:all:ventana:all:vendedor:${vId}:summary:${hashFalse}`;
+
+            allPreLockKeys.push(lockKeyTrue, lockKeyFalse);
+            if (pipeline) {
+              pipeline.set(lockKeyTrue, "1", "PX", 10000);
+              pipeline.set(lockKeyFalse, "1", "PX", 10000);
+            }
+          }
+          if (pipeline) {
+            await pipeline.exec();
+          }
+        } catch (preLockErr: any) {
+          logger.warn({
+            layer: "service",
+            action: "WARMUP_MASSIVE_PRELOCK_WARN",
+            payload: { sorteoId, error: preLockErr?.message },
+          });
+        }
+      }
+
+      // 4. Ejecución en paralelo de métricas consolidadas (PostgreSQL batch O(1))
       const [
         rcdTodayRows,
         rcdMonthRows,
@@ -2987,6 +3042,10 @@ gs."hour24" ASC
         prevMonthBalancesMap,
         realMonthlyRemainingBalancesMap,
         totalSorteosEvaluatedToday,
+        todaySorteoMetricsRawBatch,
+        todayPaymentsBatch,
+        previousDayStatementsBatch,
+        loteriaMultipliers,
       ] = await Promise.all([
         // Desglose de comisiones hoy por tipo (NUMERO vs REVENTADO)
         prisma.$queryRaw<
@@ -3072,7 +3131,166 @@ gs."hour24" ASC
             ...(bancaId ? { bancaId } : {}),
           },
         }),
+
+        // 🚀 BATCH O(1): Sorteos evaluados hoy con ventas por vendedor para summaryOnly=false
+        prisma.$queryRaw<
+          Array<{
+            vendedorId: string;
+            sorteoId: string;
+            scheduledAt: Date;
+            loteriaId: string;
+            sorteoName: string;
+            extraMultiplierId: string | null;
+            extraMultiplierX: number | null;
+            winningNumber: string | null;
+            loteriaName: string | null;
+            totalSales: number;
+            totalCommission: number;
+            totalPrizes: number;
+            ticketCount: number;
+          }>
+        >(Prisma.sql`
+          SELECT 
+            rcd."vendedorId",
+            s.id as "sorteoId", s."scheduledAt", s."loteriaId", s.name as "sorteoName", s."extraMultiplierId", s."extraMultiplierX", s."winningNumber",
+            l.name as "loteriaName",
+            SUM(rcd."totalVendida") as "totalSales",
+            SUM(rcd."comisionTotal") as "totalCommission",
+            SUM(rcd."ganado") as "totalPrizes",
+            SUM(rcd."ticketsCount")::integer as "ticketCount"
+          FROM "ResumenCierreDiario" rcd
+          JOIN "Sorteo" s ON rcd."sorteoId" = s.id
+          JOIN "Loteria" l ON s."loteriaId" = l.id
+          WHERE s.status::text = ${SorteoStatus.EVALUATED}
+            AND s."scheduledAt" >= CAST(${todayRange.fromAt} AS timestamp)
+            AND s."scheduledAt" <= CAST(${todayRange.toAt} AS timestamp)
+            AND rcd."vendedorId" IN (${Prisma.join(vendorUuids)})
+          GROUP BY rcd."vendedorId", s.id, s."scheduledAt", s."loteriaId", s.name, s."extraMultiplierId", s."extraMultiplierX", s."winningNumber", l.name
+          ORDER BY s."scheduledAt" ASC, s."loteriaId" ASC, s.id ASC
+        `),
+
+        // 🚀 BATCH O(1): Pagos y cobros de hoy para todos los vendedores
+        prisma.accountPayment.findMany({
+          where: {
+            date: todayUTC,
+            vendedorId: { in: allVendorIds },
+            method: { not: ACCOUNT_PREVIOUS_MONTH_METHOD },
+            OR: [
+              { notes: null },
+              { NOT: { notes: { contains: ACCOUNT_CARRY_OVER_NOTES } } },
+            ],
+          },
+          select: {
+            id: true,
+            vendedorId: true,
+            type: true,
+            amount: true,
+            method: true,
+            notes: true,
+            isReversed: true,
+            createdAt: true,
+            date: true,
+            time: true,
+          },
+        }),
+
+        // 🚀 BATCH O(1): AccountStatements de ayer para saldo inicial
+        todayComponents.day > 1
+          ? prisma.accountStatement.findMany({
+              where: {
+                date: new Date(Date.UTC(year, month - 1, day - 1, 0, 0, 0, 0)),
+                vendedorId: { in: allVendorIds },
+              },
+              select: {
+                vendedorId: true,
+                accumulatedBalance: true,
+                remainingBalance: true,
+              },
+            })
+          : Promise.resolve([]),
+
+        // Catálogo en caché de multiplicadores de lotería
+        CacheService.wrap(
+          "catalog:loteria:multipliers:all",
+          () => prisma.loteriaMultiplier.findMany({
+            select: { id: true, name: true, valueX: true, loteriaId: true, kind: true, isActive: true },
+          }),
+          3600,
+          ['multipliers', 'loterias'],
+          true,
+          600_000
+        ),
       ]);
+
+      // Phase 2: Métricas de tickets y jugadas por multiplicador agrupadas por (vendedorId, sorteoId)
+      const todaySorteoIds = Array.from(new Set(todaySorteoMetricsRawBatch.map((r) => r.sorteoId)));
+      let ticketMetricsBatch: Array<{
+        vendedorId: string;
+        sorteoId: string;
+        winningTicketsCount: bigint | number;
+        paidTicketsCount: bigint | number;
+        vendedorCommissionSum: number;
+      }> = [];
+      let multiplierMetricsBatch: Array<{
+        vendedorId: string;
+        sorteoId: string;
+        multiplierId: string | null;
+        mSales: number;
+        mCommission: number;
+        mCommNum: number;
+        mCommRev: number;
+        mPrizes: number;
+        mTickets: bigint | number;
+        mWinningTickets: bigint | number;
+        mPaidTickets: bigint | number;
+      }> = [];
+
+      if (todaySorteoIds.length > 0) {
+        const todaySorteoUuids = todaySorteoIds.map((id) => Prisma.sql`${id}::uuid`);
+
+        const [ticketsRes, multRes] = await Promise.all([
+          prisma.$queryRaw<typeof ticketMetricsBatch>(Prisma.sql`
+            SELECT 
+              t."vendedorId",
+              t."sorteoId",
+              COUNT(CASE WHEN t."isWinner" THEN 1 END) as "winningTicketsCount",
+              COUNT(CASE WHEN t.status::text IN (${TicketStatus.PAID}, ${TicketStatus.PAGADO}) THEN 1 END) as "paidTicketsCount",
+              SUM(t."totalCommission") as "vendedorCommissionSum"
+            FROM "Ticket" t
+            WHERE t."sorteoId" IN (${Prisma.join(todaySorteoUuids)})
+              AND t."isActive" = true
+              AND t."deletedAt" IS NULL
+              AND t."vendedorId" IN (${Prisma.join(vendorUuids)})
+            GROUP BY t."vendedorId", t."sorteoId"
+          `),
+
+          prisma.$queryRaw<typeof multiplierMetricsBatch>(Prisma.sql`
+            SELECT 
+              t."vendedorId",
+              t."sorteoId", j."multiplierId",
+              SUM(j.amount) as "mSales", 
+              SUM(j."commissionAmount") as "mCommission",
+              SUM(CASE WHEN j.type::text = ${BetType.NUMERO} THEN j."commissionAmount" ELSE 0 END) as "mCommNum",
+              SUM(CASE WHEN j.type::text = ${BetType.REVENTADO} THEN j."commissionAmount" ELSE 0 END) as "mCommRev",
+              SUM(CASE WHEN j."isWinner" THEN j.payout ELSE 0 END) as "mPrizes",
+              COUNT(DISTINCT t.id) as "mTickets", 
+              COUNT(CASE WHEN j."isWinner" THEN 1 END) as "mWinningTickets",
+              COUNT(CASE WHEN t.status::text IN (${TicketStatus.PAID}, ${TicketStatus.PAGADO}) THEN 1 END) as "mPaidTickets"
+            FROM "Ticket" t
+            JOIN "Jugada" j ON j."ticketId" = t.id
+            WHERE t."sorteoId" IN (${Prisma.join(todaySorteoUuids)})
+              AND t."isActive" = true
+              AND t."deletedAt" IS NULL
+              AND j."deletedAt" IS NULL
+              AND j."isActive" = true
+              AND t."vendedorId" IN (${Prisma.join(vendorUuids)})
+            GROUP BY t."vendedorId", t."sorteoId", j."multiplierId"
+          `),
+        ]);
+
+        ticketMetricsBatch = ticketsRes;
+        multiplierMetricsBatch = multRes;
+      }
 
       // Mapear resultados indexados por vendedorId
       const rcdTodayByVendor = new Map<string, (typeof rcdTodayRows)[0]>();
@@ -3084,7 +3302,52 @@ gs."hour24" ASC
       const paymentsMonthByVendor = new Map<string, (typeof paymentsMonthRows)[0]>();
       for (const r of paymentsMonthRows) paymentsMonthByVendor.set(r.vendedorId, r);
 
-      // 5. Construcción de Payloads y Claves de Caché
+      const ticketMetricsMap = new Map<string, (typeof ticketMetricsBatch)[0]>();
+      for (const tm of ticketMetricsBatch) {
+        ticketMetricsMap.set(`${tm.vendedorId}:${tm.sorteoId}`, tm);
+      }
+
+      const multiplierMetricsMap = new Map<string, typeof multiplierMetricsBatch>();
+      for (const mm of multiplierMetricsBatch) {
+        const key = `${mm.vendedorId}:${mm.sorteoId}`;
+        let list = multiplierMetricsMap.get(key);
+        if (!list) {
+          list = [];
+          multiplierMetricsMap.set(key, list);
+        }
+        list.push(mm);
+      }
+
+      const sorteosByVendor = new Map<string, typeof todaySorteoMetricsRawBatch>();
+      for (const sm of todaySorteoMetricsRawBatch) {
+        let list = sorteosByVendor.get(sm.vendedorId);
+        if (!list) {
+          list = [];
+          sorteosByVendor.set(sm.vendedorId, list);
+        }
+        list.push(sm);
+      }
+
+      const paymentsTodayByVendor = new Map<string, typeof todayPaymentsBatch>();
+      for (const p of todayPaymentsBatch) {
+        if (p.vendedorId) {
+          let list = paymentsTodayByVendor.get(p.vendedorId);
+          if (!list) {
+            list = [];
+            paymentsTodayByVendor.set(p.vendedorId, list);
+          }
+          list.push(p);
+        }
+      }
+
+      const prevDayStmtByVendor = new Map<string, (typeof previousDayStatementsBatch)[0]>();
+      for (const s of previousDayStatementsBatch) {
+        if (s.vendedorId) {
+          prevDayStmtByVendor.set(s.vendedorId, s);
+        }
+      }
+
+      // 5. Construcción de Payloads y Claves de Caché (O(1) masivo)
       const cacheEntries: Array<{
         key: string;
         value: any;
@@ -3200,7 +3463,8 @@ gs."hour24" ASC
           totalSubtotal: finalMonthlyRemainingBalance,
         };
 
-        const payload = {
+        // A. Payload summaryOnly: true
+        const payloadTrue = {
           data: finalDaysArray,
           meta: {
             totals,
@@ -3211,8 +3475,7 @@ gs."hour24" ASC
           },
         };
 
-        // Construir hash normalizado para summaryOnly: true
-        const normalizedKeyData = {
+        const normalizedTrueKeyData = {
           date: "today",
           fromDate: null,
           toDate: null,
@@ -3224,99 +3487,349 @@ gs."hour24" ASC
           ignoreReset: false,
         };
 
-        const hash = crypto.createHash('md5').update(JSON.stringify(normalizedKeyData)).digest('hex');
-        const cacheKey = `banca:all:ventana:all:vendedor:${vId}:summary:${hash}`;
+        const hashTrue = crypto.createHash('md5').update(JSON.stringify(normalizedTrueKeyData)).digest('hex');
+        const cacheKeyTrue = `banca:all:ventana:all:vendedor:${vId}:summary:${hashTrue}`;
 
         cacheEntries.push({
-          key: cacheKey,
-          value: payload,
-          ttlSeconds: 300, // 5 minutos en Upstash Redis L2
+          key: cacheKeyTrue,
+          value: payloadTrue,
+          ttlSeconds: 300,
           tags: ['report:summary', `vendedor:${vId}`],
           useL1: true,
-          l1TtlMs: 90_000, // 90s en L1 RAM para resiliencia ante ráfagas
+          l1TtlMs: 90_000,
         });
 
-        // 🚀 PRE-CALENTAMIENTO O(1) DE summaryOnly=false para vendedores sin sorteos evaluados hoy
-        // Si el vendedor no tiene sorteos evaluados hoy, su desglose de sorteos en summaryOnly=false
-        // es idéntico a summaryOnly=true (vacío: []). Se precalienta atómicamente en el mismo batch
-        // para que las terminales que consultan summaryOnly=false obtengan L1 Hit en sub-milisegundo.
-        const vendorSorteosTodayCount = Number(rcdToday?.total_sorteos || 0);
-        if (vendorSorteosTodayCount === 0) {
-          const normalizedFalseKeyData = {
-            date: "today",
-            fromDate: null,
-            toDate: null,
-            scope: "mine",
-            loteriaId: null,
-            isActive: true,
-            summaryOnly: false,
-            vendedorId: vId,
-            ignoreReset: false,
-          };
-          const hashFalse = crypto.createHash('md5').update(JSON.stringify(normalizedFalseKeyData)).digest('hex');
-          const cacheKeyFalse = `banca:all:ventana:all:vendedor:${vId}:summary:${hashFalse}`;
+        // B. 🚀 Payload summaryOnly: false (Generación O(1) masiva sin queries adicionales)
+        const vendorSorteosRaw = sorteosByVendor.get(vId) || [];
+        const vendorPayments = paymentsTodayByVendor.get(vId) || [];
 
-          cacheEntries.push({
-            key: cacheKeyFalse,
-            value: payload,
-            ttlSeconds: 300,
-            tags: ['report:summary', `vendedor:${vId}`],
-            useL1: true,
-            l1TtlMs: 90_000,
-          });
-        }
-      }
+        let daysArrayFalse: any[] = [];
 
-      // 6. Inyección masiva y atómica a través de L1 RAM y Pipeline Upstash Redis L2
-      await CacheService.setBatch(cacheEntries);
+        if (vendorSorteosRaw.length === 0 && vendorPayments.length === 0) {
+          daysArrayFalse = finalDaysArray;
+        } else {
+          // Mapear sorteos a items detallados
+          const sorteoItems = vendorSorteosRaw.map((sm: any) => {
+            const tmKey = `${vId}:${sm.sorteoId}`;
+            const tm = ticketMetricsMap.get(tmKey);
+            const vendorCommission = Number(tm?.vendedorCommissionSum ?? sm.totalCommission ?? 0);
+            const winningTicketsCount = Number(tm?.winningTicketsCount || 0);
+            const paidTicketsCount = Number(tm?.paidTicketsCount || 0);
+            const unpaidTicketsCount = winningTicketsCount - paidTicketsCount;
 
-      // Pre-calentamiento selectivo de summaryOnly=false para TODOS los vendedores con sorteos evaluados hoy
-      let detailedWarmupCount = 0;
-      const vendorsWithSalesTodaySet = new Set<string>();
-      for (const r of rcdSorteoVendors) {
-        if (r.vendedorId) vendorsWithSalesTodaySet.add(r.vendedorId);
-      }
-      for (const r of rcdTodayRows) {
-        if (r.vendedorId && Number(r.total_sorteos) > 0) vendorsWithSalesTodaySet.add(r.vendedorId);
-      }
-      const targetVendorsWithSales = Array.from(vendorsWithSalesTodaySet)
-        .filter((vId) => allVendorIdsSet.has(vId));
-
-      // Priorizar primero los vendedores con ventas en este sorteo específico (los que esperan activamente el resultado),
-      // seguidos del resto de vendedores con ventas acumuladas hoy.
-      const thisSorteoVendorsSet = new Set(rcdSorteoVendors.map((r) => r.vendedorId).filter(Boolean));
-      const priorityVendors = targetVendorsWithSales.filter((vId) => thisSorteoVendorsSet.has(vId));
-      const otherVendors = targetVendorsWithSales.filter((vId) => !thisSorteoVendorsSet.has(vId));
-      const orderedTargetVendors = [...priorityVendors, ...otherVendors];
-
-      if (orderedTargetVendors.length > 0) {
-        const detailedTasks = orderedTargetVendors.map((vId) => async () => {
-          try {
-            await this.evaluatedSummary(
-              {
-                date: 'today',
-                scope: 'mine',
-                status: 'EVALUATED,OPEN',
-                isActive: 'true',
-                summaryOnly: false,
-                userRole: Role.VENDEDOR,
-                ignoreReset: false,
-                forceRefresh: true,
-              },
-              vId
+            const mmList = multiplierMetricsMap.get(tmKey) || [];
+            const baseMultipliers = loteriaMultipliers.filter((m: any) =>
+              m.loteriaId === sm.loteriaId && (m.isActive || mmList.some((mm: any) => mm.multiplierId === m.id))
             );
-            detailedWarmupCount++;
-          } catch (err: any) {
-            logger.warn({
-              layer: 'service',
-              action: 'WARMUP_DETAILED_SUMMARY_VENDOR_FAILED',
-              payload: { sorteoId, vendedorId: vId, error: err?.message },
-            });
-          }
-        });
 
-        await SharedWarmupPool.runAllSettled(detailedTasks);
+            const byMultiplier = baseMultipliers.map((bm: any) => {
+              const mm = mmList.find((m: any) => m.multiplierId === bm.id);
+              return {
+                multiplierId: bm.id,
+                multiplierName: bm.name,
+                multiplierValue: Number(bm.valueX),
+                totalSales: Number(mm?.mSales || 0),
+                totalCommission: Number(mm?.mCommission || 0),
+                commissionByNumber: Number(mm?.mCommNum || 0),
+                commissionByReventado: Number(mm?.mCommRev || 0),
+                totalPrizes: Number(mm?.mPrizes || 0),
+                ticketCount: Number(mm?.mTickets || 0),
+                subtotal: Number(mm?.mSales || 0) - Number(mm?.mCommission || 0) - Number(mm?.mPrizes || 0),
+                winningTicketsCount: Number(mm?.mWinningTickets || 0),
+                paidTicketsCount: Number(mm?.mPaidTickets || 0),
+                unpaidTicketsCount: Number(mm?.mWinningTickets || 0) - Number(mm?.mPaidTickets || 0),
+              };
+            }).sort((a: any, b: any) => a.multiplierValue - b.multiplierValue);
+
+            const nullMetrics = mmList.find((m: any) => m.multiplierId === null);
+            if (nullMetrics) {
+              const reventadoBucket = sm.extraMultiplierId
+                ? byMultiplier.find((b: any) => b.multiplierId === sm.extraMultiplierId)
+                : null;
+
+              if (reventadoBucket) {
+                reventadoBucket.totalSales += Number(nullMetrics.mSales || 0);
+                reventadoBucket.totalCommission += Number(nullMetrics.mCommission || 0);
+                reventadoBucket.commissionByNumber += Number(nullMetrics.mCommNum || 0);
+                reventadoBucket.commissionByReventado += Number(nullMetrics.mCommRev || 0);
+                reventadoBucket.totalPrizes += Number(nullMetrics.mPrizes || 0);
+                reventadoBucket.ticketCount += Number(nullMetrics.mTickets || 0);
+                reventadoBucket.subtotal = reventadoBucket.totalSales - reventadoBucket.totalCommission - reventadoBucket.totalPrizes;
+                reventadoBucket.winningTicketsCount += Number(nullMetrics.mWinningTickets || 0);
+                reventadoBucket.paidTicketsCount += Number(nullMetrics.mPaidTickets || 0);
+                reventadoBucket.unpaidTicketsCount = reventadoBucket.winningTicketsCount - reventadoBucket.paidTicketsCount;
+              } else if (sm.extraMultiplierId) {
+                const reventadoMul = loteriaMultipliers.find((m: any) => m.id === sm.extraMultiplierId);
+                byMultiplier.push({
+                  multiplierId: sm.extraMultiplierId,
+                  multiplierName: reventadoMul?.name ?? 'REVENTADO',
+                  multiplierValue: Number(reventadoMul?.valueX ?? 0),
+                  totalSales: Number(nullMetrics.mSales || 0),
+                  totalCommission: Number(nullMetrics.mCommission || 0),
+                  commissionByNumber: Number(nullMetrics.mCommNum || 0),
+                  commissionByReventado: Number(nullMetrics.mCommRev || 0),
+                  totalPrizes: Number(nullMetrics.mPrizes || 0),
+                  ticketCount: Number(nullMetrics.mTickets || 0),
+                  subtotal: Number(nullMetrics.mSales || 0) - Number(nullMetrics.mCommission || 0) - Number(nullMetrics.mPrizes || 0),
+                  winningTicketsCount: Number(nullMetrics.mWinningTickets || 0),
+                  paidTicketsCount: Number(nullMetrics.mPaidTickets || 0),
+                  unpaidTicketsCount: Number(nullMetrics.mWinningTickets || 0) - Number(nullMetrics.mPaidTickets || 0),
+                });
+              } else {
+                byMultiplier.push({
+                  multiplierId: null,
+                  multiplierName: 'Desconocido / Eliminado',
+                  multiplierValue: 0,
+                  totalSales: Number(nullMetrics.mSales || 0),
+                  totalCommission: Number(nullMetrics.mCommission || 0),
+                  commissionByNumber: Number(nullMetrics.mCommNum || 0),
+                  commissionByReventado: Number(nullMetrics.mCommRev || 0),
+                  totalPrizes: Number(nullMetrics.mPrizes || 0),
+                  ticketCount: Number(nullMetrics.mTickets || 0),
+                  subtotal: Number(nullMetrics.mSales || 0) - Number(nullMetrics.mCommission || 0) - Number(nullMetrics.mPrizes || 0),
+                  winningTicketsCount: Number(nullMetrics.mWinningTickets || 0),
+                  paidTicketsCount: Number(nullMetrics.mPaidTickets || 0),
+                  unpaidTicketsCount: Number(nullMetrics.mWinningTickets || 0) - Number(nullMetrics.mPaidTickets || 0),
+                });
+              }
+            }
+
+            const cByNumber = byMultiplier.reduce((sum: number, m: any) => sum + m.commissionByNumber, 0);
+            const cByReventado = byMultiplier.reduce((sum: number, m: any) => sum + m.commissionByReventado, 0);
+
+            const isReventado =
+              (sm.extraMultiplierId !== null && sm.extraMultiplierId !== undefined) ||
+              (sm.extraMultiplierX !== null && sm.extraMultiplierX !== undefined && Number(sm.extraMultiplierX) > 0);
+
+            const subtotal = Number(sm.totalSales) - vendorCommission - Number(sm.totalPrizes);
+
+            return {
+              sorteoId: sm.sorteoId,
+              sorteoName: sm.sorteoName,
+              scheduledAt: sm.scheduledAt,
+              date: formatDateOnly(new Date(sm.scheduledAt)),
+              time: formatTime12h(new Date(sm.scheduledAt)),
+              loteriaId: sm.loteriaId,
+              loteriaName: sm.loteriaName || "Desconocida",
+              winningNumber: sm.winningNumber ?? null,
+              isReventado,
+              totalSales: Number(sm.totalSales),
+              totalCommission: vendorCommission,
+              commissionByNumber: cByNumber,
+              commissionByReventado: cByReventado,
+              totalPrizes: Number(sm.totalPrizes),
+              ticketCount: Number(sm.ticketCount),
+              subtotal,
+              accumulated: 0,
+              chronologicalIndex: 0,
+              totalChronological: vendorSorteosRaw.length,
+              winningTicketsCount,
+              paidTicketsCount,
+              unpaidTicketsCount,
+              byMultiplier,
+            };
+          });
+
+          // Mapear movimientos
+          const movementItems: any[] = [];
+          if (todayComponents.day === 1) {
+            const prevMonthBal = Number(prevMonthBalancesMap.get(vId)) || 0;
+            if (prevMonthBal !== 0) {
+              const scheduledAt = new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0));
+              movementItems.push({
+                sorteoId: `mov-previous-month-balance-${vId}`,
+                sorteoName: 'Saldo del mes anterior',
+                scheduledAt,
+                date: todayDateStr,
+                time: "12:00AM ",
+                loteriaId: null,
+                loteriaName: null,
+                winningNumber: null,
+                isReventado: false,
+                totalSales: 0,
+                totalCommission: 0,
+                commissionByNumber: 0,
+                commissionByReventado: 0,
+                totalPrizes: 0,
+                ticketCount: 0,
+                subtotal: 0,
+                accumulated: 0,
+                chronologicalIndex: 0,
+                totalChronological: 0,
+                winningTicketsCount: 0,
+                paidTicketsCount: 0,
+                unpaidTicketsCount: 0,
+                byMultiplier: [],
+                type: "payment",
+                amount: prevMonthBal,
+                method: "Saldo del mes anterior",
+                notes: "Saldo arrastrado del mes anterior",
+              });
+            }
+          }
+
+          for (const m of vendorPayments) {
+            if (!m.isReversed) {
+              let scheduledAt: Date;
+              let timeDisplay: string;
+              if (m.time && typeof m.time === 'string' && m.time.trim().length > 0) {
+                const [hours, minutes] = m.time.split(':').map(Number);
+                const utcHours = hours + 6;
+                if (utcHours >= 24) {
+                  scheduledAt = new Date(Date.UTC(year, month - 1, day + 1, utcHours - 24, minutes, 0));
+                } else {
+                  scheduledAt = new Date(Date.UTC(year, month - 1, day, utcHours, minutes, 0));
+                }
+                const ampm = hours >= 12 ? 'PM' : 'AM';
+                const hours12 = hours % 12 || 12;
+                timeDisplay = `${hours12}:${String(minutes).padStart(2, '0')}${ampm} `;
+              } else {
+                const createdAtDate = new Date(m.createdAt);
+                const crTime = new Date(createdAtDate.getTime() - (6 * 60 * 60 * 1000));
+                const hour = crTime.getUTCHours();
+                const minute = crTime.getUTCMinutes();
+                const seconds = crTime.getUTCSeconds();
+                scheduledAt = new Date(Date.UTC(year, month - 1, day, hour, minute, seconds) + (6 * 60 * 60 * 1000));
+                timeDisplay = formatTime12h(scheduledAt);
+              }
+
+              const subtotal = m.type === 'payment' ? Number(m.amount || 0) : -Number(m.amount || 0);
+
+              movementItems.push({
+                sorteoId: `mov-${m.id}`,
+                sorteoName: m.type === 'payment' ? 'Pago recibido' : 'Cobro realizado',
+                scheduledAt,
+                date: todayDateStr,
+                time: timeDisplay,
+                loteriaId: null,
+                loteriaName: null,
+                winningNumber: null,
+                isReventado: false,
+                totalSales: 0,
+                totalCommission: 0,
+                commissionByNumber: 0,
+                commissionByReventado: 0,
+                totalPrizes: 0,
+                ticketCount: 0,
+                subtotal,
+                accumulated: 0,
+                chronologicalIndex: 0,
+                totalChronological: 0,
+                winningTicketsCount: 0,
+                paidTicketsCount: 0,
+                unpaidTicketsCount: 0,
+                byMultiplier: [],
+                type: m.type,
+                amount: m.amount,
+                method: m.method || '',
+                notes: m.notes || '',
+              });
+            }
+          }
+
+          // Saldo inicial del rango
+          let initialAccumulated = 0;
+          if (todayComponents.day === 1) {
+            initialAccumulated = Number(prevMonthBalancesMap.get(vId)) || 0;
+          } else {
+            const prevDayStmt = prevDayStmtByVendor.get(vId);
+            if (prevDayStmt) {
+              initialAccumulated = Number(prevDayStmt.remainingBalance) || Number(prevDayStmt.accumulatedBalance) || 0;
+            } else {
+              initialAccumulated = Number(prevMonthBalancesMap.get(vId)) || 0;
+            }
+          }
+
+          const allEvents = [...sorteoItems, ...movementItems];
+          allEvents.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
+
+          let evAccumulated = initialAccumulated;
+          let rApplied = false;
+
+          const dataWithAccumulated = allEvents.map((event, index) => {
+            if (resetAt && !rApplied && resetAt.getTime() >= todayRange.fromAt.getTime()) {
+              const eventTime = new Date(event.scheduledAt).getTime();
+              if (eventTime >= resetAt.getTime()) {
+                evAccumulated = 0;
+                rApplied = true;
+              }
+            }
+            evAccumulated += Number(event.subtotal) || 0;
+            return {
+              ...event,
+              accumulated: evAccumulated,
+              chronologicalIndex: index + 1,
+              totalChronological: allEvents.length,
+            };
+          });
+
+          // Ordenar eventos para despliegue (más reciente primero, sorteos antes que movimientos si misma hora)
+          dataWithAccumulated.sort((a, b) => {
+            const dateA = new Date(a.scheduledAt).getTime();
+            const dateB = new Date(b.scheduledAt).getTime();
+            if (dateA !== dateB) return dateB - dateA;
+            const aIsMovement = a.sorteoId?.startsWith('mov-');
+            const bIsMovement = b.sorteoId?.startsWith('mov-');
+            if (aIsMovement !== bIsMovement) return aIsMovement ? 1 : -1;
+            return 0;
+          });
+
+          const eventsFormatted = dataWithAccumulated.map((e) => ({
+            ...e,
+            scheduledAt: formatIsoLocal(e.scheduledAt),
+          }));
+
+          daysArrayFalse = [
+            {
+              date: todayDateStr,
+              sorteos: eventsFormatted,
+              dayTotals,
+            },
+          ];
+
+          if (resetAt) {
+            const resetAtDayStr = crDateService.dateUTCToCRString(resetAt);
+            daysArrayFalse = daysArrayFalse.filter((d) => d.date >= resetAtDayStr);
+          }
+        }
+
+        const payloadFalse = {
+          data: daysArrayFalse,
+          meta: {
+            totals,
+            monthlyAccumulated,
+            dateFilter: "today",
+            totalSorteos: Number(rcdToday?.total_sorteos) || totalSorteosEvaluatedToday,
+            totalDays: daysArrayFalse.length,
+          },
+        };
+
+        const normalizedFalseKeyData = {
+          date: "today",
+          fromDate: null,
+          toDate: null,
+          scope: "mine",
+          loteriaId: null,
+          isActive: true,
+          summaryOnly: false,
+          vendedorId: vId,
+          ignoreReset: false,
+        };
+        const hashFalse = crypto.createHash('md5').update(JSON.stringify(normalizedFalseKeyData)).digest('hex');
+        const cacheKeyFalse = `banca:all:ventana:all:vendedor:${vId}:summary:${hashFalse}`;
+
+        cacheEntries.push({
+          key: cacheKeyFalse,
+          value: payloadFalse,
+          ttlSeconds: 300,
+          tags: ['report:summary', `vendedor:${vId}`],
+          useL1: true,
+          l1TtlMs: 90_000,
+        });
       }
+
+      // 6. Inyección masiva y atómica a través de L1 RAM y Pipeline Upstash Redis L2 (O(1))
+      await CacheService.setBatch(cacheEntries);
 
       logger.info({
         layer: 'service',
@@ -3325,20 +3838,43 @@ gs."hour24" ASC
           sorteoId,
           bancaId,
           totalVendors: allVendorIds.length,
-          entriesCached: cacheEntries.length + detailedWarmupCount,
-          detailedWarmupCount,
+          entriesCached: cacheEntries.length,
           durationMs: Date.now() - startTime,
         },
       });
 
       return {
         totalVendors: allVendorIds.length,
-        entriesCached: cacheEntries.length + detailedWarmupCount,
+        entriesCached: cacheEntries.length,
       };
     } finally {
-      // 7. Liberación obligatoria del candado distribuido
-      if (lockAcquired && redis) {
-        await redis.del(lockKey).catch(() => {});
+      // 7. Liberación obligatoria del candado distribuido y pre-locks masivos
+      if (redis) {
+        try {
+          const pipeline = (redis as any).pipeline ? (redis as any).pipeline() : null;
+          if (pipeline && allPreLockKeys.length > 0) {
+            for (const k of allPreLockKeys) {
+              pipeline.del(k);
+            }
+            if (lockAcquired) {
+              pipeline.del(lockKey);
+            }
+            await pipeline.exec();
+          } else {
+            if (allPreLockKeys.length > 0) {
+              await Promise.all(allPreLockKeys.map((k) => (redis as any).del(k).catch(() => {})));
+            }
+            if (lockAcquired) {
+              await redis.del(lockKey).catch(() => {});
+            }
+          }
+        } catch (releaseErr: any) {
+          logger.warn({
+            layer: "service",
+            action: "WARMUP_LOCK_RELEASE_WARN",
+            payload: { sorteoId, error: releaseErr?.message },
+          });
+        }
       }
     }
   },

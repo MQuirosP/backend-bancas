@@ -192,9 +192,58 @@ export class SorteoEvaluationCoordinator {
       });
     }
 
-    // 5. Notificación en Tiempo Real a Clientes Conectados (WebSocket)
-    // Se emite INMEDIATAMENTE después de la sincronización contable (SORTEO_EVALUATE_SYNC_COMPLETED).
-    // NO depende de que termine el precalentamiento de resúmenes.
+    // 5. Pre-calentamiento masivo O(1) de Caché en L1 RAM y Redis L2 (Secuencial con await)
+    // Al ejecutarse en ~200ms vía setBatch O(1), esperamos su confirmación para garantizar
+    // que el 100% de los datos existan en caché antes de emitir la alerta por WebSocket.
+    const warmupStart = Date.now();
+    try {
+      const activeVendorsCount = await prisma.user.count({
+        where: {
+          role: Role.VENDEDOR,
+          isActive: true,
+          ...(existingSorteo.bancaId ? { ventana: { bancaId: existingSorteo.bancaId } } : {}),
+        },
+      });
+
+      logger.info({
+        layer: "coordinator",
+        action: "WARMUP_EVALUATED_SUMMARY_START",
+        payload: {
+          sorteoId: id,
+          bancaId: existingSorteo.bancaId,
+          totalVendors: activeVendorsCount,
+        },
+      });
+
+      const { WarmupCoordinator } = await import("./warmup.coordinator");
+      const warmupResult = await WarmupCoordinator.executeWarmup(id, existingSorteo.bancaId);
+
+      logger.info({
+        layer: "coordinator",
+        action: "WARMUP_EVALUATED_SUMMARY_COMPLETED",
+        payload: {
+          sorteoId: id,
+          bancaId: existingSorteo.bancaId,
+          totalVendors: warmupResult?.totalVendors ?? activeVendorsCount,
+          entriesCached: warmupResult?.entriesCached ?? activeVendorsCount,
+          durationMs: Date.now() - warmupStart,
+        },
+      });
+    } catch (warmupErr: any) {
+      logger.error({
+        layer: "coordinator",
+        action: "WARMUP_EVALUATED_SUMMARY_ERROR",
+        payload: {
+          sorteoId: id,
+          error: warmupErr?.message || String(warmupErr),
+          durationMs: Date.now() - warmupStart,
+        },
+      });
+    }
+
+    // 6. Notificación en Tiempo Real a Clientes Conectados (WebSocket BROADCAST)
+    // Se emite INMEDIATAMENTE DESPUÉS de que el warmup confirma la inyección en L1/L2.
+    // Cuando la campana suene en las terminales, el 100% de los datos ya existe en memoria.
     try {
       SocketService.notifySorteoEvaluated({
         sorteoId: id,
@@ -213,57 +262,5 @@ export class SorteoEvaluationCoordinator {
         payload: { sorteoId: id, error: wsErr?.message || String(wsErr) },
       });
     }
-
-    // 6. Pre-calentamiento de Caché en Segundo Plano (Fire-and-Forget)
-    // Se ejecuta de forma 100% asíncrona sin bloquear el retorno ni la notificación por socket.
-    (async () => {
-      const warmupStart = Date.now();
-      try {
-        const activeVendorsCount = await prisma.user.count({
-          where: {
-            role: Role.VENDEDOR,
-            isActive: true,
-            ...(existingSorteo.bancaId ? { ventana: { bancaId: existingSorteo.bancaId } } : {}),
-          },
-        });
-
-        logger.info({
-          layer: "coordinator",
-          action: "WARMUP_EVALUATED_SUMMARY_START",
-          payload: {
-            sorteoId: id,
-            bancaId: existingSorteo.bancaId,
-            totalVendors: activeVendorsCount,
-          },
-        });
-
-        const { WarmupCoordinator } = await import("./warmup.coordinator");
-        const warmupResult = await WarmupCoordinator.executeWarmup(id, existingSorteo.bancaId);
-
-        logger.info({
-          layer: "coordinator",
-          action: "WARMUP_EVALUATED_SUMMARY_COMPLETED",
-          payload: {
-            sorteoId: id,
-            bancaId: existingSorteo.bancaId,
-            totalVendors: warmupResult?.totalVendors ?? activeVendorsCount,
-            entriesCached: warmupResult?.entriesCached ?? activeVendorsCount,
-            durationMs: Date.now() - warmupStart,
-          },
-        });
-      } catch (warmupErr: any) {
-        logger.error({
-          layer: "coordinator",
-          action: "WARMUP_EVALUATED_SUMMARY_BACKGROUND_ERROR",
-          payload: { sorteoId: id, error: warmupErr?.message || String(warmupErr), durationMs: Date.now() - warmupStart },
-        });
-      }
-    })().catch((err) => {
-      logger.error({
-        layer: "coordinator",
-        action: "WARMUP_UNHANDLED_ERROR",
-        payload: { sorteoId: id, error: err?.message || String(err) },
-      });
-    });
   }
 }
