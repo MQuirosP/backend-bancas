@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.19",
-  "versionCode": 25,
-  "buildNumber": 25,
+  "versionName": "1.0.20",
+  "versionCode": 26,
+  "buildNumber": 26,
   "minSupportedVersion": "1.0.15",
   "forceUpdate": true,
-  "changelog": "Sincronización en tiempo real tras evaluación de sorteos y corrección de alertas de bloqueo.",
-  "releasedAt": "2026-09-12T04:05:00Z",
+  "changelog": "Validación de saldos en caliente, deducción optimista inmediata en RAM y sincronización de restricciones.",
+  "releasedAt": "2026-09-18T01:55:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "3706d9371afac394c13a89fde2f39f0e9fa1faa6d03c7e06d42ca10459ba6197"
+      "sha256": "ef70324799ace985d49585ce5b0f85cb8421b95166250dab93596a27a9817d0d"
     },
     "arm64-v8a": {
-      "sha256": "3706d9371afac394c13a89fde2f39f0e9fa1faa6d03c7e06d42ca10459ba6197"
+      "sha256": "ef70324799ace985d49585ce5b0f85cb8421b95166250dab93596a27a9817d0d"
     }
   }
 }
