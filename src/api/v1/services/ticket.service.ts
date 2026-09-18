@@ -1536,6 +1536,9 @@ export const TicketService = {
                   : {}),
                 ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
                 ...(params.sorteoId ? { sorteoId: params.sorteoId } : {}),
+                ...(params.bancaId && !params.ventanaId
+                  ? { ventana: { bancaId: params.bancaId } }
+                  : {}),
                 ...(params.ventanaId ? { ventanaId: params.ventanaId } : {}),
                 ...(params.vendedorId
                   ? { vendedorId: params.vendedorId }

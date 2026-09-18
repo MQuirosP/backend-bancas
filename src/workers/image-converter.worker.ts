@@ -45,7 +45,7 @@ parentPort.on('message', async (data) => {
     const { pdfToPng } = await import('pdf-to-png-converter');
     
     const finalOptions = {
-      viewportScale: 2.0, 
+      viewportScale: 1.2, 
       ...options
     };
 

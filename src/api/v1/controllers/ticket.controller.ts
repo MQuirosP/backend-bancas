@@ -669,6 +669,7 @@ export const TicketController = {
               
               const emptyPngPages = await convertPdfToPng(new Uint8Array(emptyPdfBuffer), {
                 pagesToProcess: [1],
+                viewportScale: 1.2,
               });
               
               if (!emptyPngPages || emptyPngPages.length === 0) {
@@ -715,6 +716,7 @@ export const TicketController = {
             //  Convertir a PNG único (primera página) usando Worker
             const filteredPngPages = await convertPdfToPng(new Uint8Array(filteredPdfBuffer), {
               pagesToProcess: [1],
+              viewportScale: 1.2,
             });
             
             if (!filteredPngPages || filteredPngPages.length === 0) {
@@ -751,6 +753,7 @@ export const TicketController = {
             //  Tiempos (2 dígitos): 1 PNG con todos los números (00-99) usando Worker
             const pngPages = await convertPdfToPng(pdfUint8Array, {
               pagesToProcess: [1], // Solo la primera página
+              viewportScale: 1.2,
             });
 
             if (!pngPages || pngPages.length === 0) {
@@ -801,6 +804,7 @@ export const TicketController = {
             
             const allPngPages = await convertPdfToPng(pdfUint8Array, {
               pagesToProcess: pageNumbers, // Convertir todas las páginas usando Worker
+              viewportScale: 1.2,
             });
 
             if (!allPngPages || allPngPages.length === 0) {
@@ -879,6 +883,7 @@ export const TicketController = {
             // Fallback: tratar como tiempos (2 dígitos) usando Worker
             const pngPages = await convertPdfToPng(pdfUint8Array, {
               pagesToProcess: [1],
+              viewportScale: 1.2,
             });
 
             if (!pngPages || pngPages.length === 0) {

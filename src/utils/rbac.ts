@@ -226,35 +226,6 @@ async function applyAdminStrategy(
   const effectiveBancaId = requestFilters.bancaId || context.bancaId;
   if (effectiveBancaId) {
     effective.bancaId = effectiveBancaId;
-    if (requestFilters.ventanaId) {
-      const ventana = await withConnectionRetry(
-        () => prisma.ventana.findUnique({
-          where: { id: requestFilters.ventanaId! },
-          select: { bancaId: true },
-        }),
-        { context: 'rbac.applyRbacFilters.adminVentana' }
-      );
-      
-      if (ventana && ventana.bancaId !== effectiveBancaId) {
-        // CRÍTICO: No borrar effective.bancaId.
-        // delete effective.bancaId;
-      }
-    }
-    if (requestFilters.vendedorId) {
-      const vendedor = await withConnectionRetry(
-        () => prisma.user.findUnique({
-          where: { id: requestFilters.vendedorId! },
-          select: { ventana: { select: { bancaId: true } } },
-        }),
-        { context: 'rbac.applyRbacFilters.adminVendedor' }
-      );
-      
-      if (vendedor && vendedor.ventana?.bancaId !== effectiveBancaId) {
-        // CRÍTICO: No borrar effective.bancaId. Mantenerlo garantiza que 
-        // las consultas históricas solo devuelvan datos que pertenecen a esta banca.
-        // delete effective.bancaId;
-      }
-    }
   }
   return effective;
 }
