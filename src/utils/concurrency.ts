@@ -72,24 +72,32 @@ export class ConcurrencyManager {
  * de precalentamiento concurrentes contra PostgreSQL nunca exceda MAX_CONCURRENCY (5).
  */
 export class SharedWarmupPool {
-  private static readonly MAX_CONCURRENCY = 5;
+  private static readonly MAX_CONCURRENCY = 2;
   private static activeWorkers = 0;
   private static queue: (() => void)[] = [];
 
   /**
    * Ejecuta una tarea individual dentro del pool compartido con límite estricto de concurrencia.
+   * Incluye pausas cooperativas para evitar saturar el Event Loop en contenedores de 0.5 vCPU.
    */
   static async run<T>(task: () => Promise<T>): Promise<T> {
     if (this.activeWorkers >= this.MAX_CONCURRENCY) {
       await new Promise<void>((resolve) => this.queue.push(resolve));
     }
     this.activeWorkers++;
+
+    // Pausa cooperativa mínima para dar prioridad al Event Loop y peticiones HTTP entrantes (OPTIONS, health, queries)
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
     try {
       return await task();
     } finally {
       this.activeWorkers--;
       const next = this.queue.shift();
-      if (next) next();
+      if (next) {
+        // Despachar el siguiente worker en el próximo tick del Event Loop
+        setImmediate(next);
+      }
     }
   }
 

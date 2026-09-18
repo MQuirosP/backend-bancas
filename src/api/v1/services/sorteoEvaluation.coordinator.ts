@@ -217,8 +217,8 @@ export class SorteoEvaluationCoordinator {
         },
       });
 
-      const SorteoService = (await import("./sorteo.service")).default;
-      const warmupResult = await SorteoService.warmupEvaluatedSummaries(id, existingSorteo.bancaId);
+      const { WarmupCoordinator } = await import("./warmup.coordinator");
+      const warmupResult = await WarmupCoordinator.executeWarmup(id, existingSorteo.bancaId);
 
       logger.info({
         layer: "coordinator",
