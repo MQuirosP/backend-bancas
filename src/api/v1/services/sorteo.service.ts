@@ -1759,12 +1759,34 @@ gs."hour24" ASC
       forceRefresh?: boolean;
     },
     vendedorId?: string
-  ) {
+  ): Promise<any> {
     //  FASE BE-2: Implementación de Cache-Aside con Coalescing y Normalización
+    // 1. Obtener fecha local de Costa Rica (YYYY-MM-DD)
+    const currentDayStr = crDateService.dateUTCToCRString(new Date());
+
+    // 2. Normalizar: Si el cliente pidió date=range que empieza y termina hoy, ES "today"
+    let effectiveDate = params.date || "today";
+    let effectiveFromDate = params.fromDate || null;
+    let effectiveToDate = params.toDate || null;
+
+    if (
+      effectiveDate === "range" &&
+      effectiveFromDate === currentDayStr &&
+      effectiveToDate === currentDayStr
+    ) {
+      effectiveDate = "today";
+      effectiveFromDate = null;
+      effectiveToDate = null;
+      params.date = "today";
+      params.fromDate = undefined;
+      params.toDate = undefined;
+    }
+
+    // 3. Clave normalizada consistente con el Batch Warmup
     const normalizedKeyData = {
-      date: params.date || "today",
-      fromDate: params.fromDate || null,
-      toDate: params.toDate || null,
+      date: effectiveDate,
+      fromDate: effectiveFromDate,
+      toDate: effectiveToDate,
       scope: params.scope || "mine",
       loteriaId: params.loteriaId || null,
       isActive: params.isActive !== "false" && params.isActive !== "0",
@@ -1838,6 +1860,69 @@ gs."hour24" ASC
           }
 
           try {
+            const isMultiDayEndingToday =
+              (effectiveDate === "range" || !params.date) &&
+              effectiveFromDate !== null &&
+              effectiveFromDate < currentDayStr &&
+              (!effectiveToDate || effectiveToDate >= currentDayStr);
+
+            if (isMultiDayEndingToday && vendedorId) {
+              const todayResult: any = await this.evaluatedSummary(
+                {
+                  ...params,
+                  date: "today",
+                  fromDate: undefined,
+                  toDate: undefined,
+                },
+                vendedorId
+              );
+
+              const yesterdayDate = new Date();
+              yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
+              const yesterdayStr = crDateService.dateUTCToCRString(yesterdayDate);
+
+              const pastResult: any = await this.evaluatedSummary(
+                {
+                  ...params,
+                  date: "range",
+                  fromDate: effectiveFromDate ?? undefined,
+                  toDate: yesterdayStr,
+                },
+                vendedorId
+              );
+
+              const combinedDays = [...(todayResult.data || []), ...(pastResult.data || [])].sort((a: any, b: any) =>
+                b.date.localeCompare(a.date)
+              );
+
+              const combinedTotals = {
+                totalSales: (todayResult.meta?.totals?.totalSales || 0) + (pastResult.meta?.totals?.totalSales || 0),
+                totalCommission: (todayResult.meta?.totals?.totalCommission || 0) + (pastResult.meta?.totals?.totalCommission || 0),
+                commissionByNumber: (todayResult.meta?.totals?.commissionByNumber || 0) + (pastResult.meta?.totals?.commissionByNumber || 0),
+                commissionByReventado: (todayResult.meta?.totals?.commissionByReventado || 0) + (pastResult.meta?.totals?.commissionByReventado || 0),
+                totalPrizes: (todayResult.meta?.totals?.totalPrizes || 0) + (pastResult.meta?.totals?.totalPrizes || 0),
+                totalTickets: (todayResult.meta?.totals?.totalTickets || 0) + (pastResult.meta?.totals?.totalTickets || 0),
+                totalPaid: (todayResult.meta?.totals?.totalPaid || 0) + (pastResult.meta?.totals?.totalPaid || 0),
+                totalCollected: (todayResult.meta?.totals?.totalCollected || 0) + (pastResult.meta?.totals?.totalCollected || 0),
+                totalBalance: (todayResult.meta?.totals?.totalBalance || 0) + (pastResult.meta?.totals?.totalBalance || 0),
+                totalRemainingBalance: todayResult.meta?.totals?.totalRemainingBalance ?? 0,
+                totalSubtotal: todayResult.meta?.totals?.totalRemainingBalance ?? 0,
+              };
+
+              return {
+                data: combinedDays,
+                meta: {
+                  totals: combinedTotals,
+                  monthlyAccumulated: todayResult.meta?.monthlyAccumulated,
+                  dateFilter: "range",
+                  fromDate: effectiveFromDate,
+                  toDate: effectiveToDate || currentDayStr,
+                  totalSorteos: (todayResult.meta?.totalSorteos || 0) + (pastResult.meta?.totalSorteos || 0),
+                  totalDays: combinedDays.length,
+                },
+              };
+            }
+
             // Resolver rango de fechas
             const dateRange = resolveDateRange(
               params.date || "today",
