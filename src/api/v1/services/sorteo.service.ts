@@ -1471,6 +1471,7 @@ gs."hour24" ASC
           businessDate: Date;
           commission_by_number: number;
           commission_by_reventado: number;
+          total_tickets: bigint | number;
           total_sorteos: bigint | number;
         }>
       >(Prisma.sql`
@@ -1478,6 +1479,7 @@ gs."hour24" ASC
           rcd."businessDate",
           COALESCE(SUM(CASE WHEN rcd.tipo = 'NUMERO' THEN rcd."comisionVendedor" ELSE 0 END), 0) as commission_by_number,
           COALESCE(SUM(CASE WHEN rcd.tipo = 'REVENTADO' THEN rcd."comisionVendedor" ELSE 0 END), 0) as commission_by_reventado,
+          COALESCE(SUM(rcd."ticketsCount"), 0)::integer as total_tickets,
           COUNT(DISTINCT rcd."sorteoId") as total_sorteos
         FROM "ResumenCierreDiario" rcd
         WHERE rcd."businessDate" >= ${startDateStr}::date
@@ -1571,7 +1573,7 @@ gs."hour24" ASC
       const commissionByNumber = Number(rcd?.commission_by_number || 0);
       const commissionByReventado = Number(rcd?.commission_by_reventado || 0);
       const totalPrizes = stmt ? stmt.totalPayouts : 0;
-      const totalTickets = stmt ? stmt.ticketCount : 0;
+      const totalTickets = (rcd && Number(rcd.total_tickets) > 0) ? Number(rcd.total_tickets) : (stmt ? stmt.ticketCount : 0);
 
       const totalPaid = moves
         .filter((m: any) => m.type === "payment" && !m.id?.includes('previous-month-balance'))
@@ -1580,9 +1582,12 @@ gs."hour24" ASC
         .filter((m: any) => m.type === "collection" && !m.id?.includes('previous-month-balance'))
         .reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
 
-      const totalBalance = stmt ? stmt.balance : totalSales - totalPrizes - totalCommission;
-      const totalRemainingBalance = stmt ? stmt.remainingBalance : totalBalance - totalCollected + totalPaid;
-      const totalSubtotal = totalRemainingBalance;
+      // Si existe stmt, stmt.balance es el balance operativo neto del día (ventas - premios - comisión + pagado - cobrado).
+      // Si no existe, se calcula con la misma fórmula contable.
+      const dayBalance = stmt ? Number(stmt.balance) : totalSales - totalPrizes - totalCommission + totalPaid - totalCollected;
+      const totalBalance = dayBalance;
+      const totalRemainingBalance = dayBalance;
+      const totalSubtotal = dayBalance;
       const accumulated = stmt ? Number(stmt.remainingBalance) || Number(stmt.accumulatedBalance) || 0 : 0;
 
       return {
@@ -1653,7 +1658,9 @@ gs."hour24" ASC
       finalDaysArray = daysArray.filter((day) => day.date >= resetAtDayStr);
     }
 
-    // Totales del período
+    // Totales del período: suma simple de los balances operativos de los días del rango
+    const periodBalance = finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalBalance, 0);
+
     const totals = {
       totalSales: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalSales, 0),
       totalCommission: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalCommission, 0),
@@ -1663,9 +1670,9 @@ gs."hour24" ASC
       totalTickets: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalTickets, 0),
       totalPaid: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalPaid, 0),
       totalCollected: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalCollected, 0),
-      totalBalance: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalBalance, 0),
-      totalRemainingBalance: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
-      totalSubtotal: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
+      totalBalance: periodBalance,
+      totalRemainingBalance: periodBalance,
+      totalSubtotal: periodBalance,
     };
 
     // Totales del mes completo (monthlyAccumulated)
@@ -3053,6 +3060,7 @@ gs."hour24" ASC
             vendedorId: string;
             commission_by_number: number;
             commission_by_reventado: number;
+            total_tickets: bigint | number;
             total_sorteos: bigint | number;
           }>
         >(Prisma.sql`
@@ -3060,6 +3068,7 @@ gs."hour24" ASC
             rcd."vendedorId",
             COALESCE(SUM(CASE WHEN rcd.tipo = 'NUMERO' THEN rcd."comisionVendedor" ELSE 0 END), 0) as commission_by_number,
             COALESCE(SUM(CASE WHEN rcd.tipo = 'REVENTADO' THEN rcd."comisionVendedor" ELSE 0 END), 0) as commission_by_reventado,
+            COALESCE(SUM(rcd."ticketsCount"), 0)::integer as total_tickets,
             COUNT(DISTINCT rcd."sorteoId") as total_sorteos
           FROM "ResumenCierreDiario" rcd
           WHERE rcd."businessDate" = ${todayDateStr}::date
@@ -3368,12 +3377,17 @@ gs."hour24" ASC
         const commissionByNumber = Number(rcdToday?.commission_by_number || 0);
         const commissionByReventado = Number(rcdToday?.commission_by_reventado || 0);
         const totalPrizes = stmt ? stmt.totalPayouts : 0;
-        const totalTickets = stmt ? stmt.ticketCount : 0;
+        const totalTickets = (rcdToday && Number(rcdToday.total_tickets) > 0)
+          ? Number(rcdToday.total_tickets)
+          : (stmt ? stmt.ticketCount : 0);
         const totalPaid = stmt ? stmt.totalPaid : 0;
         const totalCollected = stmt ? stmt.totalCollected : 0;
-        const totalBalance = stmt ? stmt.balance : totalSales - totalPrizes - totalCommission;
-        const totalRemainingBalance = stmt ? stmt.remainingBalance : totalBalance - totalCollected + totalPaid;
-        const totalSubtotal = totalRemainingBalance;
+        const dayBalance = stmt
+          ? Number(stmt.balance)
+          : totalSales - totalPrizes - totalCommission + totalPaid - totalCollected;
+        const totalBalance = dayBalance;
+        const totalRemainingBalance = dayBalance;
+        const totalSubtotal = dayBalance;
         const accumulated = stmt ? Number(stmt.remainingBalance) || Number(stmt.accumulatedBalance) || 0 : 0;
 
         const dayTotals = {
@@ -3414,6 +3428,8 @@ gs."hour24" ASC
           finalDaysArray = daysArray.filter((day) => day.date >= resetAtDayStr);
         }
 
+        const periodBalance = finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalBalance, 0);
+
         const totals = {
           totalSales: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalSales, 0),
           totalCommission: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalCommission, 0),
@@ -3423,9 +3439,9 @@ gs."hour24" ASC
           totalTickets: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalTickets, 0),
           totalPaid: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalPaid, 0),
           totalCollected: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalCollected, 0),
-          totalBalance: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalBalance, 0),
-          totalRemainingBalance: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
-          totalSubtotal: finalDaysArray.reduce((sum, d) => sum + d.dayTotals.totalRemainingBalance, 0),
+          totalBalance: periodBalance,
+          totalRemainingBalance: periodBalance,
+          totalSubtotal: periodBalance,
         };
 
         // Métricas de monthlyAccumulated
