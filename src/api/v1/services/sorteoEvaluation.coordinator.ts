@@ -128,11 +128,11 @@ export class SorteoEvaluationCoordinator {
       const { invalidateCacheForSorteo } = await import("../../../utils/accountStatementCache");
       await invalidateCacheForSorteo({ scheduledAt: existingSorteo.scheduledAt });
 
-      // Actualizar tabla de rollups (ResumenCierreDiario) desacoplada en background con debounce de 25s
+      // Actualizar tabla de rollups (ResumenCierreDiario) desacoplada en background con debounce de 8s
       const { CierreRollupService } = await import("./cierre.rollup.service");
       const { tz } = await import("../../../utils/timezone");
       const dateStr = syncOutput?.businessDate || (existingSorteo.scheduledAt ? tz.toDateStr(existingSorteo.scheduledAt) : tz.toDateStr());
-      CierreRollupService.scheduleDebouncedAggregate(dateStr, dateStr, 25000);
+      CierreRollupService.scheduleDebouncedAggregate(dateStr, dateStr, 8000);
     } catch (syncErr: any) {
       logger.error({
         layer: "coordinator",
@@ -160,8 +160,9 @@ export class SorteoEvaluationCoordinator {
       await CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
       await CacheService.invalidateTag('dashboard').catch(() => {});
       await CacheService.invalidateTag('cierre').catch(() => {});
-      // NOTA: report:summary NO se invalida de forma destructiva global para evitar que la evaluación
-      // de un sorteo concurrentemente elimine la caché ya caliente de otro. El warmup la refresca con forceRefresh.
+      // NOTA: report:summary NO se invalida inmediatamente aquí para permitir que el warmup
+      // inyecte los totales en L1/L2 antes del broadcast a las terminales.
+      // CierreRollupService invalida report:summary al terminar su agregación (8s) para asegurar datos frescos.
     } catch (cacheErr: any) {
       logger.error({
         layer: "coordinator",

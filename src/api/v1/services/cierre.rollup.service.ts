@@ -201,9 +201,10 @@ export class CierreRollupService {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
 
-      // Invalidar cache de reportes de cierre
+      // Invalidar cache de reportes de cierre y reportes de summary
       const { CacheService } = await import('../../../core/cache.service');
       await CacheService.invalidateTag('cierre').catch(() => {});
+      await CacheService.invalidateTag('report:summary').catch(() => {});
 
       logger.info({
         layer: 'service',
