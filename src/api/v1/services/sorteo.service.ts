@@ -3919,20 +3919,16 @@ gs."hour24" ASC
         const hashFalse = crypto.createHash('md5').update(JSON.stringify(normalizedFalseKeyData)).digest('hex');
         const cacheKeyFalse = `banca:all:ventana:all:vendedor:${vId}:summary:${hashFalse}`;
 
-        // Solo cachear summaryOnly: false si la lista de sorteos incluye el sorteo recién evaluado.
-        // Si ResumenCierreDiario aún no lo ha consolidado (está en debounce de 8s), evitamos congelar
-        // una lista incompleta en Redis por 5 minutos.
-        const includesCurrentSorteo = !sorteoId || todaySorteoIds.includes(sorteoId);
-        if (includesCurrentSorteo) {
-          cacheEntries.push({
-            key: cacheKeyFalse,
-            value: payloadFalse,
-            ttlSeconds: 300,
-            tags: ['report:summary', `vendedor:${vId}`],
-            useL1: true,
-            l1TtlMs: 90_000,
-          });
-        }
+        // Inyectar siempre en caché la vista detallada (summaryOnly: false)
+        // La sincronización contable ya asentó los datos en DB previamente.
+        cacheEntries.push({
+          key: cacheKeyFalse,
+          value: payloadFalse,
+          ttlSeconds: 300,
+          tags: ['report:summary', `vendedor:${vId}`],
+          useL1: true,
+          l1TtlMs: 90_000,
+        });
       }
 
       // 6. Inyección masiva y atómica a través de L1 RAM y Pipeline Upstash Redis L2 (O(1))
