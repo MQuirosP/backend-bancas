@@ -230,7 +230,33 @@ export const SorteoController = {
   },
 
   async evaluatedSummary(req: AuthenticatedRequest, res: Response) {
-    const { date, fromDate, toDate, scope, loteriaId, status, isActive, ignoreReset, summaryOnly, initialAccumulated } = req.query as any;
+    let { date, fromDate, toDate, scope, loteriaId, status, isActive, ignoreReset, summaryOnly, initialAccumulated } = req.query as any;
+
+    // 1. Resolver la fecha de hoy en Costa Rica (YYYY-MM-DD)
+    const todayStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Costa_Rica",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+
+    // 2. Normalizar: si es range con fecha de hoy en ambos extremos, reescribir a 'today'
+    const isRangeForToday =
+      date === "range" &&
+      fromDate === todayStr &&
+      toDate === todayStr;
+
+    if (isRangeForToday || (!date && !fromDate && !toDate)) {
+      date = "today";
+      fromDate = undefined;
+      toDate = undefined;
+    }
+
+    // 3. Normalizar booleano real
+    const isActiveBool =
+      isActive === true || isActive === "true" || isActive === "1"
+        ? true
+        : (isActive === false || isActive === "false" || isActive === "0" ? false : undefined);
 
     // Validar scope (solo 'mine' permitido)
     if (scope && scope !== 'mine') {
@@ -254,7 +280,7 @@ export const SorteoController = {
         scope: scope || 'mine',
         loteriaId,
         status,
-        isActive,
+        isActive: isActiveBool,
         summaryOnly: summaryOnly === 'true' || summaryOnly === true || summaryOnly === '1',
         userRole: req.user!.role,
         ignoreReset: canIgnoreReset && ignoreReset === 'true',

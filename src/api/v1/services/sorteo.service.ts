@@ -1421,7 +1421,7 @@ gs."hour24" ASC
       scope?: string;
       loteriaId?: string;
       status?: string;
-      isActive?: string;
+      isActive?: boolean;
       summaryOnly?: boolean;
       ventanaId?: string;
       bancaId?: string;
@@ -1799,7 +1799,7 @@ gs."hour24" ASC
       scope?: string;
       loteriaId?: string;
       status?: string;
-      isActive?: string;
+      isActive?: boolean  ;
       summaryOnly?: boolean;
       ventanaId?: string;
       bancaId?: string;
@@ -1839,7 +1839,7 @@ gs."hour24" ASC
       toDate: effectiveToDate,
       scope: params.scope || "mine",
       loteriaId: params.loteriaId || null,
-      isActive: params.isActive !== "false" && params.isActive !== "0",
+      isActive: params.isActive !== false && params.isActive !== undefined,
       summaryOnly: Boolean(params.summaryOnly),
       vendedorId: vendedorId || null,
       ignoreReset: Boolean(params.ignoreReset),
@@ -2015,7 +2015,7 @@ gs."hour24" ASC
 
             // Construir filtro de status de tickets
             // Filtro de isActive: si no se proporciona, se asume true (solo tickets activos)
-            const ticketIsActive = params.isActive !== 'false' && params.isActive !== '0';
+            const ticketIsActive = params.isActive !== false && params.isActive !== undefined;
 
 
             //  C3.4 OPTIMIZACIÓN: Resolver rango mensual una sola vez (se usa en monthlyAccumulated)
@@ -4107,7 +4107,7 @@ gs."hour24" ASC
               date: 'today',
               scope: 'mine',
               status: 'EVALUATED,OPEN',
-              isActive: 'true',
+              isActive: true,
               summaryOnly: false,
               userRole: Role.VENDEDOR,
               ignoreReset: false,
@@ -4121,7 +4121,7 @@ gs."hour24" ASC
               date: 'today',
               scope: 'mine',
               status: 'EVALUATED,OPEN',
-              isActive: 'true',
+              isActive: true,
               summaryOnly: true,
               userRole: Role.VENDEDOR,
               ignoreReset: false,
