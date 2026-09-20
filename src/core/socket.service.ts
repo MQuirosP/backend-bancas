@@ -35,7 +35,6 @@ setInterval(() => {
 }, 5 * 60 * 1000); // cada 5 minutos
 
 function getTokenFingerprint(token: string): string {
-  // Hash del token para no guardar tokens completos en memoria
   return crypto.createHash('sha256').update(token).digest('hex').slice(0, 16);
 }
 
@@ -44,9 +43,8 @@ async function applySocketAuthRateLimit(fingerprint: string): Promise<void> {
   const record = socketAuthFailCache.get(fingerprint);
 
   if (record && now < record.nextAllowedAt) {
-    // Aún en penalización: forzar espera del tiempo restante
     const waitMs = record.nextAllowedAt - now;
-    await new Promise(resolve => setTimeout(resolve, waitMs));
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 }
 
@@ -56,7 +54,6 @@ function recordSocketAuthFailure(fingerprint: string): void {
   const attempts = (existing?.attempts ?? 0) + 1;
 
   if (attempts >= SOCKET_AUTH_MAX_ATTEMPTS) {
-    // Backoff exponencial: 5s, 10s, 20s, techo 30s
     const exponent = attempts - SOCKET_AUTH_MAX_ATTEMPTS;
     const delay = Math.min(SOCKET_AUTH_BASE_DELAY_MS * Math.pow(2, exponent), SOCKET_AUTH_MAX_DELAY_MS);
     socketAuthFailCache.set(fingerprint, { attempts, nextAllowedAt: now + delay });
@@ -72,13 +69,16 @@ export const SocketEvents = {
 } as const;
 
 export const SocketRooms = {
-  vendedores: 'vendedores',
-  ventanas: 'ventanas',
-  admins: 'admins',
+  // Salas confinadas por Tenant
   banca: (bancaId: string) => `banca:${bancaId}`,
   bancaVendedores: (bancaId: string) => `banca:${bancaId}:vendedores`,
   bancaVentanas: (bancaId: string) => `banca:${bancaId}:ventanas`,
+
+  // Sala individual
   user: (userId: string) => `user:${userId}`,
+
+  // Única sala compartida: administración de plataforma
+  admins: 'admins',
 };
 
 export interface SorteoEvaluatedPayload {
@@ -120,9 +120,6 @@ export class SocketService {
       pingInterval: 25000,
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // ADAPTADOR REDIS: Escalabilidad Horizontal (Múltiples réplicas en Render)
-    // ─────────────────────────────────────────────────────────────────────────
     const redisUrl = process.env.REDIS_URL || config.redis.url;
 
     if (redisUrl) {
@@ -130,13 +127,10 @@ export class SocketService {
         const redisOptions: RedisOptions = {
           maxRetriesPerRequest: null,
           enableReadyCheck: true,
-          keepAlive: 10000,                      // TCP keep-alive nativo en ioredis (ms)
-          autoResubscribe: true,                 // Re-suscribe automáticamente a los canales tras reconexión
-          autoResendUnfulfilledCommands: true,   // Reenvía comandos en cola si hubo microcorte
-          retryStrategy: (times: number) => {
-            const delay = Math.min(times * 100, 3000);
-            return delay;
-          },
+          keepAlive: 10000,
+          autoResubscribe: true,
+          autoResendUnfulfilledCommands: true,
+          retryStrategy: (times: number) => Math.min(times * 100, 3000),
           tls: redisUrl.startsWith('rediss://') ? { rejectUnauthorized: false } : undefined,
         };
 
@@ -202,7 +196,6 @@ export class SocketService {
           return next(new Error('Authentication token missing'));
         }
 
-        // Aplicar rate limiting para tokens que fallan repetidamente
         const fingerprint = getTokenFingerprint(token);
         await applySocketAuthRateLimit(fingerprint);
 
@@ -221,7 +214,6 @@ export class SocketService {
           return next(new Error('User not found or inactive'));
         }
 
-        // Éxito: limpiar penalizaciones previas
         socketAuthFailCache.delete(fingerprint);
         socket.data.user = user;
         next();
@@ -236,7 +228,6 @@ export class SocketService {
           const fingerprint = getTokenFingerprint(token);
           recordSocketAuthFailure(fingerprint);
           const record = socketAuthFailCache.get(fingerprint);
-          // Solo loguear las primeras N fallas; después silenciar para no contaminar logs
           if (!record || record.attempts <= SOCKET_AUTH_MAX_ATTEMPTS) {
             logger.warn({
               layer: 'socket',
@@ -259,25 +250,27 @@ export class SocketService {
     this.io.on('connection', (socket: Socket) => {
       const user: UserSession | undefined = socket.data.user;
 
-      if (user?.role === Role.VENDEDOR) {
-        socket.join(SocketRooms.vendedores);
-        if (user.bancaId) {
-          socket.join(SocketRooms.bancaVendedores(user.bancaId));
-        }
+      // Vendedores: se suscriben únicamente a las salas de su propia banca
+      if (user?.role === Role.VENDEDOR && user.bancaId) {
+        socket.join(SocketRooms.bancaVendedores(user.bancaId));
+        socket.join(SocketRooms.banca(user.bancaId));
       }
 
-      if (user?.role === Role.VENTANA) {
-        socket.join(SocketRooms.ventanas);
-        if (user.bancaId) {
-          socket.join(SocketRooms.bancaVentanas(user.bancaId));
-        }
+      // Ventanas: se suscriben únicamente a las salas de su propia banca
+      if (user?.role === Role.VENTANA && user.bancaId) {
+        socket.join(SocketRooms.bancaVentanas(user.bancaId));
+        socket.join(SocketRooms.banca(user.bancaId));
       }
 
+      // Administradores de plataforma o de banca
       if (user?.role === Role.ADMIN || user?.role === Role.BANCA) {
         socket.join(SocketRooms.admins);
+        if (user.bancaId) {
+          socket.join(SocketRooms.banca(user.bancaId));
+        }
       }
 
-      // Manejador para que administradores o bancas cambien dinámicamente de banca activa
+      // Switch dinámico de banca para administradores
       socket.on(SocketEvents.BANCA_SWITCH, (data: { bancaId?: string }) => {
         if (user?.role === Role.ADMIN || user?.role === Role.BANCA) {
           for (const room of socket.rooms) {
@@ -291,10 +284,7 @@ export class SocketService {
         }
       });
 
-      if (user?.bancaId) {
-        socket.join(SocketRooms.banca(user.bancaId));
-      }
-
+      // Sala personal de usuario (para mensajes directos)
       if (user?.id) {
         socket.join(SocketRooms.user(user.id));
       }
@@ -336,23 +326,15 @@ export class SocketService {
     return this.io;
   }
 
-  /**
-   * Cierre graceful de las conexiones Redis y del servidor de sockets
-   */
   static async close(): Promise<void> {
     try {
-      // 1. Cerrar primero el servidor de Socket.IO para que el RedisAdapter pueda ejecutar
-      // punsubscribe() y unsubscribe() mientras subClient sigue abierto y conectado.
       if (this.io) {
         await new Promise<void>((resolve) => {
-          this.io!.close(() => {
-            resolve();
-          });
+          this.io!.close(() => resolve());
         });
         this.io = null;
       }
 
-      // 2. Cerrar subClient y pubClient una vez que el adapter ya liberó sus suscripciones
       if (this.subClient) {
         this.subClient.removeAllListeners('error');
         this.subClient.on('error', () => {});
@@ -376,7 +358,7 @@ export class SocketService {
   }
 
   /**
-   * Notifica la evaluación de un sorteo exclusivamente a la sala de la banca con Jitter (50ms - 500ms)
+   * Notifica la evaluación exclusivamente a la sala de la banca evaluada con Jitter (50ms - 500ms).
    */
   static notifySorteoEvaluated(payload: SorteoEvaluatedPayload): void {
     if (!this.io) {
@@ -388,9 +370,21 @@ export class SocketService {
       return;
     }
 
-    const room = payload.bancaId ? SocketRooms.banca(payload.bancaId) : SocketRooms.vendedores;
+    // Corte defensivo: nunca emitir si no hay bancaId (previene leaks multi-tenant)
+    if (!payload.bancaId) {
+      logger.error({
+        layer: 'socket',
+        action: 'SORTEO_EVALUATED_BROADCAST_ABORTED',
+        payload: {
+          message: 'Intento de broadcast sin bancaId detectado. Bloqueado por política multi-tenant.',
+          sorteoId: payload.sorteoId,
+        },
+      });
+      return;
+    }
 
-    // Escalonar la emisión con un Jitter corto (50ms - 500ms) por socket conectado para evitar el Thundering Herd
+    const room = SocketRooms.banca(payload.bancaId);
+
     this.io.in(room).fetchSockets().then((sockets) => {
       if (!sockets || sockets.length === 0) {
         this.io?.to(room).emit(SocketEvents.SORTEO_EVALUADO, payload);
@@ -411,6 +405,7 @@ export class SocketService {
       action: 'SORTEO_EVALUATED_BROADCAST',
       payload: {
         room,
+        bancaId: payload.bancaId,
         sorteoId: payload.sorteoId,
         winningNumber: payload.winningNumber,
         extraOutcomeCode: payload.extraOutcomeCode,
@@ -419,7 +414,7 @@ export class SocketService {
   }
 
   /**
-   * Notifica la reversión de un sorteo exclusivamente a la sala de la banca con Jitter (50ms - 500ms)
+   * Notifica la reversión exclusivamente a la sala de la banca con Jitter (50ms - 500ms).
    */
   static notifySorteoReverted(payload: SorteoRevertedPayload): void {
     if (!this.io) {
@@ -431,7 +426,20 @@ export class SocketService {
       return;
     }
 
-    const room = payload.bancaId ? SocketRooms.banca(payload.bancaId) : SocketRooms.vendedores;
+    // Corte defensivo: nunca emitir si no hay bancaId
+    if (!payload.bancaId) {
+      logger.error({
+        layer: 'socket',
+        action: 'SORTEO_REVERTED_BROADCAST_ABORTED',
+        payload: {
+          message: 'Intento de reversión sin bancaId detectado. Bloqueado por política multi-tenant.',
+          sorteoId: payload.sorteoId,
+        },
+      });
+      return;
+    }
+
+    const room = SocketRooms.banca(payload.bancaId);
 
     this.io.in(room).fetchSockets().then((sockets) => {
       if (!sockets || sockets.length === 0) {
@@ -453,6 +461,7 @@ export class SocketService {
       action: 'SORTEO_REVERTED_BROADCAST',
       payload: {
         room,
+        bancaId: payload.bancaId,
         sorteoId: payload.sorteoId,
       },
     });
