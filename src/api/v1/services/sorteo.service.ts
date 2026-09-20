@@ -1810,7 +1810,7 @@ gs."hour24" ASC
     },
     vendedorId?: string
   ): Promise<any> {
-    //  FASE BE-2: Implementación de Cache-Aside con Coalescing y Normalización
+    // FASE BE-2: Implementación de Cache-Aside con Coalescing y Normalización
     // 1. Obtener fecha local de Costa Rica (YYYY-MM-DD)
     const currentDayStr = crDateService.dateUTCToCRString(new Date());
 
@@ -1832,35 +1832,25 @@ gs."hour24" ASC
       params.toDate = undefined;
     }
 
+    const isMineScope = (params.scope || 'mine') === 'mine';
+    const isToday = effectiveDate === 'today';
+
     // 3. Clave normalizada consistente con el Batch Warmup
     const normalizedKeyData = {
-      date: effectiveDate,
-      fromDate: effectiveFromDate,
-      toDate: effectiveToDate,
-      scope: params.scope || "mine",
-      loteriaId: params.loteriaId || null,
-      isActive: params.isActive !== false && params.isActive !== undefined,
-      summaryOnly: Boolean(params.summaryOnly),
+      bancaId: isMineScope ? 'all' : (params.bancaId ?? 'all'),
+      ventanaId: isMineScope ? 'all' : (params.ventanaId ?? 'all'),
       vendedorId: vendedorId || null,
+      summaryOnly: Boolean(params.summaryOnly),
+      date: effectiveDate,
+      fromDate: isToday ? undefined : (effectiveFromDate ?? undefined),
+      toDate: isToday ? undefined : (effectiveToDate ?? undefined),
+      loteriaId: params.loteriaId ?? undefined,
+      isActive: params.isActive !== false && params.isActive !== undefined,
+      scope: 'mine',
       ignoreReset: Boolean(params.ignoreReset),
     };
 
-    // Si el scope es 'mine', bancaId y ventanaId no determinan el dataset del vendedor
-    const isMineScope = (params.scope || 'mine') === 'mine';
-
-    const cacheKey = buildSummaryCacheKey({
-      bancaId: isMineScope ? 'all' : (params.bancaId ?? 'all'),
-      ventanaId: isMineScope ? 'all' : (params.ventanaId ?? 'all'),
-      vendedorId: vendedorId,
-      summaryOnly: Boolean(params.summaryOnly),
-      date: effectiveDate,
-      fromDate: effectiveDate === 'today' ? undefined : effectiveFromDate,
-      toDate: effectiveDate === 'today' ? undefined : effectiveToDate,
-      loteriaId: params.loteriaId ?? undefined,
-      isActive: params.isActive ?? true,
-      scope: 'mine',
-      ignoreReset: Boolean(params.ignoreReset),
-    });
+    const cacheKey = buildSummaryCacheKey(normalizedKeyData);
 
     const tags = ['report:summary'];
     if (vendedorId) tags.push(`vendedor:${vendedorId}`);
