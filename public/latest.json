@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.21",
-  "versionCode": 27,
-  "buildNumber": 27,
+  "versionName": "1.0.22",
+  "versionCode": 28,
+  "buildNumber": 28,
   "minSupportedVersion": "1.0.15",
   "forceUpdate": true,
-  "changelog": "Mejoras en el rendimiento y corrección de errores menores.",
-  "releasedAt": "2026-09-19T01:55:00Z",
+  "changelog": "Mejoras en el mensaje para compartir tickets via WhatsApp.",
+  "releasedAt": "2026-09-20T18:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "17e3374bb10e2d84fa1076b405a9d83bcae5610517cb42f88dfe69e2d983700d"
+      "sha256": "86856646d7c433d34609b01ea510a77493df14b5431c01919d92bd7815435c1d"
     },
     "arm64-v8a": {
-      "sha256": "17e3374bb10e2d84fa1076b405a9d83bcae5610517cb42f88dfe69e2d983700d"
+      "sha256": "86856646d7c433d34609b01ea510a77493df14b5431c01919d92bd7815435c1d"
     }
   }
 }
