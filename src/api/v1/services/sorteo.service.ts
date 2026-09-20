@@ -3132,39 +3132,33 @@ gs."hour24" ASC
       const vendorUuids = allVendorIds.map((id) => Prisma.sql`${id}::uuid`);
 
       // 🚀 PRE-LOCKING MASIVO: Blindar todas las terminales que consulten concurrentemente
-      // Adquiere lock:calc:summary:${cacheKey} en Redis para summaryOnly=true Y summaryOnly=false
-      // para todos los vendedores en una sola operación de pipeline (< 5ms).
-      // Cualquier terminal que entre mientras corre este batch entrará en el loop de espera (polling 80ms)
-      // en evaluatedSummary en lugar de disparar una consulta fría contra PostgreSQL.
       if (redis) {
         try {
           const pipeline = (redis as any).pipeline ? (redis as any).pipeline() : null;
           for (const vId of allVendorIds) {
-            const hashTrue = crypto.createHash('md5').update(JSON.stringify({
-              date: "today",
-              fromDate: null,
-              toDate: null,
-              scope: "mine",
-              loteriaId: null,
-              isActive: true,
+            const cacheKeyTrue = buildSummaryCacheKey({
+              bancaId: 'all',
+              ventanaId: 'all',
+              vendedorId: vId,
               summaryOnly: true,
-              vendedorId: vId,
-              ignoreReset: false,
-            })).digest('hex');
-            const lockKeyTrue = `lock:calc:summary:banca:all:ventana:all:vendedor:${vId}:summary:${hashTrue}`;
-
-            const hashFalse = crypto.createHash('md5').update(JSON.stringify({
-              date: "today",
-              fromDate: null,
-              toDate: null,
-              scope: "mine",
-              loteriaId: null,
+              date: 'today',
+              scope: 'mine',
               isActive: true,
-              summaryOnly: false,
-              vendedorId: vId,
               ignoreReset: false,
-            })).digest('hex');
-            const lockKeyFalse = `lock:calc:summary:banca:all:ventana:all:vendedor:${vId}:summary:${hashFalse}`;
+            });
+            const lockKeyTrue = `lock:calc:summary:${cacheKeyTrue}`;
+
+            const cacheKeyFalse = buildSummaryCacheKey({
+              bancaId: 'all',
+              ventanaId: 'all',
+              vendedorId: vId,
+              summaryOnly: false,
+              date: 'today',
+              scope: 'mine',
+              isActive: true,
+              ignoreReset: false,
+            });
+            const lockKeyFalse = `lock:calc:summary:${cacheKeyFalse}`;
 
             allPreLockKeys.push(lockKeyTrue, lockKeyFalse);
             if (pipeline) {
