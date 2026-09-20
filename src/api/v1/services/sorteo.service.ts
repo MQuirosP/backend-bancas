@@ -3045,7 +3045,14 @@ gs."hour24" ASC
         where: {
           role: Role.VENDEDOR,
           isActive: true,
-          ...(bancaId ? { ventana: { bancaId } } : {}),
+          ...(bancaId
+            ? {
+              OR: [
+                { bancaId },
+                { ventana: { bancaId } },
+              ],
+            }
+            : {}),
         },
         select: {
           id: true,

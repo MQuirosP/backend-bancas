@@ -1,6 +1,7 @@
 import { Response } from "express";
 import SorteoService from "../services/sorteo.service";
 import { AuthenticatedRequest } from "../../../core/types";
+import { crDateService } from "../../../utils/crDateService";
 
 export const SorteoController = {
   async create(req: AuthenticatedRequest, res: Response) {
@@ -233,12 +234,7 @@ export const SorteoController = {
     let { date, fromDate, toDate, scope, loteriaId, status, isActive, ignoreReset, summaryOnly, initialAccumulated } = req.query as any;
 
     // 1. Resolver la fecha de hoy en Costa Rica (YYYY-MM-DD)
-    const todayStr = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Costa_Rica",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
+    const todayStr = crDateService.dateUTCToCRString(new Date());
 
     // 2. Normalizar: si es range con fecha de hoy en ambos extremos, reescribir a 'today'
     const isRangeForToday =
