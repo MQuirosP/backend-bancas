@@ -669,7 +669,8 @@ const SorteoService = {
       body.extraMultiplierId,
       existing,
       evaluated,
-      userId
+      userId,
+      bancaId,
     );
 
     return serializeSorteo(evaluated);

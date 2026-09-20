@@ -91,8 +91,16 @@ export class SorteoEvaluationCoordinator {
     extraMultiplierId: string | null | undefined,
     existingSorteo: any,
     evaluatedSorteo: any,
-    userId: string
+    userId: string,
+    bancaId?: string,
   ): Promise<void> {
+
+    // Cascada de resolución: priorizar bancaId explícito, luego del registro evaluado, luego del existente
+  const targetBancaId = 
+    bancaId || 
+    evaluatedSorteo?.bancaId || 
+    existingSorteo?.bancaId || 
+    null;
     // 1. Sincronización de Cuentas (Nativo en PostgreSQL vía fn_sync_sorteo_statements)
     try {
       logger.info({
@@ -194,15 +202,13 @@ export class SorteoEvaluationCoordinator {
     }
 
     // 5. Pre-calentamiento masivo O(1) de Caché en L1 RAM y Redis L2 (Secuencial con await)
-    // Al ejecutarse en ~200ms vía setBatch O(1), esperamos su confirmación para garantizar
-    // que el 100% de los datos existan en caché antes de emitir la alerta por WebSocket.
     const warmupStart = Date.now();
     try {
       const activeVendorsCount = await prisma.user.count({
         where: {
           role: Role.VENDEDOR,
           isActive: true,
-          ...(existingSorteo.bancaId ? { ventana: { bancaId: existingSorteo.bancaId } } : {}),
+          ...(targetBancaId ? { ventana: { bancaId: targetBancaId } } : {}),
         },
       });
 
@@ -211,20 +217,20 @@ export class SorteoEvaluationCoordinator {
         action: "WARMUP_EVALUATED_SUMMARY_START",
         payload: {
           sorteoId: id,
-          bancaId: existingSorteo.bancaId,
+          bancaId: targetBancaId,
           totalVendors: activeVendorsCount,
         },
       });
 
       const { WarmupCoordinator } = await import("./warmup.coordinator");
-      const warmupResult = await WarmupCoordinator.executeWarmup(id, existingSorteo.bancaId);
+      const warmupResult = await WarmupCoordinator.executeWarmup(id, targetBancaId ?? undefined);
 
       logger.info({
         layer: "coordinator",
         action: "WARMUP_EVALUATED_SUMMARY_COMPLETED",
         payload: {
           sorteoId: id,
-          bancaId: existingSorteo.bancaId,
+          bancaId: targetBancaId,
           totalVendors: warmupResult?.totalVendors ?? activeVendorsCount,
           entriesCached: warmupResult?.entriesCached ?? activeVendorsCount,
           durationMs: Date.now() - warmupStart,
@@ -253,7 +259,7 @@ export class SorteoEvaluationCoordinator {
         winningNumber,
         extraOutcomeCode: (evaluatedSorteo as any)?.extraOutcomeCode || null,
         scheduledAt: existingSorteo?.scheduledAt ? new Date(existingSorteo.scheduledAt).toISOString() : new Date().toISOString(),
-        bancaId: existingSorteo?.bancaId || null,
+        bancaId: targetBancaId,
         evaluatedAt: new Date().toISOString(),
       });
     } catch (wsErr: any) {
