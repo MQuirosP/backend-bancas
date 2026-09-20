@@ -1799,7 +1799,7 @@ gs."hour24" ASC
       scope?: string;
       loteriaId?: string;
       status?: string;
-      isActive?: boolean  ;
+      isActive?: boolean;
       summaryOnly?: boolean;
       ventanaId?: string;
       bancaId?: string;
@@ -1845,18 +1845,21 @@ gs."hour24" ASC
       ignoreReset: Boolean(params.ignoreReset),
     };
 
+    // Si el scope es 'mine', bancaId y ventanaId no determinan el dataset del vendedor
+    const isMineScope = (params.scope || 'mine') === 'mine';
+
     const cacheKey = buildSummaryCacheKey({
-      bancaId: params.bancaId,
-      ventanaId: params.ventanaId,
+      bancaId: isMineScope ? 'all' : (params.bancaId ?? 'all'),
+      ventanaId: isMineScope ? 'all' : (params.ventanaId ?? 'all'),
       vendedorId: vendedorId,
       summaryOnly: Boolean(params.summaryOnly),
       date: effectiveDate,
-      fromDate: effectiveFromDate,
-      toDate: effectiveToDate,
-      loteriaId: params.loteriaId,
-      isActive: params.isActive,
-      scope: params.scope,
-      ignoreReset: params.ignoreReset,
+      fromDate: effectiveDate === 'today' ? undefined : effectiveFromDate,
+      toDate: effectiveDate === 'today' ? undefined : effectiveToDate,
+      loteriaId: params.loteriaId ?? undefined,
+      isActive: params.isActive ?? true,
+      scope: 'mine',
+      ignoreReset: Boolean(params.ignoreReset),
     });
 
     const tags = ['report:summary'];
