@@ -2073,66 +2073,69 @@ gs."hour24" ASC
             let loteriaMultipliers: any[] = [];
 
             if (sorteoIds.length > 0 && !params.summaryOnly) {
-              const ticketMetricsPromise = prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT 
-            "sorteoId",
-            COUNT(CASE WHEN "isWinner" THEN 1 END) as "winningTicketsCount",
-            COUNT(CASE WHEN status::text IN (${TicketStatus.PAID}, ${TicketStatus.PAGADO}) THEN 1 END) as "paidTicketsCount",
-            SUM("totalCommission") as "vendedorCommissionSum"
-          FROM "Ticket"
-          WHERE "sorteoId" IN (${Prisma.join(sorteoIds)})
-            AND "isActive" = ${ticketIsActive}
-            AND "deletedAt" IS NULL
-            ${vendedorId ? Prisma.sql`AND "vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
-            ${params.ventanaId ? Prisma.sql`AND "ventanaId" = CAST(${params.ventanaId} AS uuid)` : Prisma.empty}
-            ${params.bancaId ? Prisma.sql`AND "bancaId" = CAST(${params.bancaId} AS uuid)` : Prisma.empty}
-          GROUP BY "sorteoId"
-        `);
-
-              const multiplierMetricsPromise = prisma.$queryRaw<any[]>(Prisma.sql`
-          SELECT 
-            t."sorteoId", j."multiplierId",
-            SUM(j.amount) as "mSales", 
-            SUM(j."commissionAmount") as "mCommission",
-            SUM(CASE WHEN j.type::text = ${BetType.NUMERO} THEN j."commissionAmount" ELSE 0 END) as "mCommNum",
-            SUM(CASE WHEN j.type::text = ${BetType.REVENTADO} THEN j."commissionAmount" ELSE 0 END) as "mCommRev",
-            SUM(CASE WHEN j."isWinner" THEN j.payout ELSE 0 END) as "mPrizes",
-            COUNT(DISTINCT t.id) as "mTickets", 
-            COUNT(CASE WHEN j."isWinner" THEN 1 END) as "mWinningTickets",
-            COUNT(CASE WHEN t.status::text IN (${TicketStatus.PAID}, ${TicketStatus.PAGADO}) THEN 1 END) as "mPaidTickets"
-          FROM "Ticket" t
-          JOIN "Jugada" j ON j."ticketId" = t.id
-          WHERE t."sorteoId" IN (${Prisma.join(sorteoIds)})
-            AND t."isActive" = ${ticketIsActive}
-            AND t."deletedAt" IS NULL
-            AND j."deletedAt" IS NULL
-            AND j."isActive" = true
-            ${vendedorId ? Prisma.sql`AND t."vendedorId" = CAST(${vendedorId} AS uuid)` : Prisma.empty}
-            ${params.ventanaId ? Prisma.sql`AND t."ventanaId" = CAST(${params.ventanaId} AS uuid)` : Prisma.empty}
-            ${params.bancaId ? Prisma.sql`AND t."bancaId" = CAST(${params.bancaId} AS uuid)` : Prisma.empty}
-          GROUP BY t."sorteoId", j."multiplierId"
-        `);
-
-              const loteriaMultipliersPromise = CacheService.wrap(
-                "catalog:loteria:multipliers:all",
-                () => prisma.loteriaMultiplier.findMany({
-                  select: { id: true, name: true, valueX: true, loteriaId: true, kind: true, isActive: true }
+              // 🚀 O(1) LOOKUP: Reemplaza los escaneos de Ticket y Jugada por la tabla consolidada
+              const [rsmRows, lotMultipliers] = await Promise.all([
+                prisma.resumenSorteoMultiplicador.findMany({
+                  where: {
+                    sorteoId: { in: sorteoIds },
+                    ...(vendedorId ? { vendedorId } : {}),
+                    ...(params.bancaId ? { bancaId: params.bancaId } : {}),
+                  },
                 }),
-                3600,
-                ['multipliers', 'loterias'],
-                true,
-                600_000
-              );
-
-              const detailsResults = await Promise.all([
-                ticketMetricsPromise,
-                multiplierMetricsPromise,
-                loteriaMultipliersPromise,
+                CacheService.wrap(
+                  "catalog:loteria:multipliers:all",
+                  () => prisma.loteriaMultiplier.findMany({
+                    select: { id: true, name: true, valueX: true, loteriaId: true, kind: true, isActive: true }
+                  }),
+                  3600,
+                  ['multipliers', 'loterias'],
+                  true,
+                  600_000
+                ),
               ]);
 
-              ticketMetrics = detailsResults[0];
-              multiplierMetricsRaw = detailsResults[1];
-              loteriaMultipliers = detailsResults[2];
+              loteriaMultipliers = lotMultipliers;
+
+              // Agregación en memoria para multiplierMetricsRaw y ticketMetrics
+              const ticketAggMap = new Map<string, {
+                sorteoId: string;
+                winningTicketsCount: number;
+                paidTicketsCount: number;
+                vendedorCommissionSum: number;
+              }>();
+
+              for (const row of rsmRows) {
+                // 1. Mapeo para multiplierMetricsRaw (mantiene el contrato con by_multiplier)
+                multiplierMetricsRaw.push({
+                  sorteoId: row.sorteoId,
+                  multiplierId: row.multiplierId,
+                  mSales: row.totalSales,
+                  mCommission: row.totalCommission,
+                  mCommNum: row.commissionByNumber,
+                  mCommRev: row.commissionByReventado,
+                  mPrizes: row.totalPrizes,
+                  mTickets: row.ticketCount,
+                  mWinningTickets: row.winningTicketsCount,
+                  mPaidTickets: row.paidTicketsCount,
+                });
+
+                // 2. Acumulador para ticketMetrics por sorteoId
+                let tEntry = ticketAggMap.get(row.sorteoId);
+                if (!tEntry) {
+                  tEntry = {
+                    sorteoId: row.sorteoId,
+                    winningTicketsCount: 0,
+                    paidTicketsCount: 0,
+                    vendedorCommissionSum: 0,
+                  };
+                  ticketAggMap.set(row.sorteoId, tEntry);
+                }
+                tEntry.winningTicketsCount += row.winningTicketsCount;
+                tEntry.paidTicketsCount += row.paidTicketsCount;
+                tEntry.vendedorCommissionSum += row.totalCommission;
+              }
+
+              ticketMetrics = Array.from(ticketAggMap.values());
             }
 
             const sorteoMetrics = sorteoMetricsRaw.map((sm: any) => {
@@ -3369,7 +3372,7 @@ gs."hour24" ASC
         ),
       ]);
 
-      // Phase 2: Métricas de tickets y jugadas por multiplicador agrupadas por (vendedorId, sorteoId)
+      // Phase 2: Métricas de tickets y jugadas por multiplicador consolidadas O(1)
       const todaySorteoIds = Array.from(new Set(todaySorteoMetricsRawBatch.map((r) => r.sorteoId)));
       let ticketMetricsBatch: Array<{
         vendedorId: string;
@@ -3393,50 +3396,59 @@ gs."hour24" ASC
       }> = [];
 
       if (todaySorteoIds.length > 0) {
-        const todaySorteoUuids = todaySorteoIds.map((id) => Prisma.sql`${id}::uuid`);
+        // 🚀 O(1) LOOKUP: Lectura directa desde ResumenSorteoMultiplicador (<1ms)
+        // Sustituye el JOIN pesado contra Jugada y Ticket
+        const rsmRows = await prisma.resumenSorteoMultiplicador.findMany({
+          where: {
+            sorteoId: { in: todaySorteoIds },
+            vendedorId: { in: allVendorIds },
+          },
+        });
 
-        const [ticketsRes, multRes] = await Promise.all([
-          prisma.$queryRaw<typeof ticketMetricsBatch>(Prisma.sql`
-            SELECT 
-              t."vendedorId",
-              t."sorteoId",
-              COUNT(CASE WHEN t."isWinner" THEN 1 END) as "winningTicketsCount",
-              COUNT(CASE WHEN t.status::text IN (${TicketStatus.PAID}, ${TicketStatus.PAGADO}) THEN 1 END) as "paidTicketsCount",
-              SUM(t."totalCommission") as "vendedorCommissionSum"
-            FROM "Ticket" t
-            WHERE t."sorteoId" IN (${Prisma.join(todaySorteoUuids)})
-              AND t."isActive" = true
-              AND t."deletedAt" IS NULL
-              AND t."vendedorId" IN (${Prisma.join(vendorUuids)})
-            GROUP BY t."vendedorId", t."sorteoId"
-          `),
+        // Agrupación en memoria en Node.js (0ms de I/O)
+        const ticketAggMap = new Map<string, {
+          vendedorId: string;
+          sorteoId: string;
+          winningTicketsCount: number;
+          paidTicketsCount: number;
+          vendedorCommissionSum: number;
+        }>();
 
-          prisma.$queryRaw<typeof multiplierMetricsBatch>(Prisma.sql`
-            SELECT 
-              t."vendedorId",
-              t."sorteoId", j."multiplierId",
-              SUM(j.amount) as "mSales", 
-              SUM(j."commissionAmount") as "mCommission",
-              SUM(CASE WHEN j.type::text = ${BetType.NUMERO} THEN j."commissionAmount" ELSE 0 END) as "mCommNum",
-              SUM(CASE WHEN j.type::text = ${BetType.REVENTADO} THEN j."commissionAmount" ELSE 0 END) as "mCommRev",
-              SUM(CASE WHEN j."isWinner" THEN j.payout ELSE 0 END) as "mPrizes",
-              COUNT(DISTINCT t.id) as "mTickets", 
-              COUNT(CASE WHEN j."isWinner" THEN 1 END) as "mWinningTickets",
-              COUNT(CASE WHEN t.status::text IN (${TicketStatus.PAID}, ${TicketStatus.PAGADO}) THEN 1 END) as "mPaidTickets"
-            FROM "Ticket" t
-            JOIN "Jugada" j ON j."ticketId" = t.id
-            WHERE t."sorteoId" IN (${Prisma.join(todaySorteoUuids)})
-              AND t."isActive" = true
-              AND t."deletedAt" IS NULL
-              AND j."deletedAt" IS NULL
-              AND j."isActive" = true
-              AND t."vendedorId" IN (${Prisma.join(vendorUuids)})
-            GROUP BY t."vendedorId", t."sorteoId", j."multiplierId"
-          `),
-        ]);
+        for (const row of rsmRows) {
+          // 1. Mapeo para multiplierMetricsBatch
+          multiplierMetricsBatch.push({
+            vendedorId: row.vendedorId,
+            sorteoId: row.sorteoId,
+            multiplierId: row.multiplierId,
+            mSales: row.totalSales,
+            mCommission: row.totalCommission,
+            mCommNum: row.commissionByNumber,
+            mCommRev: row.commissionByReventado,
+            mPrizes: row.totalPrizes,
+            mTickets: row.ticketCount,
+            mWinningTickets: row.winningTicketsCount,
+            mPaidTickets: row.paidTicketsCount,
+          });
 
-        ticketMetricsBatch = ticketsRes;
-        multiplierMetricsBatch = multRes;
+          // 2. Acumulador para ticketMetricsBatch
+          const tKey = `${row.vendedorId}:${row.sorteoId}`;
+          let tEntry = ticketAggMap.get(tKey);
+          if (!tEntry) {
+            tEntry = {
+              vendedorId: row.vendedorId,
+              sorteoId: row.sorteoId,
+              winningTicketsCount: 0,
+              paidTicketsCount: 0,
+              vendedorCommissionSum: 0,
+            };
+            ticketAggMap.set(tKey, tEntry);
+          }
+          tEntry.winningTicketsCount += row.winningTicketsCount;
+          tEntry.paidTicketsCount += row.paidTicketsCount;
+          tEntry.vendedorCommissionSum += row.totalCommission;
+        }
+
+        ticketMetricsBatch = Array.from(ticketAggMap.values());
       }
 
       // Mapear resultados indexados por vendedorId

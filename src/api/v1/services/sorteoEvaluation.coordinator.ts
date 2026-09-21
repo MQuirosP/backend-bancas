@@ -96,11 +96,11 @@ export class SorteoEvaluationCoordinator {
   ): Promise<void> {
 
     // Cascada de resolución: priorizar bancaId explícito, luego del registro evaluado, luego del existente
-  const targetBancaId = 
-    bancaId || 
-    evaluatedSorteo?.bancaId || 
-    existingSorteo?.bancaId || 
-    null;
+    const targetBancaId =
+      bancaId ||
+      evaluatedSorteo?.bancaId ||
+      existingSorteo?.bancaId ||
+      null;
     // 1. Sincronización de Cuentas (Nativo en PostgreSQL vía fn_sync_sorteo_statements)
     try {
       logger.info({
@@ -114,6 +114,13 @@ export class SorteoEvaluationCoordinator {
         `SELECT fn_sync_sorteo_statements($1::uuid, false)`,
         id
       );
+
+      // --- SINCRONIZACIÓN DE RESUMEN POR MULTIPLICADORES (O(1) para Warmup y Balances) ---
+      await prisma.$queryRawUnsafe(
+        `SELECT fn_sync_sorteo_multipliers_summary($1::uuid)`,
+        id
+      );
+      // -----------------------------------------------------------------------------------
 
       const syncOutput = syncResultRaw?.[0]?.fn_sync_sorteo_statements;
       const syncDuration = Date.now() - syncStart;
@@ -164,10 +171,10 @@ export class SorteoEvaluationCoordinator {
     // 3. Limpieza de Caché (Memoria y Redis)
     try {
       clearSorteoCache();
-      await CacheService.invalidateTag('sorteos').catch(() => {});
-      await CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
-      await CacheService.invalidateTag('dashboard').catch(() => {});
-      await CacheService.invalidateTag('cierre').catch(() => {});
+      await CacheService.invalidateTag('sorteos').catch(() => { });
+      await CacheService.invalidateTag(`sorteo:${id}`).catch(() => { });
+      await CacheService.invalidateTag('dashboard').catch(() => { });
+      await CacheService.invalidateTag('cierre').catch(() => { });
       // NOTA: report:summary NO se invalida inmediatamente aquí para permitir que el warmup
       // inyecte los totales en L1/L2 antes del broadcast a las terminales.
       // CierreRollupService invalida report:summary al terminar su agregación (8s) para asegurar datos frescos.

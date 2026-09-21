@@ -12,50 +12,51 @@ datasource db {
 }
 
 model Banca {
-  id                         String                             @id @default(uuid()) @db.Uuid
-  name                       String                             @unique
-  code                       String                             @unique
-  defaultMinBet              Float                              @default(100.00)
-  globalMaxPerNumber         Int                                @default(5000)
-  deletedAt                  DateTime?
-  deletedBy                  String?
-  deletedReason              String?
-  createdAt                  DateTime                           @default(now())
-  updatedAt                  DateTime                           @updatedAt
-  address                    String?
-  email                      String?
-  phone                      String?
-  isActive                   Boolean                            @default(true)
-  salesCutoffMinutes         Int                                @default(1)
-  commissionPolicyJson       Json?
-  maxSessionsPerVendedor     Int                                @default(1)
-  vendorLimit                Int?
-  accountPayments            AccountPayment[]
-  accountStatements          AccountStatement[]
-  statementSettlementConfigs AccountStatementSettlementConfig[]
-  activityLogs               ActivityLog[]
-  alerts                     Alert[]
-  apiKeys                    ApiKey[]
-  loteriaSettings            BancaLoteriaSetting[]
-  DailyNumberSales           DailyNumberSales[]
-  exportJobs                 ExportJob[]
-  goals                      Goal[]
-  jugadas                    Jugada[]
-  loterias                   Loteria[]
-  multipliers                LoteriaMultiplier[]
-  monthlyClosingBalances     MonthlyClosingBalance[]            @relation("MonthlyClosingBalanceBanca")
-  multiplierOverrides        MultiplierOverride[]
-  refreshTokens              RefreshToken[]
-  restrictionRules           RestrictionRule[]
-  savedReports               SavedReport[]
-  sorteos                    Sorteo[]
-  sorteosAutoConfigs         SorteosAutoConfig[]
-  tickets                    Ticket[]
-  appUsers                   User[]
-  users                      UserBanca[]
-  ventanas                   Ventana[]
-  webhooks                   Webhook[]
-  sorteoListaExclusiones     SorteoListaExclusion[]
+  id                          String                             @id @default(uuid()) @db.Uuid
+  name                        String                             @unique
+  code                        String                             @unique
+  defaultMinBet               Float                              @default(100.00)
+  globalMaxPerNumber          Int                                @default(5000)
+  deletedAt                   DateTime?
+  deletedBy                   String?
+  deletedReason               String?
+  createdAt                   DateTime                           @default(now())
+  updatedAt                   DateTime                           @updatedAt
+  address                     String?
+  email                       String?
+  phone                       String?
+  isActive                    Boolean                            @default(true)
+  salesCutoffMinutes          Int                                @default(1)
+  commissionPolicyJson        Json?
+  maxSessionsPerVendedor      Int                                @default(1)
+  vendorLimit                 Int?
+  accountPayments             AccountPayment[]
+  accountStatements           AccountStatement[]
+  statementSettlementConfigs  AccountStatementSettlementConfig[]
+  activityLogs                ActivityLog[]
+  alerts                      Alert[]
+  apiKeys                     ApiKey[]
+  loteriaSettings             BancaLoteriaSetting[]
+  DailyNumberSales            DailyNumberSales[]
+  exportJobs                  ExportJob[]
+  goals                       Goal[]
+  jugadas                     Jugada[]
+  loterias                    Loteria[]
+  multipliers                 LoteriaMultiplier[]
+  monthlyClosingBalances      MonthlyClosingBalance[]            @relation("MonthlyClosingBalanceBanca")
+  multiplierOverrides         MultiplierOverride[]
+  refreshTokens               RefreshToken[]
+  restrictionRules            RestrictionRule[]
+  savedReports                SavedReport[]
+  sorteos                     Sorteo[]
+  sorteosAutoConfigs          SorteosAutoConfig[]
+  tickets                     Ticket[]
+  appUsers                    User[]
+  users                       UserBanca[]
+  ventanas                    Ventana[]
+  webhooks                    Webhook[]
+  sorteoListaExclusiones      SorteoListaExclusion[]
+  resumenSorteoMultiplicadors ResumenSorteoMultiplicador[]
 }
 
 model Ventana {
@@ -139,6 +140,7 @@ model User {
   bancas                                  UserBanca[]
   exclusionsCreated                       SorteoListaExclusion[]             @relation("ExclusionExcludedBy")
   exclusionsAsVendedor                    SorteoListaExclusion[]             @relation("ExclusionVendedor")
+  resumenSorteoMultiplicadors             ResumenSorteoMultiplicador[]
 
   @@index([email])
   @@index([name])
@@ -332,33 +334,34 @@ model Jugada {
 }
 
 model Sorteo {
-  id                   String                 @id @default(uuid()) @db.Uuid
-  loteriaId            String                 @db.Uuid
-  scheduledAt          DateTime
-  status               SorteoStatus           @default(SCHEDULED)
-  winningNumber        String?
-  isActive             Boolean                @default(true)
-  deletedAt            DateTime?
-  deletedBy            String?
-  deletedReason        String?
-  createdAt            DateTime               @default(now())
-  updatedAt            DateTime               @updatedAt
-  name                 String
-  extraMultiplierId    String?                @db.Uuid
-  extraMultiplierX     Float?
-  extraOutcomeCode     String?
-  hasWinner            Boolean                @default(false)
-  deletedByCascadeFrom String?
-  deletedByCascadeId   String?                @db.Uuid
-  deletedByCascade     Boolean                @default(false)
-  digits               Int                    @default(2)
-  bancaId              String?                @db.Uuid
-  DailyNumberSales     DailyNumberSales[]
-  banca                Banca?                 @relation(fields: [bancaId], references: [id])
-  extraMultiplier      LoteriaMultiplier?     @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
-  loteria              Loteria                @relation(fields: [loteriaId], references: [id])
-  tickets              Ticket[]
-  exclusions           SorteoListaExclusion[]
+  id                          String                       @id @default(uuid()) @db.Uuid
+  loteriaId                   String                       @db.Uuid
+  scheduledAt                 DateTime
+  status                      SorteoStatus                 @default(SCHEDULED)
+  winningNumber               String?
+  isActive                    Boolean                      @default(true)
+  deletedAt                   DateTime?
+  deletedBy                   String?
+  deletedReason               String?
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  name                        String
+  extraMultiplierId           String?                      @db.Uuid
+  extraMultiplierX            Float?
+  extraOutcomeCode            String?
+  hasWinner                   Boolean                      @default(false)
+  deletedByCascadeFrom        String?
+  deletedByCascadeId          String?                      @db.Uuid
+  deletedByCascade            Boolean                      @default(false)
+  digits                      Int                          @default(2)
+  bancaId                     String?                      @db.Uuid
+  DailyNumberSales            DailyNumberSales[]
+  banca                       Banca?                       @relation(fields: [bancaId], references: [id])
+  extraMultiplier             LoteriaMultiplier?           @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
+  loteria                     Loteria                      @relation(fields: [loteriaId], references: [id])
+  tickets                     Ticket[]
+  exclusions                  SorteoListaExclusion[]
+  resumenSorteoMultiplicadors ResumenSorteoMultiplicador[]
 
   @@unique([loteriaId, scheduledAt, bancaId])
   @@index([loteriaId, deletedAt], map: "idx_sorteos_loteria_id_deleted_at")
@@ -461,23 +464,24 @@ model RestrictionRule {
 }
 
 model LoteriaMultiplier {
-  id                    String                 @id @default(uuid()) @db.Uuid
-  loteriaId             String                 @db.Uuid
-  name                  String
-  valueX                Float
-  isActive              Boolean                @default(true)
-  appliesToDate         DateTime?
-  appliesToSorteoId     String?                @db.Uuid
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  kind                  MultiplierKind         @default(NUMERO)
-  bancaId               String?                @db.Uuid
-  jugadasAtSale         Jugada[]               @relation("JugadaMultiplierAtSale")
-  banca                 Banca?                 @relation(fields: [bancaId], references: [id])
-  loteria               Loteria                @relation(fields: [loteriaId], references: [id])
-  restrictionRules      RestrictionRule[]
-  appliedInSorteos      Sorteo[]               @relation("SorteoExtraMultiplier")
-  sorteoListaExclusions SorteoListaExclusion[] @relation("ExclusionMultiplier")
+  id                          String                       @id @default(uuid()) @db.Uuid
+  loteriaId                   String                       @db.Uuid
+  name                        String
+  valueX                      Float
+  isActive                    Boolean                      @default(true)
+  appliesToDate               DateTime?
+  appliesToSorteoId           String?                      @db.Uuid
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
+  kind                        MultiplierKind               @default(NUMERO)
+  bancaId                     String?                      @db.Uuid
+  jugadasAtSale               Jugada[]                     @relation("JugadaMultiplierAtSale")
+  banca                       Banca?                       @relation(fields: [bancaId], references: [id])
+  loteria                     Loteria                      @relation(fields: [loteriaId], references: [id])
+  restrictionRules            RestrictionRule[]
+  appliedInSorteos            Sorteo[]                     @relation("SorteoExtraMultiplier")
+  sorteoListaExclusions       SorteoListaExclusion[]       @relation("ExclusionMultiplier")
+  resumenSorteoMultiplicadors ResumenSorteoMultiplicador[]
 
   @@index([loteriaId, kind, isActive])
   @@index([bancaId])
@@ -926,6 +930,34 @@ model DailyNumberSales {
   @@index([businessDate, vendedorId], map: "idx_daily_number_sales_vendedor")
   @@index([businessDate, ventanaId], map: "idx_daily_number_sales_ventana")
   @@index([sorteoId], map: "idx_dailynumbersales_sorteoid")
+}
+
+model ResumenSorteoMultiplicador {
+  id                    String   @id @default(uuid()) @db.Uuid
+  sorteoId              String   @db.Uuid
+  vendedorId            String   @db.Uuid
+  multiplierId          String?  @db.Uuid
+  bancaId               String?  @db.Uuid
+  totalSales            Float    @default(0)
+  totalCommission       Float    @default(0)
+  commissionByNumber    Float    @default(0)
+  commissionByReventado Float    @default(0)
+  totalPrizes           Float    @default(0)
+  ticketCount           Int      @default(0)
+  winningTicketsCount   Int      @default(0)
+  paidTicketsCount      Int      @default(0)
+  createdAt             DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime @default(now()) @db.Timestamptz(6)
+
+  sorteo     Sorteo             @relation(fields: [sorteoId], references: [id], onDelete: Cascade)
+  vendedor   User               @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
+  multiplier LoteriaMultiplier? @relation(fields: [multiplierId], references: [id], onDelete: SetNull)
+  banca      Banca?             @relation(fields: [bancaId], references: [id], onDelete: Cascade)
+
+  @@unique([sorteoId, vendedorId, multiplierId], name: "uniq_sorteo_vendedor_multiplier")
+  @@index([sorteoId, vendedorId], map: "idx_rsm_sorteo_vendedor")
+  @@index([vendedorId, sorteoId], map: "idx_rsm_vendedor_sorteo")
+  @@index([bancaId, createdAt], map: "idx_rsm_banca_created")
 }
 
 enum OverrideScope {
