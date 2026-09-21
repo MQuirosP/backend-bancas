@@ -1852,6 +1852,14 @@ gs."hour24" ASC
 
     const cacheKey = buildSummaryCacheKey(normalizedKeyData);
 
+    // Días cerrados/históricos (ayer o rangos pasados) no cambian: TTL largo (24h L2, 1h L1)
+    const isHistoricalPast =
+      effectiveDate === "yesterday" ||
+      (effectiveDate === "range" && effectiveToDate !== null && effectiveToDate < currentDayStr);
+
+    const cacheTtlSeconds = isHistoricalPast ? 86400 : 300;
+    const cacheL1TtlMs = isHistoricalPast ? 3600_000 : 90_000;
+
     const tags = ['report:summary'];
     if (vendedorId) tags.push(`vendedor:${vendedorId}`);
     if (params.ventanaId) tags.push(`ventana:${params.ventanaId}`);
@@ -1881,14 +1889,13 @@ gs."hour24" ASC
                   acquiredDistLock = true;
                 }
               } else {
-                const lockRes = await (redis as any).set(inflightLockKey, "1", "PX", 8000, "NX");
+                const lockRes = await (redis as any).set(inflightLockKey, "1", "PX", 2000, "NX");
                 if (lockRes !== "OK") {
-                  // Otra instancia o el warmup ya está calculando este mismo resumen.
-                  // Esperar hasta 2500ms sondeando la caché antes de recurrir a la DB.
+                  // Esperar máximo 400ms sondeando la caché (el batch de Postgres tarda ~200ms)
                   const waitStart = Date.now();
-                  while (Date.now() - waitStart < 2500) {
-                    await new Promise((r) => setTimeout(r, 80));
-                    const cached = await CacheService.get<any>(cacheKey, true, 90_000);
+                  while (Date.now() - waitStart < 400) {
+                    await new Promise((r) => setTimeout(r, 40));
+                    const cached = await CacheService.get<any>(cacheKey, true, cacheL1TtlMs);
                     if (cached !== null) {
                       logger.info({
                         layer: "service",
@@ -1939,6 +1946,7 @@ gs."hour24" ASC
                   date: "range",
                   fromDate: effectiveFromDate ?? undefined,
                   toDate: yesterdayStr,
+                  forceRefresh: false,
                 },
                 vendedorId
               );
@@ -2962,7 +2970,15 @@ gs."hour24" ASC
               await redis.del(inflightLockKey).catch(() => { });
             }
           }
-        }, 300, tags, true, 90_000, isForceRefresh);
+        },
+        // TTL L2: 24 horas (86400s) si es ayer o rango histórico pasado; 300s si involucra hoy
+        (effectiveDate === 'yesterday' || (effectiveDate === 'range' && effectiveToDate !== null && effectiveToDate < currentDayStr)) ? 86400 : 300,
+        tags,
+        true,
+        // TTL L1: 1 hora (3600000ms) si es histórico; 90s si es hoy
+        (effectiveDate === 'yesterday' || (effectiveDate === 'range' && effectiveToDate !== null && effectiveToDate < currentDayStr)) ? 3600_000 : 90_000,
+        isForceRefresh
+      );
     });
   },
 
@@ -2999,7 +3015,7 @@ gs."hour24" ASC
     const redis = getRedisClient();
     const lockKey = `lock:warmup:batch:${sorteoId}`;
     let lockAcquired = false;
-    const allPreLockKeys: string[] = [];
+    // const allPreLockKeys: string[] = [];
 
     if (redis) {
       try {
@@ -3088,53 +3104,53 @@ gs."hour24" ASC
         vendorResetMap.set(v.id, resetAt);
       }
 
-      // 🚀 PRE-LOCKING MASIVO: usar los IDs exactos retornados por la función SQL
-      if (redis) {
-        try {
-          const pipeline = (redis as any).pipeline ? (redis as any).pipeline() : null;
-          for (const row of sqlRows) {
-            const vId = row.user_id as string;
-            const cacheKeyTrue = buildSummaryCacheKey({
-              bancaId: 'all',
-              ventanaId: 'all',
-              vendedorId: vId,
-              summaryOnly: true,
-              date: 'today',
-              scope: 'mine',
-              isActive: true,
-              ignoreReset: false,
-            });
-            const lockKeyTrue = `lock:calc:summary:${cacheKeyTrue}`;
+      // // 🚀 PRE-LOCKING MASIVO: usar los IDs exactos retornados por la función SQL
+      // if (redis) {
+      //   try {
+      //     const pipeline = (redis as any).pipeline ? (redis as any).pipeline() : null;
+      //     for (const row of sqlRows) {
+      //       const vId = row.user_id as string;
+      //       const cacheKeyTrue = buildSummaryCacheKey({
+      //         bancaId: 'all',
+      //         ventanaId: 'all',
+      //         vendedorId: vId,
+      //         summaryOnly: true,
+      //         date: 'today',
+      //         scope: 'mine',
+      //         isActive: true,
+      //         ignoreReset: false,
+      //       });
+      //       const lockKeyTrue = `lock:calc:summary:${cacheKeyTrue}`;
 
-            const cacheKeyFalse = buildSummaryCacheKey({
-              bancaId: 'all',
-              ventanaId: 'all',
-              vendedorId: vId,
-              summaryOnly: false,
-              date: 'today',
-              scope: 'mine',
-              isActive: true,
-              ignoreReset: false,
-            });
-            const lockKeyFalse = `lock:calc:summary:${cacheKeyFalse}`;
+      //       const cacheKeyFalse = buildSummaryCacheKey({
+      //         bancaId: 'all',
+      //         ventanaId: 'all',
+      //         vendedorId: vId,
+      //         summaryOnly: false,
+      //         date: 'today',
+      //         scope: 'mine',
+      //         isActive: true,
+      //         ignoreReset: false,
+      //       });
+      //       const lockKeyFalse = `lock:calc:summary:${cacheKeyFalse}`;
 
-            allPreLockKeys.push(lockKeyTrue, lockKeyFalse);
-            if (pipeline) {
-              pipeline.set(lockKeyTrue, "1", "PX", 10000);
-              pipeline.set(lockKeyFalse, "1", "PX", 10000);
-            }
-          }
-          if (pipeline) {
-            await pipeline.exec();
-          }
-        } catch (preLockErr: any) {
-          logger.warn({
-            layer: "service",
-            action: "WARMUP_MASSIVE_PRELOCK_WARN",
-            payload: { sorteoId, error: preLockErr?.message },
-          });
-        }
-      }
+      //       allPreLockKeys.push(lockKeyTrue, lockKeyFalse);
+      //       if (pipeline) {
+      //         pipeline.set(lockKeyTrue, "1", "PX", 10000);
+      //         pipeline.set(lockKeyFalse, "1", "PX", 10000);
+      //       }
+      //     }
+      //     if (pipeline) {
+      //       await pipeline.exec();
+      //     }
+      //   } catch (preLockErr: any) {
+      //     logger.warn({
+      //       layer: "service",
+      //       action: "WARMUP_MASSIVE_PRELOCK_WARN",
+      //       payload: { sorteoId, error: preLockErr?.message },
+      //     });
+      //   }
+      // }
 
       // ─────────────────────────────────────────────────────────────────────────
       // Post-procesamiento O(n) por vendedor:
@@ -3289,26 +3305,10 @@ gs."hour24" ASC
         entriesCached: cacheEntries.length,
       };
     } finally {
-      // 7. Liberación obligatoria del candado distribuido y pre-locks masivos
-      if (redis) {
+      // Liberación obligatoria únicamente del candado global del batch
+      if (redis && lockAcquired) {
         try {
-          const pipeline = (redis as any).pipeline ? (redis as any).pipeline() : null;
-          if (pipeline && allPreLockKeys.length > 0) {
-            for (const k of allPreLockKeys) {
-              pipeline.del(k);
-            }
-            if (lockAcquired) {
-              pipeline.del(lockKey);
-            }
-            await pipeline.exec();
-          } else {
-            if (allPreLockKeys.length > 0) {
-              await Promise.all(allPreLockKeys.map((k) => (redis as any).del(k).catch(() => { })));
-            }
-            if (lockAcquired) {
-              await redis.del(lockKey).catch(() => { });
-            }
-          }
+          await redis.del(lockKey);
         } catch (releaseErr: any) {
           logger.warn({
             layer: "service",
