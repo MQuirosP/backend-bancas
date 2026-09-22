@@ -1452,6 +1452,10 @@ gs."hour24" ASC
     const monthlyStartComponents = getCRLocalComponents(monthlyStartDate);
     const effectiveMonth = `${monthlyStartComponents.year}-${String(monthlyStartComponents.month).padStart(2, '0')}`;
 
+    const isMonthRange =
+      params.date === 'month' ||
+      (startDateStr === monthlyStartDateStr && endDateStr === monthlyEndDateStr);
+
     // 1. Ejecutar en paralelo lecturas indexadas (sin tocar Ticket ni Jugada)
     const [
       statements,
@@ -1459,10 +1463,10 @@ gs."hour24" ASC
       rangePreviousMonthBalance,
       realMonthlyRemainingBalance,
       rcdCommissionsRows,
-      rcdMonthRows,
-      monthlyMovementsByDate,
+      rcdMonthRowsRaw,
+      monthlyMovementsByDateRaw,
       userSettingsRow,
-      totalSorteosCount,
+      // totalSorteosCount,
     ] = await Promise.all([
       // A. AccountStatement: lectura directa por índice de vendedorId y rango de fechas
       prisma.accountStatement.findMany({
@@ -1592,6 +1596,34 @@ gs."hour24" ASC
         },
       }),
     ]);
+
+    // Reutilizar o calcular en memoria si es el rango del mes
+    const monthlyMovementsByDate = isMonthRange ? movementsByDate : monthlyMovementsByDateRaw;
+
+    let rcdMonthRows = rcdMonthRowsRaw;
+    if (isMonthRange) {
+      const totalSales = statements.reduce((sum, s) => sum + Number(s.totalSales || 0), 0);
+      const totalPrizes = statements.reduce((sum, s) => sum + Number(s.totalPayouts || 0), 0);
+      const totalCommission = statements.reduce((sum, s) => sum + Number(s.vendedorCommission || 0), 0);
+      const commissionByNumber = rcdCommissionsRows.reduce((sum, r) => sum + Number(r.commission_by_number || 0), 0);
+      const commissionByReventado = rcdCommissionsRows.reduce((sum, r) => sum + Number(r.commission_by_reventado || 0), 0);
+      const totalTickets = statements.reduce((sum, s) => sum + Number(s.ticketCount || 0), 0);
+
+      rcdMonthRows = [{
+        total_sales: totalSales,
+        total_commission: totalCommission,
+        commission_by_number: commissionByNumber,
+        commission_by_reventado: commissionByReventado,
+        total_prizes: totalPrizes,
+        total_tickets: totalTickets,
+      }];
+    }
+
+    // Calcular sorteos en memoria sin query adicional a BD
+    const totalSorteosCount = rcdCommissionsRows.reduce(
+      (sum, row: any) => sum + Number(row.total_sorteos || 0),
+      0
+    );
 
     // Mapear statements por fecha string (YYYY-MM-DD)
     const statementByDate = new Map<string, (typeof statements)[0]>();
@@ -1891,10 +1923,10 @@ gs."hour24" ASC
               } else {
                 const lockRes = await (redis as any).set(inflightLockKey, "1", "PX", 2000, "NX");
                 if (lockRes !== "OK") {
-                  // Esperar máximo 400ms sondeando la caché (el batch de Postgres tarda ~200ms)
+                  // Esperar hasta 1500ms sondeando la caché (el batch de Postgres o warmup puede tardar 400-800ms)
                   const waitStart = Date.now();
-                  while (Date.now() - waitStart < 400) {
-                    await new Promise((r) => setTimeout(r, 40));
+                  while (Date.now() - waitStart < 1500) {
+                    await new Promise((r) => setTimeout(r, 50));
                     const cached = await CacheService.get<any>(cacheKey, true, cacheL1TtlMs);
                     if (cached !== null) {
                       logger.info({
