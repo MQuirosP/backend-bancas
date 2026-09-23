@@ -144,11 +144,13 @@ export class SorteoEvaluationCoordinator {
       const { invalidateCacheForSorteo } = await import("../../utils/accountStatementCache");
       await invalidateCacheForSorteo({ scheduledAt: existingSorteo.scheduledAt });
 
-      // Actualizar tabla de rollups (ResumenCierreDiario) desacoplada en background con debounce de 8s
+      // Actualizar tabla de rollups (ResumenCierreDiario) de forma SÍNCRONA Y DETERMINISTA
+      // PRERREQUISITO CRÍTICO: fn_get_evaluated_summaries_batch (L1/L2 Warmup) depende directamente de
+      // ResumenCierreDiario para construir day_sorteos, total_sorteos y month_rcd (Saldo a Hoy).
       const { CierreRollupService } = await import("../cierre/cierre.rollup.service");
       const { tz } = await import("../../utils/timezone");
       const dateStr = syncOutput?.businessDate || (existingSorteo.scheduledAt ? tz.toDateStr(existingSorteo.scheduledAt) : tz.toDateStr());
-      CierreRollupService.scheduleDebouncedAggregate(dateStr, dateStr, 8000);
+      await CierreRollupService.aggregateRange(dateStr, dateStr);
     } catch (syncErr: any) {
       logger.error({
         layer: "coordinator",
