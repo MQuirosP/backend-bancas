@@ -1,5 +1,5 @@
 import { Response } from "express";
-import SorteoService from "../services/sorteo.service";
+import SorteoService from "../../../domain/sorteo/sorteo.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { crDateService } from "../../../utils/crDateService";
 
@@ -152,7 +152,7 @@ export const SorteoController = {
       });
     }
 
-    const groupBy = typeof req.query.groupBy === "string" 
+    const groupBy = typeof req.query.groupBy === "string"
       ? (req.query.groupBy as "hour" | "loteria-hour" | undefined)
       : undefined;
 
@@ -197,9 +197,9 @@ export const SorteoController = {
         groupBy: result.meta.groupBy,
         ...(hasPagination
           ? {
-              page: (result.meta as any).page,
-              totalPages: (result.meta as any).totalPages,
-            }
+            page: (result.meta as any).page,
+            totalPages: (result.meta as any).totalPages,
+          }
           : {}),
         message: "Resultado de lista",
       },
@@ -277,7 +277,10 @@ export const SorteoController = {
         loteriaId,
         status,
         isActive: isActiveBool,
-        summaryOnly: summaryOnly === 'true' || summaryOnly === true || summaryOnly === '1',
+        // Si la petición viene de un vendedor (scope=mine), forzamos false para que SIEMPRE viaje la lista de sorteos completa
+        summaryOnly: (scope === 'mine' || !scope)
+          ? false
+          : (summaryOnly === 'true' || summaryOnly === true || summaryOnly === '1'),
         userRole: req.user!.role,
         ignoreReset: canIgnoreReset && ignoreReset === 'true',
       },

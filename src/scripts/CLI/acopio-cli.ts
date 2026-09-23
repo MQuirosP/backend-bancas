@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import prisma from '../../core/prismaClient';
 import { renderProgressBar, colors, ask, formatCRC, IS_RENDER, callOpsApi } from './helpers';
-import { DailyNumberSalesService } from '../../api/v1/services/dailyNumberSales.service';
+import { DailyNumberSalesService } from '../../domain/sorteo/dailyNumberSales.service';
 import ActivityService from '../../core/activity.service';
 import { ActivityType } from '../../generated/prisma/client';
 

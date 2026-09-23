@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { Role } from "../../../generated/prisma/client";
-import { VentanaService } from "../services/ventana.service";
+import { VentanaService } from "../../../domain/user/ventana.service";
 import { AuthenticatedRequest } from "../../../core/types";
 
 export const VentanaController = {

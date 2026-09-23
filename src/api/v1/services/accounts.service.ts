@@ -4,6 +4,6 @@
  * Mantenido para retrocompatibilidad.
  */
 
-export * from "./accounts/accounts.types";
-export * from "./accounts/accounts.service";
-export * from "./accounts/accounts.dates.utils"; // Exportar utilidades también por si acaso
+export * from "../../../domain/accounts/accounts.types";
+export * from "../../../domain/accounts/accounts.service";
+export * from "../../../domain/accounts/accounts.dates.utils"; // Exportar utilidades también por si acaso

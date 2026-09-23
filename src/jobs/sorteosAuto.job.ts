@@ -18,7 +18,7 @@
  * Si autoOpenEnabled/autoCreateEnabled están en false, no ejecutan.
  */
 
-import SorteosAutoService from '../api/v1/services/sorteosAuto.service';
+import SorteosAutoService from '../domain/sorteo/sorteosAuto.service';
 import logger from '../core/logger';
 import { warmupConnection } from '../core/connectionWarmup';
 

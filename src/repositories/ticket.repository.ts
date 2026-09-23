@@ -5,31 +5,31 @@ import { withConnectionRetry } from "../core/withConnectionRetry";
 import logger from "../core/logger";
 import { AppError } from "../core/errors";
 import { withTransactionRetry } from "../core/withTransactionRetry";
-import { CommissionSnapshot } from "../services/commission/types/CommissionTypes";
-import { CommissionContext } from "../services/commission/types/CommissionContext";
-import { commissionService } from "../services/commission/CommissionService";
-import { commissionResolver } from "../services/commission/CommissionResolver";
+import { CommissionSnapshot } from "../domain/commission/types/CommissionTypes";
+import { CommissionContext } from "../domain/commission/types/CommissionContext";
+import { commissionService } from "../domain/commission/CommissionService";
+import { commissionResolver } from "../domain/commission/CommissionResolver";
 import { getBusinessDateCRInfo, getCRDayRangeUTC, getCRLocalComponents } from "../utils/businessDate";
 import { nowCR, validateDate, formatDateCRWithTZ } from "../utils/datetime";
 import { v4 as uuidv4 } from "uuid";
 import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope, calculateAccumulatedForMultipleScopes, acquireLock, releaseLock } from "./helpers/ticket-restriction.helper";
 import { getRedisClient, isRedisAvailable, markRedisError } from "../core/redisClient";
 import { CacheService } from "../core/cache.service";
-import { DailyNumberSalesService } from "../api/v1/services/dailyNumberSales.service";
+import { DailyNumberSalesService } from "../domain/sorteo/dailyNumberSales.service";
 import {
   CreateTicketInput,
   CreateTicketOptions,
   TicketWarning,
-} from "../services/ticket/ticket.types";
-import { TicketConcurrencyManager } from "../services/ticket/TicketConcurrencyManager";
-import { TicketPrefetchService } from "../services/ticket/TicketPrefetchService";
-import { TicketNumberGenerator } from "../services/ticket/TicketNumberGenerator";
-import { TicketRiskValidator } from "../services/ticket/TicketRiskValidator";
-import { TicketCommissionCalculator } from "../services/ticket/TicketCommissionCalculator";
-import { TicketPersistenceService } from "../services/ticket/TicketPersistenceService";
-import { TicketRedisAccumulator } from "../services/ticket/TicketRedisAccumulator";
-import { TicketTimeoutCalculator } from "../services/ticket/TicketTimeoutCalculator";
-import { TicketResponseBuilder } from "../services/ticket/TicketResponseBuilder";
+} from "../domain/ticket/pipeline/ticket.types";
+import { TicketConcurrencyManager } from "../domain/ticket/pipeline/TicketConcurrencyManager";
+import { TicketPrefetchService } from "../domain/ticket/pipeline/TicketPrefetchService";
+import { TicketNumberGenerator } from "../domain/ticket/pipeline/TicketNumberGenerator";
+import { TicketRiskValidator } from "../domain/ticket/pipeline/TicketRiskValidator";
+import { TicketCommissionCalculator } from "../domain/ticket/pipeline/TicketCommissionCalculator";
+import { TicketPersistenceService } from "../domain/ticket/pipeline/TicketPersistenceService";
+import { TicketRedisAccumulator } from "../domain/ticket/pipeline/TicketRedisAccumulator";
+import { TicketTimeoutCalculator } from "../domain/ticket/pipeline/TicketTimeoutCalculator";
+import { TicketResponseBuilder } from "../domain/ticket/pipeline/TicketResponseBuilder";
 
 export type { CreateTicketInput, CreateTicketOptions, TicketWarning };
 
@@ -407,6 +407,7 @@ export const TicketRepository = {
     const lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
 
     try {
+      // 1. [PRE-TX] Pre-cargar multiplicadores requeridos si no venían
       const preFetchedMultipliers = await TicketPrefetchService.fetchMultipliersIfNeeded(data.jugadas, options);
       if (preFetchedMultipliers && preFetchedMultipliers.length > 0) {
         options = {
@@ -418,17 +419,43 @@ export const TicketRepository = {
         };
       }
 
+      // 2. [PRE-TX] Resolver entidades estáticas y reglas FUERA de la transacción interactiva
+      const preTxMeta = await TicketPrefetchService.resolvePreTxMetadata(data, userId, options);
+      const prefecthedRules = await TicketRiskValidator.prefetchRules({
+        userId,
+        ventanaId: data.ventanaId,
+        bancaId: preTxMeta.bancaId,
+      });
+
+      // 3. [IN-TX] Transacción interactiva mínima: solo validación atómica de estado, topes e inserción
       const txResult = await withTransactionRetry(
         async (tx) => {
-          const meta = await TicketPrefetchService.resolveTransactionMetadata(tx, data, userId, options);
-          const { ticketNumber, seqForLog } = await TicketNumberGenerator.generate(tx, meta.businessDateInfo.businessDateISO);
+          // Race-check atómico dentro de la TX para evitar ventas sobre sorteos recién cerrados
+          await TicketPrefetchService.resolveInTxSorteoStatus(tx, data.sorteoId);
 
-          const { warnings, preparedJugadas, totalAmountTx } = await TicketRiskValidator.validate(tx, { data, meta, userId, options });
+          const { ticketNumber, seqForLog } = await TicketNumberGenerator.generate(
+            tx,
+            preTxMeta.businessDateInfo.businessDateISO
+          );
 
-          const commissions = TicketCommissionCalculator.calculate({ data, meta, preparedJugadas, options });
+          const { warnings, preparedJugadas, totalAmountTx } = await TicketRiskValidator.validate(tx, {
+            data,
+            meta: preTxMeta,
+            userId,
+            options,
+            prefecthedRules,
+          });
+
+          const commissions = TicketCommissionCalculator.calculate({
+            data,
+            meta: preTxMeta,
+            preparedJugadas,
+            options,
+          });
+
           const saveResult = await TicketPersistenceService.save(tx, {
             data,
-            meta,
+            meta: preTxMeta,
             ticketNumber,
             seqForLog,
             totalAmountTx,
@@ -438,7 +465,11 @@ export const TicketRepository = {
             options,
           });
 
-          return { ...saveResult, businessDateInfo: meta.businessDateInfo, sorteoScheduledAt: meta.sorteo?.scheduledAt };
+          return {
+            ...saveResult,
+            businessDateInfo: preTxMeta.businessDateInfo,
+            sorteoScheduledAt: preTxMeta.sorteo?.scheduledAt,
+          };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,

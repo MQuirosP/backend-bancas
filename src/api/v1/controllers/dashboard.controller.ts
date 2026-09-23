@@ -3,7 +3,7 @@ import { AppError } from "../../../core/errors";
 import { success } from "../../../utils/responses";
 import { AuthenticatedRequest } from "../../../core/types";
 import { Role } from "../../../generated/prisma/client";
-import DashboardService from "../services/dashboard.service";
+import DashboardService from "../../../domain/dashboard/dashboard.service";
 import { DashboardExportService } from "../services/dashboard-export.service";
 import { resolveDateRange } from "../../../utils/dateRange";
 import { validateVentanaUser } from "../../../utils/rbac";

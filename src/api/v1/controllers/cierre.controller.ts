@@ -3,7 +3,7 @@ import { AppError } from '../../../core/errors';
 import { success } from '../../../utils/responses';
 import { AuthenticatedRequest } from '../../../core/types';
 import { Role } from '../../../generated/prisma/client';
-import { CierreService } from '../services/cierre.service';
+import { CierreService } from '../../../domain/cierre/cierre.service';
 import { CierreExportService } from '../services/cierre-export.service';
 import { validateVentanaUser } from '../../../utils/rbac';
 import { validateDateRange } from '../validators/cierre.validator';

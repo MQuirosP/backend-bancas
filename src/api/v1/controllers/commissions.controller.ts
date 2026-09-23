@@ -1,6 +1,6 @@
 // src/api/v1/controllers/commissions.controller.ts
 import { Response } from "express";
-import { CommissionsService } from "../services/commissions.service";
+import { CommissionsService } from "../../../domain/commission/commissions.service";
 import { CommissionsExportService } from "../services/commissions-export.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";

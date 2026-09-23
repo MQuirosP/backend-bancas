@@ -1,15 +1,15 @@
 // src/api/v1/services/accounts-export.service.ts
-import { AccountsService } from './accounts/accounts.service';
+import { AccountsService } from '../../../domain/accounts/accounts.service';
 import { validate as isUuid } from 'uuid';
 import { AccountsExportCsvService } from './accounts-export-csv.service';
 import { AccountsExportExcelService } from './accounts-export-excel.service';
 import { AccountsExportPdfService } from './accounts-export-pdf.service';
 import { AccountMovementItem, AccountStatementExportItem, AccountStatementExportPayload, AccountStatementSorteoItem, ExportFormat, AccountStatementExportOptions, AccountStatementTotals } from '../types/accounts-export.types';
 import { getCRLocalComponents } from '../../../utils/businessDate';
-import { AccountsFilters, DayStatement, StatementResponse } from './accounts/accounts.types';
-import { getSorteoBreakdownBatch } from './accounts/accounts.queries';
-import { intercalateSorteosAndMovements } from './accounts/accounts.intercalate';
-import { getPreviousMonthFinalBalance } from './accounts/accounts.balances';
+import { AccountsFilters, DayStatement, StatementResponse } from '../../../domain/accounts/accounts.types';
+import { getSorteoBreakdownBatch } from '../../../domain/accounts/accounts.queries';
+import { intercalateSorteosAndMovements } from '../../../domain/accounts/accounts.intercalate';
+import { getPreviousMonthFinalBalance } from '../../../domain/accounts/accounts.balances';
 import prisma from '../../../core/prismaClient';
 import logger from '../../../core/logger';
 import { resolveDateRange } from '../../../utils/dateRange';

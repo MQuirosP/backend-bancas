@@ -14,7 +14,7 @@ import logger from "../../../core/logger";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
 import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 import { ExportFormat } from "../types/accounts-export.types";
-import { StatementResponse } from "../services/accounts/accounts.types";
+import { StatementResponse } from "../../../domain/accounts/accounts.types";
 
 /**
  * Calcula el ETag para una respuesta de estado de cuenta
@@ -1342,7 +1342,7 @@ export const AccountsController = {
 
     // Forzar la resincronización del día de hoy
     try {
-      const { AccountStatementSyncService } = await import("../services/accounts/accounts.sync.service");
+      const { AccountStatementSyncService } = await import("../../../domain/accounts/accounts.sync.service");
       const [year, month, day] = todayCRStr.split("-").map(Number);
       const dateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
       await AccountStatementSyncService.syncDayStatement(dateUTC, "vendedor", vendedor.id, { force: true });

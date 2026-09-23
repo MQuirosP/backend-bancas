@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { SorteoListasService } from "../services/sorteo-listas.service";
+import { SorteoListasService } from "../../../domain/sorteo/sorteo-listas.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { Role } from "../../../generated/prisma/client";
 import { validateVentanaUser } from "../../../utils/rbac";
@@ -42,10 +42,10 @@ export const SorteoListasController = {
             const myVentanaId = await validateVentanaUser(me.role, me.ventanaId, me.id);
             
             if (response.listeros) {
-                response.listeros = response.listeros.filter(l => l.ventanaId === myVentanaId);
+                response.listeros = response.listeros.filter((l:any) => l.ventanaId === myVentanaId);
             }
             if (response.listerosCompact) {
-                response.listerosCompact = response.listerosCompact.filter(l => l.ventanaId === myVentanaId);
+                response.listerosCompact = response.listerosCompact.filter((l:any) => l.ventanaId === myVentanaId);
             }
             
             // Recalcular totales globales basados solo en esta ventana
@@ -54,15 +54,15 @@ export const SorteoListasController = {
             let totalCommission = 0;
             let totalExcluded = 0;
             
-            response.listeros.forEach(l => {
+            response.listeros.forEach((l:any) => {
                 totalSales += l.totalSales;
                 totalTickets += l.totalTickets;
                 totalCommission += l.totalCommission;
-                totalExcluded += l.vendedores.filter(v => v.isExcluded).length;
+                totalExcluded += l.vendedores.filter((v:any) => v.isExcluded).length;
             });
             
             if (response.listerosCompact && response.listerosCompact.length > 0) {
-                response.listerosCompact.forEach(l => {
+                response.listerosCompact.forEach((l:any) => {
                     totalExcluded += l.totalExcluded || 0; 
                 });
             }

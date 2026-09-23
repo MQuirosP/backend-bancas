@@ -60,9 +60,13 @@ src/
 ├── api/v1/
 │   ├── controllers/   # Processes HTTP requests, maps DTOs, and returns response codes.
 │   ├── routes/        # Maps endpoints and wires middleware filters.
-│   ├── services/      # Core business logic, transaction handling, and financial operations.
+│   ├── services/      # HTTP-layer coordinators: export formatters (PDF, Excel, CSV).
 │   └── validators/    # Zod schemas for input validation.
 ├── core/              # Global shared clients (Prisma, Redis, Logger, Circuit Breakers).
+├── domain/            # Business logic grouped by domain (ticket, commission, sorteo, backup).
+│   ├── ticket/        # Ticket pipeline services, idempotency, image generator.
+│   ├── commission/    # Commission resolver, rules engine, policy parser.
+│   └── backup/        # Google Drive backup service.
 ├── middlewares/       # Security (RBAC, Rate Limiting), Error Handler, and Tenant Context.
 ├── repositories/      # DB layer abstraction (running raw SQL and Prisma queries).
 └── utils/             # Helper utilities (Costa Rica timezones, formats, RBAC queries).

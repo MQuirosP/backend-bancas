@@ -3,7 +3,7 @@ import { AppError } from "../../../core/errors";
 import { success, created } from "../../../utils/responses";
 import { AuthenticatedRequest } from "../../../core/types";
 import ActivityService from "../../../core/activity.service";
-import TicketPaymentService from "../services/ticketPayment.service";
+import TicketPaymentService from "../../../domain/ticket/ticketPayment.service";
 import {
   CreatePaymentSchema,
   UpdatePaymentSchema,
@@ -29,7 +29,7 @@ export const TicketPaymentController = {
     });
 
     // Verificar si es una respuesta cacheada (pago duplicado con idempotencyKey)
-    const isCached = (result as any).cached === true;
+    const isCached = result.cached === true;
     const statusCode = isCached ? 200 : 201;
 
     // Log en controller
@@ -44,7 +44,7 @@ export const TicketPaymentController = {
 
     // Limpiar propiedad temporal antes de enviar respuesta
     const responseData = { ...result };
-    delete (responseData as any).cached;
+    delete responseData.cached;
 
     // Enviar respuesta con status code apropiado y meta indicando si es cacheado
     return res.status(statusCode).json({

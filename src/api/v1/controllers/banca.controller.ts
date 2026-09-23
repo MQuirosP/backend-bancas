@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { BancaService } from "../services/banca.service";
+import { BancaService } from "../../../domain/user/banca.service";
 import { AuthenticatedRequest } from "../../../core/types";
 
 export const BancaController = {

@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { ActivityType, Role } from "../../../generated/prisma/client";
-import UserService from "../services/user.service";
+import UserService from "../../../domain/user/user.service";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
 import { success, created } from "../../../utils/responses";
@@ -192,7 +192,7 @@ export const UserController = {
 
     // Solo el usuario autenticado puede cambiar su propia contraseña
     if (!actorId) {
-      throw new (require("../../../core/errors").AppError)(
+      throw new (require("../../core/errors").AppError)(
         "Usuario no autenticado",
         401,
         { code: "UNAUTHORIZED" }
@@ -259,11 +259,11 @@ export const UserController = {
       layer: "controller",
       action: "GET_ALLOWED_MULTIPLIERS_BATCH",
       userId: (req as any)?.user?.id,
-      payload: { 
-        targetUserId: id, 
-        betType, 
-        isActive, 
-        multipliersCount: result.data.length 
+      payload: {
+        targetUserId: id,
+        betType,
+        isActive,
+        multipliersCount: result.data.length
       },
     });
 

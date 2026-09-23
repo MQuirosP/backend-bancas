@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { GoogleDriveBackupService } from "../../../services/backup/GoogleDriveBackupService";
+import { GoogleDriveBackupService } from "../../../domain/backup/GoogleDriveBackupService";
 import logger from "../../../core/logger";
 
 export async function triggerGoogleDriveBackup(

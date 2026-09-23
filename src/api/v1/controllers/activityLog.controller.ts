@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import ActivityLogService from '../services/activityLog.service';
+import ActivityLogService from '../../../domain/user/activityLog.service';
 import { ListActivityLogsQuery } from '../dto/activityLog.dto';
 import { success } from '../../../utils/responses';
 import { AuthenticatedRequest } from '../../../core/types';

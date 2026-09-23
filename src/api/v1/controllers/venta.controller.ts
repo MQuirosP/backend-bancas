@@ -1,6 +1,6 @@
 // src/api/v1/controllers/venta.controller.ts
 import { Response } from "express";
-import { VentasService, VentasFilters } from "../services/venta.service";
+import { VentasService, VentasFilters } from "../../../domain/ticket/venta.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { Role } from "../../../generated/prisma/client";

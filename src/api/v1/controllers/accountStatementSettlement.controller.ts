@@ -1,7 +1,7 @@
 // src/api/v1/controllers/accountStatementSettlement.controller.ts
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../../core/types';
-import AccountStatementSettlementService from '../services/accountStatementSettlement.service';
+import AccountStatementSettlementService from '../../../domain/accounts/accountStatementSettlement.service';
 import { success } from '../../../utils/responses';
 
 export const AccountStatementSettlementController = {

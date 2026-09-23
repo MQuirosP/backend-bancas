@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../../../core/types";
-import { RestrictionRuleService } from "../services/restrictionRule.service";
+import { RestrictionRuleService } from "../../../domain/restriction/restrictionRule.service";
 import { rehydrateRedisAccumulated } from "../../../repositories/helpers/ticket-restriction.helper";
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 import prisma from "../../../core/prismaClient";

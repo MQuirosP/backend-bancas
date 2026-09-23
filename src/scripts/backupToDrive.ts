@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import { GoogleDriveBackupService } from "../services/backup/GoogleDriveBackupService";
+import { GoogleDriveBackupService } from "../domain/backup/GoogleDriveBackupService";
 
 async function run() {
   try {

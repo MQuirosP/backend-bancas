@@ -1,6 +1,6 @@
 // src/modules/tickets/controllers/ticket.controller.ts
 import { Response } from "express";
-import { TicketService } from "../services/ticket.service";
+import { TicketService } from "../../../domain/ticket/ticket.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
 import { Role } from "../../../generated/prisma/client";
@@ -8,7 +8,7 @@ import { resolveDateRange, DateRangeResolution } from "../../../utils/dateRange"
 import { applyRbacFilters, AuthContext, RequestFilters } from "../../../utils/rbac";
 import { AppError } from "../../../core/errors";
 
-import { IdempotencyService } from "../../../services/idempotency.service";
+import { IdempotencyService } from "../../../domain/ticket/idempotency.service";
 
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {

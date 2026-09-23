@@ -1,7 +1,7 @@
 import { Response } from "express";
 import { ActivityType } from "../../../generated/prisma/client";
 import { AuthenticatedRequest } from "../../../core/types";
-import LoteriaService from "../services/loteria.service";
+import LoteriaService from "../../../domain/sorteo/loteria.service";
 import ActivityService from "../../../core/activity.service";
 import { success, created } from "../../../utils/responses";
 import { computeOccurrences } from "../../../utils/schedule";

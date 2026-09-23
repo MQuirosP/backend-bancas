@@ -1,4 +1,4 @@
-import { GoogleDriveBackupService } from "../services/backup/GoogleDriveBackupService";
+import { GoogleDriveBackupService } from "../domain/backup/GoogleDriveBackupService";
 import logger from "../core/logger";
 
 let backupInitialTimer: NodeJS.Timeout | null = null;

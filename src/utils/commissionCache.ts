@@ -1,6 +1,6 @@
 // src/utils/commissionCache.ts
-import { CommissionPolicy } from '../services/commission/types/CommissionTypes';
-import { parseCommissionPolicy } from '../services/commission/utils/PolicyParser';
+import { CommissionPolicy } from '../domain/commission/types/CommissionTypes';
+import { parseCommissionPolicy } from '../domain/commission/utils/PolicyParser';
 import logger from '../core/logger';
 import { getRedisClient, isRedisAvailable } from '../core/redisClient';
 

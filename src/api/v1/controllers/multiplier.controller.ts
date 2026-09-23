@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../../../core/types";
-import MultiplierService from "../services/multiplier.service";
+import MultiplierService from "../../../domain/multiplier/multiplier.service";
 
 export const MultiplierController = {
   async create(req: AuthenticatedRequest, res: Response) {

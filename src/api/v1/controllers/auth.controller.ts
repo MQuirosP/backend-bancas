@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { AuthService } from '../services/auth.service';
-import UserService from '../services/user.service';
+import { AuthService } from '../../../domain/user/auth.service';
+import UserService from '../../../domain/user/user.service';
 import ActivityService from '../../../core/activity.service';
 import { logger } from '../../../core/logger';
 import prisma from '../../../core/prismaClient';

@@ -22,7 +22,7 @@ import {
     processMonthlyClosingForVendedores,
     calculateRealMonthBalance,
     saveMonthlyClosingBalance,
-} from '../api/v1/services/accounts/monthlyClosing.service';
+} from '../domain/accounts/monthlyClosing.service';
 import logger from '../core/logger';
 import { crDateService } from '../utils/crDateService';
 import { activeOperationsService } from '../core/activeOperations.service';

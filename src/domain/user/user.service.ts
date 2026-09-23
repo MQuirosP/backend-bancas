@@ -1,0 +1,1155 @@
+import prisma from '../../core/prismaClient';
+import { withConnectionRetry } from '../../core/withConnectionRetry';
+import { AppError } from '../../core/errors';
+import { CreateUserDTO, UpdateUserDTO } from '../../api/v1/dto/user.dto';
+import { hashPassword, comparePassword } from '../../utils/crypto';
+import UserRepository from '../../repositories/user.repository';
+import { Prisma, Role, ActivityType, BetType } from '../../generated/prisma/client';
+import { normalizePhone } from "../../utils/phoneNormalizer";
+import ActivityService from '../../core/activity.service';
+import { commissionResolver } from '../../domain/commission/CommissionResolver';
+import { CommissionRule } from '../../domain/commission/types/CommissionTypes';
+import { CacheService } from '../../core/cache.service';
+import { logger } from '../../core/logger';
+
+/**
+ * Deep merge de configuraciones (parcial)
+ * newSettings override los valores en currentSettings, manteniendo lo demás
+ */
+function deepMergeSettings(
+  currentSettings: Record<string, any>,
+  newSettings: Record<string, any>
+): Record<string, any> {
+  const merged = { ...currentSettings };
+
+  for (const key in newSettings) {
+    const newVal = newSettings[key];
+
+    // Si es null, se borra del merged (null = "remover este campo")
+    if (newVal === null || newVal === undefined) {
+      delete merged[key];
+    } else if (typeof newVal === 'object' && newVal !== null && !Array.isArray(newVal)) {
+      // Si es un objeto anidado, mergear recursivamente
+      const currentVal = merged[key];
+      if (typeof currentVal === 'object' && currentVal !== null && !Array.isArray(currentVal)) {
+        merged[key] = deepMergeSettings(currentVal, newVal);
+      } else {
+        // Si el actual no es objeto, reemplazar completamente
+        merged[key] = newVal;
+      }
+    } else {
+      // Para primitivos o arrays, reemplazar completamente
+      merged[key] = newVal;
+    }
+  }
+
+  return merged;
+}
+
+async function ensureVentanaActiveOrThrow(ventanaId: string) {
+  const v = await withConnectionRetry(
+    () => prisma.ventana.findUnique({
+      where: { id: ventanaId },
+      select: { id: true, isActive: true, banca: { select: { id: true, isActive: true } } },
+    }),
+    { context: 'UserService.ensureVentanaActiveOrThrow' }
+  );
+  if (!v || !v.isActive) throw new AppError('Ventana not found or inactive', 404);
+  if (!v.banca || !v.banca.isActive) throw new AppError('Parent Banca inactive', 409);
+}
+
+async function getActorVentanaId(actorId: string) {
+  const actor = await withConnectionRetry(
+    () => prisma.user.findUnique({
+      where: { id: actorId },
+      select: { ventanaId: true },
+    }),
+    { context: 'UserService.getActorVentanaId' }
+  );
+  if (!actor || !actor.ventanaId) {
+    throw new AppError('No tienes una ventana asignada', 403);
+  }
+  return actor.ventanaId;
+}
+
+export const UserService = {
+  async create(dto: CreateUserDTO, actor?: { id: string; role: Role }) {
+    const actingRole = actor?.role ?? Role.ADMIN;
+    const actorId = actor?.id;
+    let enforcedVentanaId: string | null = null;
+
+    if (actingRole === Role.VENTANA) {
+      if (dto.role && dto.role !== Role.VENDEDOR) {
+        throw new AppError('Solo puedes crear usuarios vendedores', 403);
+      }
+      const forbiddenFields = ['isActive', 'code', 'role', 'ventanaId'] as const;
+      for (const field of forbiddenFields) {
+        if ((dto as any)[field] !== undefined) {
+          throw new AppError(`Campo no permitido para VENTANA: ${field}`, 403);
+        }
+      }
+      if (!actorId) {
+        throw new AppError('No autenticado', 401);
+      }
+      enforcedVentanaId = await getActorVentanaId(actorId);
+      await ensureVentanaActiveOrThrow(enforcedVentanaId);
+      dto = {
+        name: dto.name,
+        email: dto.email ?? undefined,
+        phone: dto.phone ?? undefined,
+        username: dto.username,
+        password: dto.password,
+        role: Role.VENDEDOR,
+        ventanaId: enforcedVentanaId,
+      } as CreateUserDTO;
+    } else if (actingRole === Role.BANCA) {
+      //  NUEVO: Aislamiento para rol BANCA
+      if (dto.role && !( [Role.VENTANA, Role.VENDEDOR] as Role[]).includes(dto.role as Role)) {
+        throw new AppError('Solo puedes crear usuarios VENTANA o VENDEDOR', 403);
+      }
+      if (!dto.ventanaId) {
+        throw new AppError('ventanaId is required for role BANCA', 400);
+      }
+      
+      // Validar que la ventana pertenece a una de sus bancas
+      const ventana = await prisma.ventana.findUnique({
+        where: { id: dto.ventanaId },
+        select: { bancaId: true },
+      });
+      
+      if (!ventana) throw new AppError('Ventana no encontrada', 404);
+      
+      const assignment = await prisma.userBanca.findFirst({
+        where: { userId: actorId, bancaId: ventana.bancaId },
+      });
+      
+      if (!assignment) {
+        throw new AppError('No tienes permiso para crear usuarios en esta ventana/banca', 403, 'FORBIDDEN');
+      }
+    }
+
+    const username = dto.username.trim();
+    const role: Role = actingRole === Role.VENTANA ? Role.VENDEDOR : ((dto.role as Role) ?? Role.VENTANA);
+    const email = dto.email ? dto.email.trim().toLowerCase() : null;
+    const code = dto.code?.trim() ? dto.code.trim() : null;
+    const phone = dto.phone !== undefined ? normalizePhone(dto.phone) : null;
+    const isActive = dto.isActive ?? true;
+
+    // Regla role -> ventanaId / bancaId
+    if (role === Role.ADMIN || role === Role.BANCA) {
+      dto.ventanaId = null as any;
+    } else {
+      if (!dto.ventanaId) throw new AppError('ventanaId is required for role ' + role, 400);
+      await ensureVentanaActiveOrThrow(dto.ventanaId);
+    }
+
+    // Unicidad username
+    const userByUsername = await withConnectionRetry(
+      () => prisma.user.findUnique({ where: { username }, select: { id: true } }),
+      { context: 'UserService.create.checkUsername' }
+    );
+    if (userByUsername) throw new AppError('Username already in use', 409);
+
+    // Unicidad email (si viene)
+    if (email) {
+      const userByEmail = await withConnectionRetry(
+        () => prisma.user.findUnique({ where: { email }, select: { id: true } }),
+        { context: 'UserService.create.checkEmail' }
+      );
+      if (userByEmail) throw new AppError('Email already in use', 409);
+    }
+
+    // Unicidad code (si viene) – Prisma ya es unique, pero damos error claro
+    if (code) {
+      const userByCode = await withConnectionRetry(
+        () => prisma.user.findFirst({ where: { code }, select: { id: true } }),
+        { context: 'UserService.create.checkCode' }
+      );
+      if (userByCode) throw new AppError('Code already in use', 409);
+    }
+
+    // VALIDACIÓN DE LÍMITE DE VENDEDORES
+    if (role === Role.VENDEDOR) {
+      // 1. Obtener el ID de la banca (ya sea del DTO o via ventanaId)
+      const targetVentanaId = enforcedVentanaId ?? dto.ventanaId!;
+      let targetBancaId = dto.bancaId;
+      
+      if (!targetBancaId && targetVentanaId) {
+        const ventana = await withConnectionRetry(
+          () => prisma.ventana.findUnique({ 
+            where: { id: targetVentanaId }, 
+            select: { bancaId: true } 
+          }),
+          { context: 'UserService.create.getBancaIdForLimit' }
+        );
+        targetBancaId = ventana?.bancaId || null;
+      }
+
+      if (targetBancaId) {
+        // 2. Consultar el límite definido en la banca
+        const banca = await withConnectionRetry(
+          () => prisma.banca.findUnique({
+            where: { id: targetBancaId! },
+            select: { vendorLimit: true }
+          }),
+          { context: 'UserService.create.getBancaLimit' }
+        );
+
+        // 3. Si hay un límite definido, contar vendedores actuales
+        if (banca?.vendorLimit && banca.vendorLimit > 0) {
+          const currentSellers = await withConnectionRetry(
+            () => prisma.user.count({
+              where: { 
+                bancaId: targetBancaId!,
+                role: Role.VENDEDOR,
+                isActive: true,
+                deletedAt: null
+              }
+            }),
+            { context: 'UserService.create.countSellers' }
+          );
+
+          // 4. Validar cupo
+          if (currentSellers >= banca.vendorLimit) {
+            throw new AppError(
+              `La banca ha alcanzado su límite de ${banca.vendorLimit} vendedores activos.`, 
+              403, 
+              'QUOTA_EXCEEDED'
+            );
+          }
+        }
+        
+        // Asegurar que el DTO tenga el bancaId para la creación del usuario
+        dto.bancaId = targetBancaId;
+      }
+    }
+
+    const hashed = await hashPassword(dto.password);
+
+    // Determinar la banca principal si vienen bancaIds
+    let finalBancaId = dto.bancaId;
+    if (role === Role.BANCA && dto.bancaIds && dto.bancaIds.length > 0) {
+      finalBancaId = dto.bancaIds[0];
+    }
+
+    const result = await withConnectionRetry(
+      () => prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            name: dto.name,
+            email,
+            username,
+            phone: phone ?? null,
+            password: hashed,
+            role,
+            ventanaId: (role === Role.ADMIN || role === Role.BANCA) ? null : (enforcedVentanaId ?? dto.ventanaId!),
+            bancaId: finalBancaId ?? null,
+            ...(code !== undefined ? { code } : {}),
+            ...(isActive !== undefined ? { isActive: actingRole === Role.VENTANA ? true : isActive } : {}),
+            ...(dto.maxSessionsPerVendedor !== undefined ? { maxSessionsPerVendedor: dto.maxSessionsPerVendedor } : {}),
+          }
+        });
+
+        // Sincronizar con UserBanca si es rol BANCA
+        if (role === Role.BANCA && dto.bancaIds && dto.bancaIds.length > 0) {
+          const userBancasData = dto.bancaIds.map((bId, index) => ({
+            userId: created.id,
+            bancaId: bId,
+            isDefault: index === 0
+          }));
+          await tx.userBanca.createMany({ data: userBancasData });
+        } else if (role === Role.BANCA && finalBancaId) {
+          await tx.userBanca.create({
+            data: {
+              userId: created.id,
+              bancaId: finalBancaId,
+              isDefault: true
+            }
+          });
+        }
+
+        return tx.user.findUnique({
+          where: { id: created.id },
+          select: {
+            id: true, name: true, username: true, email: true, role: true,
+            ventanaId: true, bancaId: true, isActive: true, code: true,
+            createdAt: true, settings: true, platform: true, appVersion: true, maxSessionsPerVendedor: true,
+          },
+        });
+      }),
+      { context: 'UserService.create.transaction' }
+    );
+
+    // Log de auditoría
+    if (result && actorId) {
+      await ActivityService.log({
+        userId: actorId,
+        bancaId: result.bancaId,
+        action: ActivityType.USER_CREATE,
+        targetType: 'USER',
+        targetId: result.id,
+        details: { 
+          username: result.username, 
+          role: result.role, 
+          ventanaId: result.ventanaId,
+          description: `Usuario creado: ${result.name} (@${result.username}). Rol: ${result.role}${result.ventanaId ? `. Ventana ID: ${result.ventanaId}` : ''}`
+        },
+      });
+    }
+
+    return result!;
+  },
+
+  async getById(id: string) {
+    const user = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id },
+        select: {
+          id: true, name: true, email: true, username: true, role: true,
+          ventanaId: true, bancaId: true, isActive: true, code: true,
+          createdAt: true, settings: true, platform: true, appVersion: true, maxSessionsPerVendedor: true,
+        },
+      }),
+      { context: 'UserService.getById' }
+    );
+    if (!user) throw new AppError('User not found', 404);
+    return user;
+  },
+
+  async list(params: {
+    page?: number;
+    pageSize?: number;
+    role?: string;
+    search?: string;
+    ventanaId?: string;
+    bancaId?: string;
+    isActive?: boolean;
+    actor?: { id: string; role: Role };
+  }) {
+    const page = params.page && params.page > 0 ? params.page : 1;
+    const pageSize = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
+
+    let effectiveBancaId = params.bancaId;
+    let allowedBancaIds: string[] | undefined = undefined;
+
+    //  NUEVO: Aislamiento para rol BANCA
+    if (params.actor && params.actor.role === Role.BANCA) {
+      const userBancas = await prisma.userBanca.findMany({
+        where: { userId: params.actor.id },
+        select: { bancaId: true },
+      });
+      const assignedBancaIds = userBancas.map(ub => ub.bancaId);
+
+      if (effectiveBancaId) {
+        if (!assignedBancaIds.includes(effectiveBancaId)) {
+          throw new AppError('No tienes permiso para ver usuarios de esta banca', 403, 'FORBIDDEN');
+        }
+      } else {
+        // Si no especifica banca, filtrar por todas las asignadas
+        allowedBancaIds = assignedBancaIds;
+        if (allowedBancaIds.length === 0) return { data: [], meta: { total: 0, page, pageSize, totalPages: 0, hasNextPage: false, hasPrevPage: false } };
+      }
+    }
+
+    const { data, total } = await UserRepository.listPaged({
+      page,
+      pageSize,
+      role: params.role as Role | undefined,
+      search: params.search?.trim() || undefined,
+      ventanaId: params.ventanaId,
+      bancaId: effectiveBancaId,
+      isActive: params.isActive,
+    });
+
+    //  NUEVO: Si hay múltiples bancas permitidas y no se pasó una específica,
+    // necesitamos que el repositorio soporte `bancaId: { in: allowedBancaIds }`.
+    // Pero por ahora, si allowedBancaIds está presente, haremos una query manual o ajustaremos el repo.
+    
+    // CORRECCIÓN: Ajustar query si es BANCA sin bancaId específico
+    let finalData = data;
+    let finalTotal = total;
+
+    if (allowedBancaIds && !effectiveBancaId) {
+        const { data: isolatedData, total: isolatedTotal } = await UserRepository.listPaged({
+            page,
+            pageSize,
+            role: params.role as Role | undefined,
+            search: params.search?.trim() || undefined,
+            ventanaId: params.ventanaId,
+            isActive: params.isActive,
+            bancaId: { in: allowedBancaIds }, 
+        });
+        finalData = isolatedData;
+        finalTotal = isolatedTotal;
+    }
+
+    const totalPages = Math.ceil(finalTotal / pageSize);
+    return {
+      data: finalData,
+      meta: { total: finalTotal, page, pageSize, totalPages, hasNextPage: page < totalPages, hasPrevPage: page > 1 },
+    };
+  },
+
+  async update(id: string, dto: UpdateUserDTO, actor?: { id: string; role: Role }) {
+    const actingRole = actor?.role ?? Role.ADMIN;
+    const actorId = actor?.id;
+    let actorVentanaId: string | null = null;
+    const editingSelf = actorId === id;
+
+    // Cargar actual para comparaciones
+    const current = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id },
+        select: {
+          id: true, username: true, email: true, role: true, ventanaId: true, code: true, bancaId: true,
+        },
+      }),
+      { context: 'UserService.update.fetchCurrent' }
+    );
+    if (!current) throw new AppError('User not found', 404);
+
+    if (actingRole === Role.VENTANA) {
+      if (!actorId) throw new AppError('No autenticado', 401);
+      actorVentanaId = await getActorVentanaId(actorId);
+      if (!editingSelf && current.ventanaId !== actorVentanaId) {
+        throw new AppError('No puedes modificar usuarios de otra ventana', 403);
+      }
+      //  VENTANA puede actualizar settings (para configurar impresora, tema, etc.)
+      const forbiddenForVentana: Array<keyof UpdateUserDTO> = ['role', 'ventanaId', 'code'];
+      for (const field of forbiddenForVentana) {
+        if ((dto as any)[field] !== undefined) {
+          throw new AppError(`Campo no permitido para VENTANA: ${field}`, 403);
+        }
+      }
+    } else if (actingRole === Role.BANCA) {
+      //  NUEVO: Aislamiento para rol BANCA
+      if (!actorId) throw new AppError('No autenticado', 401);
+      if (!editingSelf) {
+        // Verificar que el usuario a editar pertenece a sus bancas
+        if (!current.ventanaId) throw new AppError('No puedes modificar este usuario', 403);
+        const ventana = await prisma.ventana.findUnique({
+          where: { id: current.ventanaId },
+          select: { bancaId: true },
+        });
+        if (!ventana) throw new AppError('Ventana no encontrada', 404);
+        
+        const assignment = await prisma.userBanca.findFirst({
+          where: { userId: actorId, bancaId: ventana.bancaId },
+        });
+        
+        if (!assignment) {
+          throw new AppError('No tienes permiso para modificar este usuario (fuera de tus bancas)', 403, 'FORBIDDEN');
+        }
+      }
+    }
+
+    const toUpdate: any = {};
+
+    // username (unicidad si cambia)
+    if (dto.username && dto.username.trim() !== current.username) {
+      const newUsername = dto.username.trim();
+      const dup = await withConnectionRetry(
+        () => prisma.user.findUnique({ where: { username: newUsername }, select: { id: true } }),
+        { context: 'UserService.update.checkUsername' }
+      );
+      if (dup && dup.id !== id) throw new AppError('Username already in use', 409);
+      toUpdate.username = newUsername;
+    }
+
+    // email (normalización + unicidad si cambia)
+    if (dto.email !== undefined) {
+      const e = dto.email === null ? null : dto.email.trim().toLowerCase();
+      if (e !== current.email) {
+        if (e) {
+          const dupEmail = await withConnectionRetry(
+            () => prisma.user.findUnique({ where: { email: e }, select: { id: true } }),
+            { context: 'UserService.update.checkEmail' }
+          );
+          if (dupEmail && dupEmail.id !== id) throw new AppError('Email already in use', 409);
+        }
+        toUpdate.email = e;
+      }
+    }
+
+    // name
+    if (dto.name !== undefined) toUpdate.name = dto.name;
+
+    // password
+    if (dto.password) {
+      toUpdate.password = await hashPassword(dto.password);
+    }
+
+    // role  ventanaId
+    if (dto.role) {
+      if (actingRole === Role.VENTANA) {
+        throw new AppError('No puedes cambiar el rol', 403);
+      }
+      const newRole = dto.role as Role;
+      toUpdate.role = newRole;
+
+      if (newRole === Role.ADMIN || newRole === Role.BANCA) {
+        // Forzar desvinculación de ventana
+        toUpdate.ventanaId = null;
+      } else {
+        // Requiere ventanaId (nuevo o conservar el actual)
+        const effectiveVentanaId = dto.ventanaId ?? current.ventanaId;
+        if (!effectiveVentanaId) throw new AppError('ventanaId is required for role ' + newRole, 400);
+        await ensureVentanaActiveOrThrow(effectiveVentanaId);
+        toUpdate.ventanaId = effectiveVentanaId;
+      }
+    } else if (dto.ventanaId !== undefined) {
+      if (actingRole === Role.VENTANA) {
+        throw new AppError('No puedes cambiar la ventana asociada', 403);
+      }
+      // Cambian solo ventanaId (sin cambiar role): validar si el role actual lo requiere
+      if (current.role === Role.ADMIN || current.role === Role.BANCA) {
+        // Admin/Banca no deberían estar ligado a ventana
+        toUpdate.ventanaId = null;
+      } else {
+        if (!dto.ventanaId) throw new AppError('ventanaId is required for role ' + current.role, 400);
+        await ensureVentanaActiveOrThrow(dto.ventanaId);
+        toUpdate.ventanaId = dto.ventanaId;
+      }
+    }
+
+    // NUEVO: Si cambia la ventana, verificamos si también cambia de banca
+    let bancaChanged = false;
+    if (toUpdate.ventanaId && toUpdate.ventanaId !== current.ventanaId) {
+      const targetVentana = await prisma.ventana.findUnique({
+        where: { id: toUpdate.ventanaId },
+        select: { bancaId: true }
+      });
+      
+      if (targetVentana) {
+        toUpdate.bancaId = targetVentana.bancaId;
+        if (current.bancaId !== targetVentana.bancaId) {
+          bancaChanged = true;
+          // Limpiar política de comisiones SOLAMENTE al cambiar de banca 
+          // (para no arrastrar UUIDs de loterias/multiplicadores de la banca anterior)
+          toUpdate.commissionPolicyJson = Prisma.DbNull;
+        }
+      }
+    }
+
+    if (dto.bancaId !== undefined) {
+      toUpdate.bancaId = dto.bancaId;
+      if (current.bancaId !== dto.bancaId) {
+        bancaChanged = true;
+        toUpdate.commissionPolicyJson = Prisma.DbNull;
+      }
+      
+      // Si el rol resultante es BANCA, sincronizar con la tabla UserBanca
+      const finalRole = toUpdate.role ?? current.role;
+      if (finalRole === Role.BANCA && dto.bancaId) {
+        // Ejecutar upsert en UserBanca para asegurar que el middleware lo reconozca
+        await withConnectionRetry(
+          () => prisma.userBanca.upsert({
+            where: {
+              userId_bancaId: {
+                userId: id,
+                bancaId: dto.bancaId as string
+              }
+            },
+            update: {
+              isDefault: true // Al ser el bancaId del perfil, lo marcamos como default
+            },
+            create: {
+              userId: id,
+              bancaId: dto.bancaId as string,
+              isDefault: true
+            }
+          }),
+          { context: 'UserService.update.syncUserBanca' }
+        );
+      }
+    } else if (dto.role === Role.BANCA && current.bancaId) {
+       // Si solo cambian el rol a BANCA pero ya tiene un bancaId en el perfil, sincronizar
+       await withConnectionRetry(
+          () => prisma.userBanca.upsert({
+            where: {
+              userId_bancaId: {
+                userId: id,
+                bancaId: current.bancaId!
+              }
+            },
+            update: { isDefault: true },
+            create: {
+              userId: id,
+              bancaId: current.bancaId!,
+              isDefault: true
+            }
+          }),
+          { context: 'UserService.update.syncUserBancaFromCurrent' }
+        );
+    }
+
+    // toggle de actividad (deprecated isDeleted → usar isActive inverso)
+    if (dto.isActive !== undefined) {
+      if (actingRole === Role.VENTANA && !editingSelf) {
+        toUpdate.isActive = dto.isActive;
+      } else if (actingRole !== Role.VENTANA) {
+        toUpdate.isActive = dto.isActive;
+      } else if (actingRole === Role.VENTANA && editingSelf) {
+        throw new AppError('No puedes modificar tu propio estado', 403);
+      }
+    }
+
+    // maxSessionsPerVendedor
+    if (dto.maxSessionsPerVendedor !== undefined) {
+      if (actingRole === Role.BANCA) {
+        const finalRole = toUpdate.role ?? current.role;
+        if (finalRole !== Role.VENDEDOR) {
+          throw new AppError('BANCA solo puede modificar maxSessionsPerVendedor a usuarios con rol VENDEDOR', 403);
+        }
+      } else if (actingRole !== Role.ADMIN) {
+        throw new AppError('No tienes permisos para modificar maxSessionsPerVendedor', 403);
+      }
+      toUpdate.maxSessionsPerVendedor = dto.maxSessionsPerVendedor;
+    }
+
+    //  settings: merge parcial con los settings existentes
+    // VENTANA puede modificar settings de usuarios de su ventana (validación de ventana ya aplicada arriba)
+    if (dto.settings !== undefined) {
+      // Obtener settings actuales (pueden ser null)
+      const currentUser = await withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id },
+          select: { settings: true },
+        }),
+        { context: 'UserService.update.fetchSettings' }
+      );
+
+      const currentSettings = currentUser?.settings as Record<string, any> | null || {};
+
+      if (dto.settings === null) {
+        // Si envían null explícitamente, limpiar settings
+        toUpdate.settings = null;
+      } else {
+        // Merge parcial: el DTO override los campos que vienen, mantienen los demás
+        const mergedSettings = deepMergeSettings(currentSettings, dto.settings);
+        toUpdate.settings = mergedSettings;
+      }
+    }
+
+    let updated;
+    if (toUpdate.isActive === false) {
+      updated = await prisma.$transaction(async (tx) => {
+        const _updated = await tx.user.update({
+          where: { id },
+          data: toUpdate,
+        });
+        await tx.refreshToken.updateMany({
+          where: { userId: id, revoked: false },
+          data: { revoked: true, revokedAt: new Date(), revokedReason: 'user_deactivated' },
+        });
+        return _updated;
+      });
+    } else {
+      updated = await UserRepository.update(id, toUpdate);
+      
+      // Si la banca cambió y no se desactivó (ya está cubierto arriba), cerrar sesiones
+      if (bancaChanged) {
+        await prisma.refreshToken.updateMany({
+          where: { userId: id, revoked: false },
+          data: { revoked: true, revokedAt: new Date(), revokedReason: 'user_moved_banca' },
+        });
+      }
+    }
+
+    // Invalidar caché de sesión (L1/L2) si cambian datos críticos
+    const criticalFields = ['role', 'ventanaId', 'bancaId', 'isActive', 'password'];
+    const hasCriticalChanges = Object.keys(toUpdate).some(k => criticalFields.includes(k));
+    
+    if (hasCriticalChanges) {
+      await CacheService.invalidateTag(`user:${id}`);
+      await CacheService.invalidateTag(`user-bancas:${id}`);
+      await CacheService.del(`auth:session:${id}`); // Fuerza invalidación directa de L1 y L2 para la sesión
+    }
+
+    // Si cambió la banca/ventana del vendedor, invalidar también su caché de estados de cuenta
+    // para que se muestre el historial completo correctamente en la nueva banca
+    const isBancaTransfer = toUpdate.ventanaId !== undefined || toUpdate.bancaId !== undefined;
+    if (isBancaTransfer && (current.role === 'VENDEDOR' || (toUpdate.role ?? current.role) === 'VENDEDOR')) {
+      try {
+        const { CacheService: CS } = await import('../../core/cache.service');
+        // Invalidar todos los statement caches que tengan el vendedorId
+        await CS.delPattern(`account:statement:*:*:*:*:*:*:*:${id}:*`);
+        await CS.delPattern(`account:day:*:*:*:*:vendedor:*:${id}:*`);
+      } catch (cacheErr) {
+        // No crítico: el TTL del caché lo resolverá automáticamente
+        logger.warn({ layer: 'service', action: 'CACHE_INVALIDATE_STATEMENT_WARN', userId: id, meta: { error: (cacheErr as Error).message } });
+      }
+    }
+
+    // Respuesta coherente (incluye username)
+    const result = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id: updated.id },
+        select: {
+          id: true, name: true, username: true, email: true, role: true,
+          ventanaId: true, bancaId: true, isActive: true, code: true, 
+          createdAt: true, settings: true,
+          platform: true, appVersion: true, maxSessionsPerVendedor: true,
+        },
+      }),
+      { context: 'UserService.update.fetchResult' }
+    );
+
+    // Log de auditoría
+    if (result && actorId && Object.keys(toUpdate).length > 0) {
+      await ActivityService.log({
+        userId: actorId,
+        bancaId: result.bancaId,
+        action: ActivityType.USER_UPDATE,
+        targetType: 'USER',
+        targetId: id,
+        details: { 
+          changedFields: Object.keys(toUpdate),
+          description: `Usuario actualizado: ${result.name} (@${result.username}). Campos modificados: ${Object.keys(toUpdate).join(', ')}`
+        },
+      });
+    }
+
+    return result!;
+  },
+
+  async softDelete(
+    id: string,
+    actor?: { id: string; role: Role },
+    deletedBy?: string,
+    deletedReason?: string
+  ) {
+    const actingRole = actor?.role ?? Role.ADMIN;
+    const actorId = deletedBy ?? actor?.id;
+
+    const current = await prisma.user.findUnique({
+      where: { id },
+      select: { ventanaId: true, role: true, bancaId: true },
+    });
+    if (!current) throw new AppError('User not found', 404);
+
+    if (actingRole === Role.VENTANA) {
+      if (!actorId) throw new AppError('No autenticado', 401);
+      const actorVentanaId = await getActorVentanaId(actorId);
+      if (current.ventanaId !== actorVentanaId) {
+        throw new AppError('No puedes eliminar usuarios de otra ventana', 403);
+      }
+    }
+
+    const user = await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id },
+        data: { isActive: false },
+        select: { id: true, name: true, username: true, email: true, role: true, ventanaId: true, bancaId: true, isActive: true, createdAt: true },
+      });
+      await tx.refreshToken.updateMany({
+        where: { userId: id, revoked: false },
+        data: { revoked: true, revokedAt: new Date(), revokedReason: 'user_deactivated' },
+      });
+      return updated;
+    });
+
+    // Invalidar caché (fuera de TX, un fallo aquí no revierte la DB)
+    await CacheService.del(`auth:session:${id}`).catch(() => {});
+    await CacheService.invalidateTag(`user:${id}`).catch((err) =>
+      logger.warn({ layer: 'service', action: 'CACHE_INVALIDATE_FAIL', userId: id, meta: { error: err.message } })
+    );
+
+    // Log de auditoría
+    if (actorId) {
+      await ActivityService.log({
+        userId: actorId,
+        bancaId: user.bancaId,
+        action: ActivityType.USER_DELETE,
+        targetType: 'USER',
+        targetId: id,
+        details: { 
+          reason: deletedReason,
+          description: `Usuario desactivado: ${user.name} (@${user.username}). Razón: ${deletedReason ?? 'No especificada'}`
+        },
+      });
+    }
+
+    return user;
+  },
+
+  async getAllowedMultipliers(
+    userId: string,
+    loteriaId: string,
+    betType: BetType = BetType.NUMERO
+  ) {
+    // Obtener usuario, lotería, multiplicadores y ventana en paralelo
+    const [user, loteria, activeMultipliers] = await withConnectionRetry(
+      () => Promise.all([
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            id: true,
+            role: true,
+            ventanaId: true,
+            commissionPolicyJson: true,
+          },
+        }),
+        prisma.loteria.findUnique({
+          where: { id: loteriaId },
+          select: { id: true, isActive: true },
+        }),
+        prisma.loteriaMultiplier.findMany({
+          where: {
+            loteriaId,
+            isActive: true,
+            kind: betType,
+          },
+          select: {
+            id: true,
+            loteriaId: true,
+            name: true,
+            valueX: true,
+            kind: true,
+            isActive: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        }),
+      ]),
+      { context: 'UserService.getAllowedMultipliers' }
+    );
+
+    // Validaciones
+    if (!user) {
+      throw new AppError('Usuario no encontrado', 404, { code: 'USER_NOT_FOUND' });
+    }
+
+    if (user.role !== Role.VENDEDOR) {
+      throw new AppError('El usuario debe tener rol VENDEDOR', 400, {
+        code: 'INVALID_USER_ROLE',
+        details: [{ field: 'userId', message: 'El usuario debe ser un vendedor' }],
+      });
+    }
+
+    if (!loteria) {
+      throw new AppError('Lotería no encontrada', 404, { code: 'LOTERIA_NOT_FOUND' });
+    }
+
+    const totalActiveMultipliers = activeMultipliers.length;
+
+    // Obtener política de comisión: solo nivel USER (sin fallback a VENTANA).
+    // La política de VENTANA solo se usa para registrar la comisión de la ventana en ticket/jugadas.
+    const policyJson = user.commissionPolicyJson;
+    const policySource: 'USER' | 'VENTANA' = 'USER';
+
+    const policyExists = !!policyJson;
+
+    // Si el vendedor no tiene política propia, retornar vacío
+    if (!policyJson) {
+      return {
+        data: [],
+        meta: {
+          policyExists: false,
+          policyEffective: false,
+          rulesMatched: 0,
+          totalActiveMultipliers,
+        },
+      };
+    }
+
+    // Parsear política usando la función existente
+    const policy = commissionResolver.parsePolicy(policyJson, policySource);
+
+    // Si la política no es válida o no tiene reglas, retornar vacío
+    if (!policy || !policy.rules || policy.rules.length === 0) {
+      return {
+        data: [],
+        meta: {
+          policyExists: true,
+          policyEffective: false,
+          rulesMatched: 0,
+          totalActiveMultipliers,
+        },
+      };
+    }
+
+    // Verificar vigencia temporal
+    const now = new Date();
+    const effectiveFrom = policy.effectiveFrom ? new Date(policy.effectiveFrom) : null;
+    const effectiveTo = policy.effectiveTo ? new Date(policy.effectiveTo) : null;
+
+    const policyEffective =
+      (!effectiveFrom || now >= effectiveFrom) && (!effectiveTo || now <= effectiveTo);
+
+    if (!policyEffective) {
+      return {
+        data: [],
+        meta: {
+          policyExists: true,
+          policyEffective: false,
+          rulesMatched: 0,
+          totalActiveMultipliers,
+        },
+      };
+    }
+
+    // Pre-filtrar reglas aplicables para optimizar
+    const applicableRules = policy.rules.filter((rule: CommissionRule) => {
+      const loteriaMatches = rule.loteriaId === null || rule.loteriaId === loteriaId;
+      const betTypeMatches = rule.betType === null || rule.betType === betType;
+      return loteriaMatches && betTypeMatches && !!rule.multiplierRange;
+    });
+
+    if (applicableRules.length === 0) {
+      return {
+        data: [],
+        meta: {
+          policyExists: true,
+          policyEffective: true,
+          rulesMatched: 0,
+          totalActiveMultipliers,
+        },
+      };
+    }
+
+    // Filtrar multiplicadores según reglas de la política (optimizado)
+    const allowedMultiplierIds = new Set<string>();
+    const matchedRuleIds = new Set<string>();
+
+    for (const multiplier of activeMultipliers) {
+      for (const rule of applicableRules) {
+        const multiplierInRange =
+          multiplier.valueX >= rule.multiplierRange!.min &&
+          multiplier.valueX <= rule.multiplierRange!.max;
+
+        if (multiplierInRange) {
+          allowedMultiplierIds.add(multiplier.id);
+          matchedRuleIds.add(rule.id);
+          break; // Primera regla que aplica gana
+        }
+      }
+    }
+
+    // Obtener multiplicadores permitidos (mantener orden original)
+    const allowedMultipliers = activeMultipliers.filter((m) => allowedMultiplierIds.has(m.id));
+
+    return {
+      data: allowedMultipliers,
+      meta: {
+        policyExists: true,
+        policyEffective: true,
+        rulesMatched: matchedRuleIds.size,
+        totalActiveMultipliers,
+      },
+    };
+  },
+
+  async getAllowedMultipliersBatch(
+    userId: string,
+    betType?: BetType,
+    isActive: boolean = true
+  ) {
+    // 1. Obtener usuario
+    const user = await withConnectionRetry(
+      () => prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, commissionPolicyJson: true },
+      }),
+      { context: 'UserService.getAllowedMultipliersBatch.fetchUser' }
+    );
+
+    if (!user) {
+      throw new AppError('Usuario no encontrado', 404, { code: 'USER_NOT_FOUND' });
+    }
+
+    // 2. Obtener todas las loterías activas
+    const loterias = await withConnectionRetry(
+      () => prisma.loteria.findMany({
+        where: { isActive: true },
+        select: { id: true, name: true },
+      }),
+      { context: 'UserService.getAllowedMultipliersBatch.fetchLoterias' }
+    );
+
+    // 3. Obtener todos los multiplicadores activos
+    const multipliers = await withConnectionRetry(
+      () => prisma.loteriaMultiplier.findMany({
+        where: {
+          isActive: isActive,
+          kind: betType || undefined,
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      { context: 'UserService.getAllowedMultipliersBatch.fetchMultipliers' }
+    );
+
+    // 4. Parsear la política del usuario
+    const userPolicy = commissionResolver.parsePolicy(user.commissionPolicyJson, 'USER');
+
+    // 4.1 Verificar vigencia temporal (Igual que en el endpoint individual)
+    const now = new Date();
+    const effectiveFrom = userPolicy?.effectiveFrom ? new Date(userPolicy.effectiveFrom) : null;
+    const effectiveTo = userPolicy?.effectiveTo ? new Date(userPolicy.effectiveTo) : null;
+    const policyEffective = !userPolicy || ((!effectiveFrom || now >= effectiveFrom) && (!effectiveTo || now <= effectiveTo));
+
+    if (!userPolicy || !userPolicy.rules || userPolicy.rules.length === 0 || !policyEffective) {
+      return {
+        data: [],
+        meta: {
+          totalLoterias: loterias.length,
+          totalMultipliersProcessed: multipliers.length,
+          totalAllowedMultipliers: 0,
+          totalRulesMatched: 0,
+          policyExists: !!userPolicy,
+          policyEffective: policyEffective,
+        },
+      };
+    }
+
+    // 5. Procesar cada lotería (idéntico al individual, pero en bucle)
+    const multipliersByLoteria = multipliers.reduce((acc, m) => {
+      if (!acc[m.loteriaId]) acc[m.loteriaId] = [];
+      acc[m.loteriaId].push(m);
+      return acc;
+    }, {} as Record<string, typeof multipliers>);
+
+    const allowedMultipliers: any[] = [];
+    let totalRulesMatched = 0;
+
+    // Aseguramos que procesamos todas las loterías que tengan multiplicadores si la lista inicial falló
+    const effectiveLoterias = loterias.length > 0 
+      ? loterias 
+      : Array.from(new Set(multipliers.map(m => m.loteriaId))).map(id => ({ id, name: 'Unknown' }));
+
+    for (const loteria of effectiveLoterias) {
+      const loteriaMultipliers = multipliersByLoteria[loteria.id] || [];
+      
+      for (const multiplier of loteriaMultipliers) {
+        // Filtrar reglas del usuario que apliquen a esta lotería y tipo de apuesta
+        const applicableRules = userPolicy.rules.filter((rule: CommissionRule) => {
+          const loteriaMatches = rule.loteriaId === null || rule.loteriaId === loteria.id;
+          const betTypeMatches = rule.betType === null || rule.betType === multiplier.kind;
+          return loteriaMatches && betTypeMatches && !!rule.multiplierRange;
+        });
+
+        let isAllowed = false;
+        for (const rule of applicableRules) {
+          const inRange = multiplier.valueX >= rule.multiplierRange!.min && 
+                         multiplier.valueX <= rule.multiplierRange!.max;
+          
+          if (inRange) {
+            isAllowed = true;
+            break;
+          }
+        }
+
+        if (isAllowed) {
+          totalRulesMatched++;
+          allowedMultipliers.push({
+            id: multiplier.id,
+            name: multiplier.name,
+            valueX: multiplier.valueX,
+            loteriaId: multiplier.loteriaId,
+            kind: multiplier.kind,
+            isActive: multiplier.isActive,
+          });
+        }
+      }
+    }
+
+    return {
+      data: allowedMultipliers,
+      meta: {
+        totalLoterias: effectiveLoterias.length,
+        totalMultipliersProcessed: multipliers.length,
+        totalAllowedMultipliers: allowedMultipliers.length,
+        totalRulesMatched,
+        policyExists: true,
+        policyEffective: true,
+      },
+    };
+  },
+
+  async restore(id: string, actor?: { id: string; role: Role }) {
+    const actingRole = actor?.role ?? Role.ADMIN;
+    const actorId = actor?.id;
+
+    const current = await prisma.user.findUnique({
+      where: { id },
+      select: { ventanaId: true },
+    });
+    if (!current) throw new AppError('User not found', 404);
+
+    if (actingRole === Role.VENTANA) {
+      if (!actorId) throw new AppError('No autenticado', 401);
+      const actorVentanaId = await getActorVentanaId(actorId);
+      if (current.ventanaId !== actorVentanaId) {
+        throw new AppError('No puedes restaurar usuarios de otra ventana', 403);
+      }
+    }
+
+    const user = await prisma.user.update({
+      where: { id },
+      data: { isActive: true },
+      select: { id: true, name: true, username: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
+    });
+
+    // Log de auditoría
+    if (actorId) {
+      await ActivityService.log({
+        userId: actorId,
+        action: ActivityType.USER_RESTORE,
+        targetType: 'USER',
+        targetId: id,
+        details: {
+          description: `Usuario restaurado/reactivado: ${user.name} (@${user.username})`
+        },
+      });
+    }
+
+    return user;
+  },
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    // Obtener contraseña actual del usuario
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, password: true, name: true },
+    });
+
+    if (!user) {
+      throw new AppError('Usuario no encontrado', 404, { code: 'USER_NOT_FOUND' });
+    }
+
+    // Verificar que la contraseña actual es correcta
+    const isPasswordValid = await comparePassword(currentPassword, user.password);
+    if (!isPasswordValid) {
+      throw new AppError('Contraseña actual incorrecta', 400, { code: 'INVALID_PASSWORD' });
+    }
+
+    // Hash de la nueva contraseña
+    const hashedNewPassword = await hashPassword(newPassword);
+
+    // Actualizar contraseña
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedNewPassword },
+    });
+
+    // Log de auditoría
+    await ActivityService.log({
+      userId,
+      action: ActivityType.USER_UPDATE,
+      targetType: 'USER',
+      targetId: userId,
+      details: { 
+        field: 'password',
+        description: `El usuario ${user.username} cambió su propia contraseña`
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Contraseña actualizada correctamente',
+    };
+  },
+};
+
+export default UserService;

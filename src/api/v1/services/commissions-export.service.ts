@@ -1,5 +1,5 @@
 // src/api/v1/services/commissions-export.service.ts
-import { CommissionsService } from './commissions.service';
+import { CommissionsService } from '../../../domain/commission/commissions.service';
 import { CommissionsExportCsvService } from './commissions-export-csv.service';
 import { CommissionsExportExcelService } from './commissions-export-excel.service';
 import { CommissionsExportPdfService } from './commissions-export-pdf.service';

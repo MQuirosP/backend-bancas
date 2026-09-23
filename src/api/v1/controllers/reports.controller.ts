@@ -6,10 +6,10 @@ import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../../../core/types';
 import { applyRbacFilters, AuthContext } from '../../../utils/rbac';
 import { success } from '../../../utils/responses';
-import { TicketsReportService } from '../services/reports/ticketsReport.service';
-import { LoteriasReportService } from '../services/reports/loteriasReport.service';
-import { VentanasReportService } from '../services/reports/ventanasReport.service';
-import { VendedoresReportService } from '../services/reports/vendedoresReport.service';
+import { TicketsReportService } from '../../../domain/reports/ticketsReport.service';
+import { LoteriasReportService } from '../../../domain/reports/loteriasReport.service';
+import { VentanasReportService } from '../../../domain/reports/ventanasReport.service';
+import { VendedoresReportService } from '../../../domain/reports/vendedoresReport.service';
 import { getActiveBancaId } from '../../../middlewares/bancaContext.middleware';
 
 export const ReportsController = {

@@ -12,7 +12,7 @@
  * Retention: 45 days of logs
  */
 
-import ActivityLogService from '../api/v1/services/activityLog.service';
+import ActivityLogService from '../domain/user/activityLog.service';
 import { warmupConnection } from '../core/connectionWarmup';
 import logger from '../core/logger';
 

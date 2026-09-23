@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { MultiplierOverrideService } from "../services/multiplierOverride.service";
+import { MultiplierOverrideService } from "../../../domain/multiplier/multiplierOverride.service";
 import { success, created as createdResponse } from "../../../utils/responses";
 import { AuthenticatedRequest } from "../../../core/types";
 

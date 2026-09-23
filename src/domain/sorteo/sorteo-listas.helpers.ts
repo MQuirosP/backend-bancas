@@ -1,0 +1,109 @@
+import prisma from "../../core/prismaClient";
+import { Prisma } from "../../generated/prisma/client";
+import { isExclusionListEmpty } from "../../core/exclusionListCache";
+import { exclusionCacheService } from "../ticket/exclusionCache.service";
+
+/**
+ * Obtiene los IDs de tickets excluidos para un sorteo
+ * Retorna un Set de ticketIds que deben ser excluidos de cálculos
+ * Soporta exclusión por multiplierId
+ */
+export async function getExcludedTicketIds(sorteoId: string): Promise<Set<string>> {
+    // Optimización: tabla vacía → sin exclusiones, evitar query
+    if (await isExclusionListEmpty()) return new Set();
+
+    //  OPTIMIZED: Use Redis Cache instead of direct DB query
+    const exclusions = await exclusionCacheService.getExclusions(sorteoId);
+
+    if (exclusions.length === 0) {
+        return new Set();
+    }
+
+    // Construir condiciones WHERE para tickets excluidos
+    const orConditions: Prisma.TicketWhereInput[] = exclusions.map((exclusion) => {
+        const baseCondition: Prisma.TicketWhereInput = {
+            sorteoId,
+            ventanaId: exclusion.ventanaId,
+        };
+
+        // Si vendedorId es NULL -> excluir toda la ventana
+        if (exclusion.vendedorId !== null) {
+            baseCondition.vendedorId = exclusion.vendedorId;
+        }
+
+        // Si multiplierId es NULL -> excluir todos los multiplicadores
+        // Si multiplierId es NOT NULL -> excluir solo ese multiplicador
+        if (exclusion.multiplierId !== null) {
+            baseCondition.jugadas = {
+                some: {
+                    multiplierId: exclusion.multiplierId,
+                    deletedAt: null,
+                },
+            };
+        }
+
+        return baseCondition;
+    }).filter(Boolean);
+
+    if (orConditions.length === 0) {
+        return new Set();
+    }
+
+    const excludedTickets = await prisma.ticket.findMany({
+        where: {
+            deletedAt: null,
+            OR: orConditions,
+        },
+        select: { id: true },
+    });
+
+    return new Set(excludedTickets.map((t) => t.id));
+}
+
+/**
+ * Genera condición Prisma WHERE para excluir tickets de listas bloqueadas
+ * Soporta exclusión por multiplierId
+ */
+export async function getExclusionWhereCondition(sorteoId: string): Promise<Prisma.TicketWhereInput> {
+    // Optimización: tabla vacía → sin exclusiones, evitar query
+    if (await isExclusionListEmpty()) return {};
+
+    //  OPTIMIZED: Use Redis Cache instead of direct DB query
+    const exclusions = await exclusionCacheService.getExclusions(sorteoId);
+
+    if (exclusions.length === 0) {
+        return {}; // Sin exclusiones
+    }
+
+    // Construir condición NOT para excluir tickets
+    const orConditions: Prisma.TicketWhereInput[] = exclusions.map((exclusion) => {
+        const condition: Prisma.TicketWhereInput = {
+            ventanaId: exclusion.ventanaId,
+        };
+
+        if (exclusion.vendedorId !== null) {
+            condition.vendedorId = exclusion.vendedorId;
+        }
+
+        if (exclusion.multiplierId !== null) {
+            condition.jugadas = {
+                some: {
+                    multiplierId: exclusion.multiplierId,
+                    deletedAt: null,
+                },
+            };
+        }
+
+        return condition;
+    }).filter(Boolean);
+
+    if (orConditions.length === 0) {
+        return {};
+    }
+
+    return {
+        NOT: {
+            OR: orConditions,
+        },
+    };
+}

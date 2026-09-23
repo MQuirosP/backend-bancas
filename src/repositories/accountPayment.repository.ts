@@ -3,7 +3,7 @@ import { Prisma } from "../generated/prisma/client";
 import logger from "../core/logger";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { crDateService } from "../utils/crDateService";
-import { ACCOUNT_CARRY_OVER_NOTES, ACCOUNT_PREVIOUS_MONTH_METHOD } from "../api/v1/services/accounts/accounts.types";
+import { ACCOUNT_CARRY_OVER_NOTES, ACCOUNT_PREVIOUS_MONTH_METHOD } from "../domain/accounts/accounts.types";
 import { tz } from "../utils/timezone";
 
 export const AccountPaymentRepository = {

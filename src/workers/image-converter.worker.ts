@@ -20,7 +20,7 @@ parentPort.on('message', async (data) => {
   try {
     if (type === 'GENERATE_TICKET') {
       // Importación dinámica para cargar canvas solo en este hilo
-      const { generateTicketImage } = await import('../services/ticket-image-generator.service');
+      const { generateTicketImage } = await import('../domain/ticket/ticket-image-generator.service');
       const buffer = await generateTicketImage(ticketData, options);
       const transferList: ArrayBuffer[] = [];
       if (buffer && buffer.buffer instanceof ArrayBuffer) {

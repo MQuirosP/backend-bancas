@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { renderProgressBar, IS_RENDER, callOpsApi } from './helpers';
 import prisma from '../../core/prismaClient';
-import { AccountStatementSyncService } from '../../api/v1/services/accounts/accounts.sync.service';
-import { recalculateMonthlyClosingForDimension } from '../../api/v1/services/accounts/monthlyClosing.service';
+import { AccountStatementSyncService } from '../../domain/accounts/accounts.sync.service';
+import { recalculateMonthlyClosingForDimension } from '../../domain/accounts/monthlyClosing.service';
 import ActivityService from '../../core/activity.service';
 import { ActivityType } from '../../generated/prisma/client';
 

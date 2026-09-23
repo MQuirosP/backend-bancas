@@ -1,7 +1,7 @@
 ﻿// src/api/v1/controllers/sorteosAuto.controller.ts
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../../core/types';
-import SorteosAutoService from '../services/sorteosAuto.service';
+import SorteosAutoService from '../../../domain/sorteo/sorteosAuto.service';
 import { success } from '../../../utils/responses';
 
 export const SorteosAutoController = {

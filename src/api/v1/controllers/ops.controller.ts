@@ -1,11 +1,11 @@
 import { Request, Response } from 'express';
 import prisma from '../../../core/prismaClient';
 import SorteoRepository from '../../../repositories/sorteo.repository';
-import { SorteoEvaluationCoordinator } from '../services/sorteoEvaluation.coordinator';
-import { AccountStatementSyncService } from '../services/accounts/accounts.sync.service';
-import { recalculateMonthlyClosingForDimension } from '../services/accounts/monthlyClosing.service';
-import { DailyNumberSalesService } from '../services/dailyNumberSales.service';
-import { AccountsService } from '../services/accounts/accounts.service';
+import { SorteoEvaluationCoordinator } from '../../../domain/sorteo/sorteoEvaluation.coordinator';
+import { AccountStatementSyncService } from '../../../domain/accounts/accounts.sync.service';
+import { recalculateMonthlyClosingForDimension } from '../../../domain/accounts/monthlyClosing.service';
+import { DailyNumberSalesService } from '../../../domain/sorteo/dailyNumberSales.service';
+import { AccountsService } from '../../../domain/accounts/accounts.service';
 import ActivityService from '../../../core/activity.service';
 import { SorteoStatus, ActivityType, Prisma } from '../../../generated/prisma/client';
 

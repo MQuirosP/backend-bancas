@@ -1,5 +1,5 @@
 import prisma from "../../../core/prismaClient";
-import { commissionResolver } from "../../../services/commission/CommissionResolver";
+import { commissionResolver } from "../../../domain/commission/CommissionResolver";
 import { BetType } from "../../../generated/prisma/client";
 import { flagAsBoolean } from "../utils/argParser";
 import { success, info } from "../utils/logger";
