@@ -15,6 +15,7 @@ import { v4 as uuidv4 } from "uuid";
 import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope, calculateAccumulatedForMultipleScopes, acquireLock, releaseLock } from "./helpers/ticket-restriction.helper";
 import { getRedisClient, isRedisAvailable, markRedisError } from "../core/redisClient";
 import { CacheService } from "../core/cache.service";
+import { BackgroundTaskQueue } from "../utils/concurrency";
 import { DailyNumberSalesService } from "../domain/sorteo/dailyNumberSales.service";
 import {
   CreateTicketInput,
@@ -485,16 +486,10 @@ export const TicketRepository = {
       const ticket = TicketResponseBuilder.build(txResult, data, userId, options);
       await TicketRedisAccumulator.increment(ticket, txResult.sorteoScheduledAt, options);
 
-      // Acopio asíncrono para Data Warehousing en DailyNumberSales (desacoplado de la transacción de venta)
-      setImmediate(() => {
-        DailyNumberSalesService.incrementFromTicket(txResult.createdTicketId).catch((err) => {
-          logger.error({
-            layer: "repository",
-            action: "DAILY_NUMBER_SALES_INCREMENT_BACKGROUND_ERROR",
-            payload: { ticketId: txResult.createdTicketId, error: err?.message || String(err) },
-          });
-        });
-      });
+      // Acopio asíncrono para Data Warehousing en DailyNumberSales (cola acotada y reintento exclusivo ante timeout de pool)
+      BackgroundTaskQueue.enqueue("DailyNumberSales.incrementFromTicket", () =>
+        DailyNumberSalesService.incrementFromTicket(txResult.createdTicketId)
+      );
 
       return { ticket, warnings: txResult.warnings };
     } finally {

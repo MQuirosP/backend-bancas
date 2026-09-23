@@ -28,7 +28,7 @@ import {
 } from "../../utils/datetime";
 import { getCRLocalComponents } from "../../utils/businessDate";
 import { PDFDocument } from "pdf-lib";
-import { ConcurrencyManager } from "../../utils/concurrency";
+import { ConcurrencyManager, BackgroundTaskQueue } from "../../utils/concurrency";
 import { CacheService } from "../../core/cache.service";
 import crypto from "crypto";
 import { WorkerService } from "../../api/v1/services/worker.service";
@@ -465,8 +465,8 @@ export const TicketService = {
         )
         .join(", ");
 
-      // ActivityLog desacoplado del hilo síncrono HTTP (no bloquea el 201 Created al cliente)
-      setImmediate(() => {
+      // ActivityLog desacoplado en cola acotada (concurrencia limitada y reintento ante timeout de pool)
+      BackgroundTaskQueue.enqueue("ActivityService.logTicketCreate", () =>
         ActivityService.log({
           userId,
           bancaId: ventanaWithBanca.bancaId,
@@ -481,14 +481,8 @@ export const TicketService = {
           },
           requestId,
           layer: "service",
-        }).catch((actErr: any) => {
-          logger.error({
-            layer: "service",
-            action: "ACTIVITY_LOG_BACKGROUND_ERROR",
-            payload: { ticketId: ticket.id, error: actErr?.message || String(actErr) },
-          });
-        });
-      });
+        })
+      );
 
       logger.info({
         layer: "service",

@@ -30,7 +30,11 @@ export async function getCachedUser(userId: string): Promise<UserSession | null>
   
   // 1. Intentar obtener de L1 (Memoria) o L2 (Redis)
   const cached = await CacheService.get<UserSession>(cacheKey, true);
-  if (cached) return cached;
+  if (cached) {
+    // Expiración deslizante: refrescar TTL en Redis (1800s / 30m) para mantener caliente la sesión de vendedores activos
+    CacheService.touch(cacheKey, 1800).catch(() => {});
+    return cached;
+  }
 
   // 2. DB Lean Query: Solo los campos indispensables + Sesiones activas en paralelo
   const [user, activeTokens] = await Promise.all([
@@ -85,10 +89,10 @@ export async function getCachedUser(userId: string): Promise<UserSession | null>
     appVersion: user.appVersion ?? null
   };
 
-  // 3. Persistir en caché (300s en Redis, 60s en Memoria mediante el flag true)
+  // 3. Persistir en caché (1800s / 30 min en Redis, 60s en Memoria mediante el flag true)
   // OPTIMIZACIÓN: Se remueven los tags para evitar comandos SADD y EXPIRE adicionales.
   // La invalidación se realiza directamente por clave usando CacheService.del.
-  await CacheService.set(cacheKey, session, 300, [], true);
+  await CacheService.set(cacheKey, session, 1800, [], true);
 
   return session;
 }

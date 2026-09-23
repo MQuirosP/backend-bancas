@@ -513,4 +513,19 @@ export class CacheService {
             return null;
         }
     }
+
+    /**
+     * Renueva el TTL de una clave existente en Redis (expiración deslizante).
+     */
+    static async touch(key: string, ttlSeconds: number): Promise<void> {
+        if (!isRedisAvailable()) return;
+        try {
+            const redis = getRedisClient();
+            if (redis) {
+                await redis.expire(key, ttlSeconds);
+            }
+        } catch (error: any) {
+            logger.debug({ layer: 'cache', action: 'TOUCH_WARN', payload: { key, error: error?.message } });
+        }
+    }
 }

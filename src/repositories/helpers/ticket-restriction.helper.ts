@@ -6,7 +6,7 @@ import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";
 import { restrictionCacheV2 } from "../../utils/restrictionCacheV2";
 import { getRedisClient, isRedisAvailable, markRedisError } from "../../core/redisClient";
-import prisma, { salesPrisma } from "../../core/prismaClient";
+import prisma from "../../core/prismaClient";
 
 /**
  * Intenta adquirir un lock distribuido en Redis.
@@ -1481,7 +1481,7 @@ export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.Tr
   const startTime = Date.now();
 
   try {
-    const client = tx || salesPrisma;
+    const client = tx || prisma;
 
     // Obtener la fecha del sorteo para calcular un TTL inteligente (evitar acumulación en RAM de Redis)
     const sorteo = await client.sorteo.findUnique({

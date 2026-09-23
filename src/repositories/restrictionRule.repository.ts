@@ -1,5 +1,4 @@
-// src/repositories/restrictionRule.repository.ts
-import prisma, { salesPrisma } from "../core/prismaClient";
+import prisma from "../core/prismaClient";
 import { PrismaClient } from "../generated/prisma/client";
 import { withConnectionRetry } from "../core/withConnectionRetry";
 import logger from "../core/logger";
@@ -765,8 +764,8 @@ export const RestrictionRuleRepository = {
         return cached;
       }
 
-      // 4. Fallback a PostgreSQL (usando salesPrisma por defecto o el cliente inyectado)
-      const targetDb = client || salesPrisma;
+      // 4. Fallback a PostgreSQL (usando prisma general por defecto o el cliente inyectado)
+      const targetDb = client || prisma;
       const dateOnly = new Date(Date.UTC(year, month - 1, day));
 
       const timeFilters = [
