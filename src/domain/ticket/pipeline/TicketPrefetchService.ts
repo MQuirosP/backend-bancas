@@ -1,5 +1,5 @@
 import { BetType, Prisma } from "../../../generated/prisma/client";
-import prisma from "../../../core/prismaClient";
+import { salesPrisma } from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import { getBusinessDateCRInfo } from "../../../utils/businessDate";
 import { resolveBaseMultiplierX } from "../../../repositories/ticket.repository";
@@ -26,7 +26,7 @@ export class TicketPrefetchService {
     );
 
     if (numeroMultiplierIds.length > 0) {
-      return await prisma.loteriaMultiplier.findMany({
+      return await salesPrisma.loteriaMultiplier.findMany({
         where: { id: { in: numeroMultiplierIds } },
         select: {
           id: true,
@@ -66,7 +66,7 @@ export class TicketPrefetchService {
       await Promise.all([
         options?.preFetched?.loteria
           ? Promise.resolve(options.preFetched.loteria)
-          : prisma.loteria.findUnique({
+          : salesPrisma.loteria.findUnique({
               where: { id: loteriaId },
               select: {
                 id: true,
@@ -77,7 +77,7 @@ export class TicketPrefetchService {
             }),
         options?.preFetched?.sorteo
           ? Promise.resolve(options.preFetched.sorteo)
-          : prisma.sorteo.findUnique({
+          : salesPrisma.sorteo.findUnique({
               where: { id: sorteoId },
               select: {
                 id: true,
@@ -89,7 +89,7 @@ export class TicketPrefetchService {
             }),
         options?.preFetched?.ventana
           ? Promise.resolve(options.preFetched.ventana)
-          : prisma.ventana.findUnique({
+          : salesPrisma.ventana.findUnique({
               where: { id: ventanaId },
               select: {
                 id: true,
@@ -102,12 +102,12 @@ export class TicketPrefetchService {
             }),
         options?.preFetched?.vendedor
           ? Promise.resolve(options.preFetched.vendedor)
-          : prisma.user.findUnique({
+          : salesPrisma.user.findUnique({
               where: { id: userId },
               select: { id: true, commissionPolicyJson: true },
             }),
         preFetchedBancaId
-          ? resolveBaseMultiplierX(prisma as any, {
+          ? resolveBaseMultiplierX(salesPrisma as any, {
               bancaId: preFetchedBancaId,
               loteriaId,
               userId,
@@ -153,7 +153,7 @@ export class TicketPrefetchService {
 
     const effectiveBaseMultiplier = preResolvedMultiplier
       ? preResolvedMultiplier
-      : await resolveBaseMultiplierX(prisma as any, {
+      : await resolveBaseMultiplierX(salesPrisma as any, {
           bancaId: ventana.bancaId,
           loteriaId,
           userId,

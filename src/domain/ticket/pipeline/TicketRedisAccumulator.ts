@@ -1,6 +1,6 @@
 import { BetType } from "../../../generated/prisma/client";
 import { ReportDimension } from "../../../types/enums/report.enum";
-import prisma from "../../../core/prismaClient";
+import { salesPrisma } from "../../../core/prismaClient";
 import logger from "../../../core/logger";
 import { getRedisClient, isRedisAvailable, markRedisError } from "../../../core/redisClient";
 import { CreateTicketOptions } from "./ticket.types";
@@ -39,7 +39,7 @@ export class TicketRedisAccumulator {
         targetBancaId = ticket.ventana.bancaId;
       }
       if (!targetBancaId) {
-        const vent = await prisma.ventana.findUnique({
+        const vent = await salesPrisma.ventana.findUnique({
           where: { id: ticket.ventanaId },
           select: { bancaId: true },
         });

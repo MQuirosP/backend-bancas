@@ -1,7 +1,7 @@
 import { getRedisClient, isRedisAvailable } from '../../core/redisClient';
 import logger from '../../core/logger';
 import crypto from 'crypto';
-import prisma from '../../core/prismaClient';
+import { salesPrisma } from '../../core/prismaClient';
 
 export interface IdempotencyResponse {
   payloadHash: string;
@@ -77,7 +77,7 @@ export class IdempotencyService {
     cachedData?: any;
   }> {
     try {
-      const existing = await prisma.ticket.findFirst({
+      const existing = await salesPrisma.ticket.findFirst({
         where: { idempotencyKey: key, deletedAt: null },
         select: {
           id: true,

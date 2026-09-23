@@ -1,5 +1,5 @@
 import { ReportDimension } from '../types/enums/report.enum';
-import prisma from "../core/prismaClient";
+import prisma, { salesPrisma } from "../core/prismaClient";
 import { Prisma, TicketStatus, Role, BetType, SorteoStatus, OverrideScope } from '../generated/prisma/client';
 import { withConnectionRetry } from "../core/withConnectionRetry";
 import logger from "../core/logger";
@@ -478,6 +478,7 @@ export const TicketRepository = {
           backoffMaxMs: 2_000,
           maxWaitMs: 10_000,
           timeoutMs: dynamicTimeout,
+          client: salesPrisma,
         }
       );
 

@@ -1,4 +1,4 @@
-import { Prisma } from "../generated/prisma/client";
+import { Prisma, PrismaClient } from "../generated/prisma/client";
 import { config } from "../config";
 import prisma from "./prismaClient";
 import logger from "./logger";
@@ -9,6 +9,8 @@ function sleep(ms: number) {
 }
 
 export type TxRetryOptions = {
+  /** Cliente Prisma sobre el que ejecutar la transacción (por defecto: prisma general) */
+  client?: PrismaClient;
   /** Nivel de aislamiento de la transacción (por defecto: config.tx.isolationLevel) */
   isolationLevel?: Prisma.TransactionIsolationLevel;
   /** Reintentos máximos (por defecto: config.tx.maxRetries) */
@@ -75,8 +77,9 @@ export async function withTransactionRetry<T>(
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       // Hardening: Ejecutar a través del Circuit Breaker de Prisma
+      const targetClient = opts.client || prisma;
       return await ResilienceService.runPrisma(async () => {
-        return await prisma.$transaction(fn, {
+        return await targetClient.$transaction(fn, {
           isolationLevel,
           maxWait: maxWaitMs,
           timeout: timeoutMs,

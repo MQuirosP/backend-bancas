@@ -10,7 +10,7 @@ import TicketRepository from "../../repositories/ticket.repository";
 import ActivityService from "../../core/activity.service";
 import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
-import prisma from "../../core/prismaClient";
+import prisma, { salesPrisma } from "../../core/prismaClient";
 import { RestrictionRuleRepository } from "../../repositories/restrictionRule.repository";
 import { commissionService } from "../../domain/commission/CommissionService";
 import { CommissionContext } from "../../domain/commission/types/CommissionContext";
@@ -192,7 +192,7 @@ export const TicketService = {
         () =>
           withConnectionRetry(
             () =>
-              prisma.user.findUnique({
+              salesPrisma.user.findUnique({
                 where: { id: userId },
                 select: {
                   id: true,
@@ -224,7 +224,7 @@ export const TicketService = {
           () =>
             withConnectionRetry(
               () =>
-                prisma.sorteo.findUnique({
+                salesPrisma.sorteo.findUnique({
                   where: { id: sorteoId },
                   select: {
                     id: true,
@@ -248,7 +248,7 @@ export const TicketService = {
           () =>
             withConnectionRetry(
               () =>
-                prisma.ventana.findUnique({
+                salesPrisma.ventana.findUnique({
                   where: { id: ventanaId },
                   select: {
                     id: true,
@@ -272,7 +272,7 @@ export const TicketService = {
           () =>
             withConnectionRetry(
               () =>
-                prisma.user.findFirst({
+                salesPrisma.user.findFirst({
                   where: {
                     role: Role.VENTANA,
                     ventanaId: ventanaId,
@@ -335,6 +335,7 @@ export const TicketService = {
         ventanaId,
         userId: effectiveVendedorId,
         defaultCutoff: 1,
+        client: salesPrisma,
       });
 
       const now = nowCR();
@@ -3264,7 +3265,7 @@ async function resolveEffectiveActor(
       () =>
         withConnectionRetry(
           () =>
-            prisma.user.findUnique({
+            salesPrisma.user.findUnique({
               where: { id: requestedVendedorId },
               select: {
                 id: true,

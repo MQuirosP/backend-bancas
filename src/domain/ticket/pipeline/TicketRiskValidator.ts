@@ -22,7 +22,7 @@ import {
   TicketWarning,
   TransactionMeta,
 } from "./ticket.types";
-import prisma from "../../../core/prismaClient";
+import { salesPrisma } from "../../../core/prismaClient";
 
 export type TicketRiskContext = {
   data: CreateTicketInput;
@@ -46,7 +46,7 @@ export class TicketRiskValidator {
     let candidateRules = await getCachedRestrictionRules<RestrictionRuleWithRelations>(rulesCacheKey);
 
     if (!candidateRules) {
-      candidateRules = await prisma.restrictionRule.findMany({
+      candidateRules = await salesPrisma.restrictionRule.findMany({
         where: {
           isActive: true,
           OR: [

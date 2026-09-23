@@ -4,57 +4,84 @@ import { Pool } from "pg";
 
 declare global {
   var __prisma: PrismaClient | undefined;
+  var __salesPrisma: PrismaClient | undefined;
   var __prismaPool: Pool | undefined;
+  var __salesPool: Pool | undefined;
 }
 
-if (!global.__prismaPool) {
-  let connectionLimit = 25; // default fallback
-  if (process.env.DATABASE_URL) {
-    try {
-      const parsedUrl = new URL(process.env.DATABASE_URL);
-      const limitParam = parsedUrl.searchParams.get("connection_limit");
-      if (limitParam) {
-        const parsedLimit = parseInt(limitParam, 10);
-        if (!isNaN(parsedLimit) && parsedLimit > 0) {
-          connectionLimit = parsedLimit;
-        }
-      }
-    } catch (e) {
-      // fallback
-    }
+function cleanConnectionString(rawUrl?: string): string | undefined {
+  if (!rawUrl) return undefined;
+  try {
+    const parsed = new URL(rawUrl);
+    // Eliminar connection_limit de los query params para evitar conflictos con el constructor de pg.Pool
+    parsed.searchParams.delete("connection_limit");
+    return parsed.toString();
+  } catch {
+    return rawUrl;
   }
+}
 
+const cleanedDbUrl = cleanConnectionString(process.env.DATABASE_URL);
+
+// Límites configurables con fallback estándar (8 ventas + 17 general = 25 global)
+const salesPoolMax = Number(process.env.SALES_POOL_MAX || 8);
+const generalPoolMax = Number(process.env.GENERAL_POOL_MAX || 17);
+
+if (!global.__prismaPool) {
   global.__prismaPool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    max: connectionLimit,
+    connectionString: cleanedDbUrl,
+    max: generalPoolMax,
+    connectionTimeoutMillis: 5000,
+    application_name: "bancas_backend_general",
   });
 }
 
-const pool = global.__prismaPool;
-const adapter = new PrismaPg(pool);
+if (!global.__salesPool) {
+  global.__salesPool = new Pool({
+    connectionString: cleanedDbUrl,
+    max: salesPoolMax,
+    connectionTimeoutMillis: 5000,
+    application_name: "bancas_backend_sales",
+  });
+}
 
-//  FIX: Cachear globalmente SIEMPRE (incluso en producción)
-// Antes: Solo se cacheaba en development → múltiples instancias en production
-// Ahora: Una sola instancia reutilizada → evita agotamiento de conexiones
-const prisma = global.__prisma ?? new PrismaClient({
-  adapter,
-  log: ['warn', 'error'],
-});
+const generalPool = global.__prismaPool;
+const salesPool = global.__salesPool;
 
-//  CRÍTICO: Cachear en producción también para evitar múltiples instancias
-// Sin esto: cada import crea nueva instancia → exhausted connection pool
+const generalAdapter = new PrismaPg(generalPool);
+const salesAdapter = new PrismaPg(salesPool);
+
+// Instancia General (Reportes, Dashboards, Cierres, Evaluaciones)
+export const prisma: PrismaClient =
+  global.__prisma ??
+  new PrismaClient({
+    adapter: generalAdapter,
+    log: ["warn", "error"],
+  });
 global.__prisma = prisma;
 
+// Instancia de Ventas (Fast-Path Crítico Exclusivo para Emisión de Tickets)
+export const salesPrisma: PrismaClient =
+  global.__salesPrisma ??
+  new PrismaClient({
+    adapter: salesAdapter,
+    log: ["warn", "error"],
+  });
+global.__salesPrisma = salesPrisma;
+
 /**
- * Verifica la conexión ejecutando un ping simple.
+ * Verifica la conectividad de ambos pools ejecutando un ping simple en cada uno.
  */
 export async function verifyConnection(): Promise<boolean> {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await Promise.all([
+      prisma.$queryRaw`SELECT 1`,
+      salesPrisma.$queryRaw`SELECT 1`,
+    ]);
     return true;
   } catch (error) {
     return false;
   }
 }
 
-export default prisma;
+export default prisma;

@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import prisma from "../../../core/prismaClient";
+import { salesPrisma } from "../../../core/prismaClient";
 import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";
 import { isRedisAvailable } from "../../../core/redisClient";
@@ -24,7 +24,7 @@ export class TicketConcurrencyManager {
     if (isRedisAvailable()) {
       let targetBancaId = options?.preFetched?.ventana?.bancaId;
       if (!targetBancaId) {
-        const vent = await prisma.ventana.findUnique({
+        const vent = await salesPrisma.ventana.findUnique({
           where: { id: ventanaId },
           select: { bancaId: true },
         });

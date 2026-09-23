@@ -1,7 +1,7 @@
-﻿import { CacheService } from "../../core/cache.service";
+import { CacheService } from "../../core/cache.service";
 import TicketRepository from "../../repositories/ticket.repository";
 import { withConnectionRetry } from "../../core/withConnectionRetry";
-import prisma from "../../core/prismaClient";
+import { salesPrisma } from "../../core/prismaClient";
 import logger from "../../core/logger";
 
 export const TicketPersistenceService = {
@@ -36,7 +36,7 @@ export const TicketPersistenceService = {
         (err?.meta?.target as string[] | undefined)?.includes('idempotencyKey')
       ) {
         const row = await withConnectionRetry(
-          () => prisma.$queryRaw<{ id: string }[]>`
+          () => salesPrisma.$queryRaw<{ id: string }[]>`
             SELECT id FROM "Ticket"
             WHERE "idempotencyKey" = ${clientIdempotencyKey}
               AND "deletedAt" IS NULL

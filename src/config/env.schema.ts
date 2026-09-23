@@ -51,4 +51,8 @@ export const EnvSchema = z.object({
   REQUEST_TIMEOUT_MS: z.coerce.number().int().default(8000),
   PRISMA_CB_RESET_MS: z.coerce.number().int().default(15000),
   REDIS_CB_RESET_MS: z.coerce.number().int().default(10000),
+
+  // POOL SEGREGATION
+  SALES_POOL_MAX: z.coerce.number().int().min(1).default(8),
+  GENERAL_POOL_MAX: z.coerce.number().int().min(1).default(17),
 });
