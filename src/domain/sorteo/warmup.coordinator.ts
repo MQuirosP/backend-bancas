@@ -187,20 +187,22 @@ export class WarmupCoordinator {
       state.isRunning = false;
       state.lastCompletedAt = Date.now();
 
-      // Resolver a los waiters que se acoplaron a este sorteo
-      const currentWaiters = [...state.deferredWaiters];
-      state.deferredWaiters = [];
+      // Si NO quedan sorteos pendientes, resolvamos a todos los waiters que aguardaban el estado final
+      if (state.pendingSorteos.size === 0) {
+        const currentWaiters = [...state.deferredWaiters];
+        state.deferredWaiters = [];
 
-      for (const waiter of currentWaiters) {
-        if (error) {
-          waiter.reject(error);
-        } else {
-          waiter.resolve(result);
+        for (const waiter of currentWaiters) {
+          if (error) {
+            waiter.reject(error);
+          } else {
+            waiter.resolve(result);
+          }
         }
       }
 
       // Si quedaron sorteos pendientes encolados durante la ejecución de este warmup,
-      // programar el siguiente ciclo respetando el cooldown de 5s
+      // programar el siguiente ciclo respetando el cooldown
       if (state.pendingSorteos.size > 0 && !state.cooldownTimeout) {
         const pendingList = Array.from(state.pendingSorteos);
         logger.info({
@@ -237,11 +239,9 @@ export class WarmupCoordinator {
       return;
     }
 
-    // Tomar todos los sorteos pendientes y limpiar la lista
     const pendingList = Array.from(state.pendingSorteos);
     state.pendingSorteos.clear();
 
-    // El último sorteo representa el estado más actualizado de la base de datos
     const targetSorteoId = pendingList[pendingList.length - 1];
 
     logger.info({
@@ -260,7 +260,12 @@ export class WarmupCoordinator {
       const res = await this.runWarmupCycle(targetSorteoId, bancaKey, cooldownAppliedMs);
       res.coalescedSorteoIds = pendingList;
     } catch (_err) {
-      // Los errores ya se loguean en runWarmupCycle
+      // Si falló runWarmupCycle y aún quedaron waiters sin resolver, rechazarlos
+      const leftoverWaiters = [...state.deferredWaiters];
+      state.deferredWaiters = [];
+      for (const waiter of leftoverWaiters) {
+        waiter.reject(_err);
+      }
     }
   }
 }
