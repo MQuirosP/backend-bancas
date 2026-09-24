@@ -405,11 +405,24 @@ export const TicketRepository = {
     options?: CreateTicketOptions
   ): Promise<{ ticket: any; warnings: TicketWarning[] }> {
     const dynamicTimeout = TicketTimeoutCalculator.calculate(data.jugadas.length);
+    const t_lock_start = performance.now();
     const lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
+    try {
+      if (options?.timingCollector?.prefetch_breakdown) {
+        options.timingCollector.prefetch_breakdown.t_lock_acquire = Math.round((performance.now() - t_lock_start) * 100) / 100;
+      }
+    } catch {}
 
     try {
       // 1. [PRE-TX] Pre-cargar multiplicadores requeridos si no venían
+      const t_mult_start = performance.now();
       const preFetchedMultipliers = await TicketPrefetchService.fetchMultipliersIfNeeded(data.jugadas, options);
+      try {
+        if (options?.timingCollector?.prefetch_breakdown) {
+          options.timingCollector.prefetch_breakdown.t_multipliers = Math.round((performance.now() - t_mult_start) * 100) / 100;
+        }
+      } catch {}
+
       if (preFetchedMultipliers && preFetchedMultipliers.length > 0) {
         options = {
           ...options,
@@ -421,12 +434,25 @@ export const TicketRepository = {
       }
 
       // 2. [PRE-TX] Resolver entidades estáticas y reglas FUERA de la transacción interactiva
+      const t_meta_start = performance.now();
       const preTxMeta = await TicketPrefetchService.resolvePreTxMetadata(data, userId, options);
+      try {
+        if (options?.timingCollector?.prefetch_breakdown) {
+          options.timingCollector.prefetch_breakdown.t_pre_tx_meta = Math.round((performance.now() - t_meta_start) * 100) / 100;
+        }
+      } catch {}
+
+      const t_rules_start = performance.now();
       const prefecthedRules = await TicketRiskValidator.prefetchRules({
         userId,
         ventanaId: data.ventanaId,
         bancaId: preTxMeta.bancaId,
       });
+      try {
+        if (options?.timingCollector?.prefetch_breakdown) {
+          options.timingCollector.prefetch_breakdown.t_rules = Math.round((performance.now() - t_rules_start) * 100) / 100;
+        }
+      } catch {}
 
       // 3. [IN-TX] Transacción interactiva mínima: solo validación atómica de estado, topes e inserción
       if (options?.timingCollector) {

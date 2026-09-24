@@ -26,8 +26,8 @@ export const TicketPersistenceService = {
         options
       );
       
-      // Invalidar el caché de sorteos del vendedor para reflejar las nuevas ventas
-      await CacheService.invalidateTag(`user:${effectiveVendedorId}`).catch(() => {});
+      // Invalidar datos y acumulados de ventas del vendedor sin desalojar su perfil autenticado (tag user:*)
+      await CacheService.invalidateTag(`user-sales:${effectiveVendedorId}`).catch(() => {});
       
       return { ticket, warnings };
     } catch (err: any) {

@@ -21,26 +21,37 @@ export class CommissionService {
     userId: string | null,
     ventanaId: string,
     bancaId: string,
-    userPolicyJson: unknown,
-    ventanaPolicyJson: unknown,
-    bancaPolicyJson: unknown,
-    listeroPolicyJson: unknown = null
+    userPolicyJson?: unknown,
+    ventanaPolicyJson?: unknown,
+    bancaPolicyJson?: unknown,
+    listeroPolicyJson?: unknown
   ): Promise<CommissionContext> {
+    // Si la política ya viene en memoria (incluso si es null explícito), parsear directamente
+    // sin incurrir en I/O de red hacia Redis. Fallback a Redis solo si el parámetro es undefined.
     const userPolicy = userId
-      ? await getCachedCommissionPolicy("USER", userId, userPolicyJson)
+      ? (userPolicyJson !== undefined
+          ? parseCommissionPolicy(userPolicyJson, "USER")
+          : await getCachedCommissionPolicy("USER", userId, userPolicyJson))
       : null;
-    const ventanaPolicy = await getCachedCommissionPolicy(
-      "VENTANA",
-      ventanaId,
-      ventanaPolicyJson
-    );
-    const bancaPolicy = await getCachedCommissionPolicy(
-      "BANCA",
-      bancaId,
-      bancaPolicyJson
-    );
-    const listeroPolicy = listeroPolicyJson
-      ? parseCommissionPolicy(listeroPolicyJson, "USER")
+
+    const ventanaPolicy = ventanaPolicyJson !== undefined
+      ? parseCommissionPolicy(ventanaPolicyJson, "VENTANA")
+      : await getCachedCommissionPolicy(
+          "VENTANA",
+          ventanaId,
+          ventanaPolicyJson
+        );
+
+    const bancaPolicy = bancaPolicyJson !== undefined
+      ? parseCommissionPolicy(bancaPolicyJson, "BANCA")
+      : await getCachedCommissionPolicy(
+          "BANCA",
+          bancaId,
+          bancaPolicyJson
+        );
+
+    const listeroPolicy = listeroPolicyJson !== undefined
+      ? (listeroPolicyJson ? parseCommissionPolicy(listeroPolicyJson, "USER") : null)
       : null;
 
     return {

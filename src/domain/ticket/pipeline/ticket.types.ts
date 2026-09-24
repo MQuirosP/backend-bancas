@@ -43,6 +43,17 @@ export type TicketTimingCollector = {
   t_tx?: number;
   tx_attempts?: number;
   tx_end_time?: number;
+  prefetch_breakdown?: {
+    t_actor?: number;
+    t_effective_actor?: number;
+    t_core_entities?: number;
+    t_cutoff?: number;
+    t_commissions?: number;
+    t_lock_acquire?: number;
+    t_multipliers?: number;
+    t_pre_tx_meta?: number;
+    t_rules?: number;
+  };
 };
 
 export type CreateTicketOptions = {

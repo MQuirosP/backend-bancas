@@ -191,6 +191,7 @@ export const TicketService = {
       const timingCollector: TicketTimingCollector = {
         startTime: t0,
         initialPoolStats,
+        prefetch_breakdown: {},
       };
 
       const { loteriaId, sorteoId } = data;
@@ -201,6 +202,7 @@ export const TicketService = {
         data.idempotencyKey ?? data.requestId;
 
       // 1. Actor autenticado
+      const t_act_start = performance.now();
       const actor = await CacheService.wrap(
         `user:${userId}`,
         () =>
@@ -225,13 +227,25 @@ export const TicketService = {
         3600, // 1 hour TTL
         [`user:${userId}`],
       );
+      try {
+        if (timingCollector.prefetch_breakdown) {
+          timingCollector.prefetch_breakdown.t_actor = Math.round((performance.now() - t_act_start) * 100) / 100;
+        }
+      } catch {}
       if (!actor) throw new AppError("Authenticated user not found", 401);
 
       // 2. Resolver Vendedor y Ventana
+      const t_eff_start = performance.now();
       const { effectiveVendedorId, ventanaId, vendedorToPass } =
         await resolveEffectiveActor(actor, data?.vendedorId);
+      try {
+        if (timingCollector.prefetch_breakdown) {
+          timingCollector.prefetch_breakdown.t_effective_actor = Math.round((performance.now() - t_eff_start) * 100) / 100;
+        }
+      } catch {}
 
       // 3. Fetch Masivo Consolidado
+      const t_core_start = performance.now();
       const [sorteo, ventanaWithBanca, listeroUser] = await Promise.all([
         CacheService.wrap(
           `sorteo:${sorteoId}`,
@@ -302,6 +316,11 @@ export const TicketService = {
           [`ventana:${ventanaId}`],
         ),
       ]);
+      try {
+        if (timingCollector.prefetch_breakdown) {
+          timingCollector.prefetch_breakdown.t_core_entities = Math.round((performance.now() - t_core_start) * 100) / 100;
+        }
+      } catch {}
 
       if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
       if (sorteo.scheduledAt) {
@@ -344,6 +363,7 @@ export const TicketService = {
       }
 
       // Resolver cutoff efectivo
+      const t_cut_start = performance.now();
       const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
         bancaId: ventanaWithBanca.bancaId,
         ventanaId,
@@ -351,6 +371,11 @@ export const TicketService = {
         defaultCutoff: 1,
         client: salesPrisma,
       });
+      try {
+        if (timingCollector.prefetch_breakdown) {
+          timingCollector.prefetch_breakdown.t_cutoff = Math.round((performance.now() - t_cut_start) * 100) / 100;
+        }
+      } catch {}
 
       const now = nowCR();
       const safeMinutes =
@@ -382,6 +407,7 @@ export const TicketService = {
       );
 
       // Preparar contexto de comisiones sin nuevas consultas
+      const t_comm_start = performance.now();
       const commissionContext = await commissionService.prepareContext(
         effectiveVendedorId,
         ventanaId,
@@ -391,6 +417,11 @@ export const TicketService = {
         ventanaWithBanca?.banca?.commissionPolicyJson ?? null,
         listeroUser?.commissionPolicyJson ?? null,
       );
+      try {
+        if (timingCollector.prefetch_breakdown) {
+          timingCollector.prefetch_breakdown.t_commissions = Math.round((performance.now() - t_comm_start) * 100) / 100;
+        }
+      } catch {}
 
       // Normalizar jugadas
       const normalizedJugadas = jugadasIn.map((j: any) => {
@@ -559,6 +590,7 @@ export const TicketService = {
               ticketNumber: ticket.ticketNumber,
               t_total,
               t_prefetch,
+              prefetch_breakdown: timingCollector.prefetch_breakdown,
               t_pool_wait,
               t_tx,
               t_post,
@@ -1362,7 +1394,7 @@ export const TicketService = {
         .update(JSON.stringify({ params, role, userId }))
         .digest("hex")}`;
 
-      const tags = ["ticket:numbers-summary", `user:${userId}`];
+      const tags = ["ticket:numbers-summary", `user-sales:${userId}`, `user:${userId}`];
       if (params.sorteoId) tags.push(`sorteo:${params.sorteoId}`);
       if (params.bancaId) tags.push(`banca:${params.bancaId}`);
 
