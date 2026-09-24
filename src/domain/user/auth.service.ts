@@ -667,47 +667,170 @@ export const AuthService = {
   },
 
   /**
-   * Revoca una sesión específica
+   * Valida la jerarquía de permisos para gestionar sesiones de un usuario:
+   * - ADMIN: puede ver/revocar sesiones de cualquier usuario.
+   * - BANCA: puede ver/revocar sesiones de VENTANA y VENDEDOR pertenecientes a sus bancas.
+   * - VENTANA: puede ver/revocar sesiones de VENDEDOR pertenecientes a su ventana.
+   * - Dueño: cualquier usuario puede ver/revocar sus propias sesiones.
    */
-  async revokeSession(requestingUserId: string, sessionId: string, isAdmin: boolean = false): Promise<void> {
+  async assertCanManageUserSessions(
+    actor: { id: string; role?: Role; ventanaId?: string | null; bancaId?: string | null },
+    targetUserId: string
+  ): Promise<{ id: string; username: string; role: Role }> {
+    // 1. Dueño de la sesión (cualquier rol)
+    if (actor.id === targetUserId) {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: { id: true, username: true, role: true },
+      });
+      if (!targetUser) throw new AppError('Usuario no encontrado', 404);
+      return targetUser;
+    }
+
+    // Asegurar que tenemos el rol del actor
+    let actorRole = actor.role;
+    if (!actorRole) {
+      const actorDb = await prisma.user.findUnique({
+        where: { id: actor.id },
+        select: { role: true, ventanaId: true, bancaId: true },
+      });
+      if (!actorDb) throw new AppError('No autenticado', 401);
+      actorRole = actorDb.role;
+      actor.ventanaId = actor.ventanaId ?? actorDb.ventanaId;
+      actor.bancaId = actor.bancaId ?? actorDb.bancaId;
+    }
+
+    // 2. ADMIN tiene acceso total
+    if (actorRole === Role.ADMIN) {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: { id: true, username: true, role: true },
+      });
+      if (!targetUser) throw new AppError('Usuario no encontrado', 404);
+      return targetUser;
+    }
+
+    // Cargar targetUser con datos de asignación
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        bancaId: true,
+        ventanaId: true,
+        ventana: {
+          select: { id: true, bancaId: true },
+        },
+      },
+    });
+
+    if (!targetUser) {
+      throw new AppError('Usuario no encontrado', 404);
+    }
+
+    // 3. Rol BANCA: puede ver/revocar VENTANA y VENDEDOR de sus bancas asignadas
+    if (actorRole === Role.BANCA) {
+      if (targetUser.role !== Role.VENTANA && targetUser.role !== Role.VENDEDOR) {
+        throw new AppError('No tiene permisos para ver las sesiones de este usuario', 403);
+      }
+
+      const targetBancaId = targetUser.bancaId || targetUser.ventana?.bancaId;
+      if (!targetBancaId) {
+        throw new AppError('No tiene permisos para ver las sesiones de este usuario', 403);
+      }
+
+      // Obtener todas las bancas asignadas al usuario BANCA (UserBanca + bancaId directo)
+      const userBancas = await prisma.userBanca.findMany({
+        where: { userId: actor.id },
+        select: { bancaId: true },
+      });
+      const allowedBancaIds = new Set(userBancas.map(ub => ub.bancaId));
+      if (actor.bancaId) {
+        allowedBancaIds.add(actor.bancaId);
+      }
+
+      if (!allowedBancaIds.has(targetBancaId)) {
+        throw new AppError('No tiene permisos para ver las sesiones de este usuario', 403);
+      }
+
+      return targetUser;
+    }
+
+    // 4. Rol VENTANA: puede ver/revocar VENDEDOR de su propia ventana
+    if (actorRole === Role.VENTANA) {
+      if (targetUser.role !== Role.VENDEDOR) {
+        throw new AppError('No tiene permisos para ver las sesiones de este usuario', 403);
+      }
+
+      let actorVentanaId = actor.ventanaId;
+      if (!actorVentanaId) {
+        const actorDb = await prisma.user.findUnique({
+          where: { id: actor.id },
+          select: { ventanaId: true },
+        });
+        actorVentanaId = actorDb?.ventanaId;
+      }
+
+      if (!actorVentanaId || targetUser.ventanaId !== actorVentanaId) {
+        throw new AppError('No tiene permisos para ver las sesiones de este usuario', 403);
+      }
+
+      return targetUser;
+    }
+
+    // Cualquier otro rol (p. ej. VENDEDOR intentando acceder a otro usuario)
+    throw new AppError('No tiene permisos para ver las sesiones de este usuario', 403);
+  },
+
+  /**
+   * Revoca una sesión específica aplicando validación jerárquica
+   */
+  async revokeSession(
+    actorOrUserId: { id: string; role?: Role; ventanaId?: string | null; bancaId?: string | null } | string,
+    sessionId: string,
+    legacyIsAdmin: boolean = false
+  ): Promise<void> {
+    const actor = typeof actorOrUserId === 'string'
+      ? { id: actorOrUserId, role: legacyIsAdmin ? Role.ADMIN : undefined }
+      : actorOrUserId;
+
     // Buscar el token
     const token = await prisma.refreshToken.findUnique({
       where: { id: sessionId },
-      include: {
-        user: { select: { bancaId: true } }
-      }
+      select: {
+        id: true,
+        userId: true,
+        revoked: true,
+      },
     });
 
     if (!token) {
       throw new AppError('Session not found', 404);
     }
 
-    // Obtener actor para RBAC
-    const actor = await prisma.user.findUnique({
-      where: { id: requestingUserId },
-      select: { role: true, bancaId: true },
-    });
-    
-    const isBancaSameTenant =
-      actor?.role === Role.BANCA &&
-      actor.bancaId !== null &&
-      actor.bancaId === token.user?.bancaId;
-
-    // Verificar permisos: dueño, admin, o banca del mismo tenant
-    if (!isAdmin && !isBancaSameTenant && token.userId !== requestingUserId) {
-      throw new AppError('No tiene permisos para revocar esta sesión', 403);
-    }
+    // Validar jerarquía de permisos sobre el dueño de la sesión
+    await this.assertCanManageUserSessions(actor, token.userId);
 
     if (token.revoked) {
       throw new AppError('Session already revoked', 400);
     }
+
+    const isSelf = actor.id === token.userId;
+    const revokedReason = isSelf
+      ? 'revoked_by_user'
+      : actor.role === Role.ADMIN
+        ? 'revoked_by_admin'
+        : actor.role === Role.BANCA
+          ? 'revoked_by_banca'
+          : 'revoked_by_ventana';
 
     await prisma.refreshToken.update({
       where: { id: sessionId },
       data: {
         revoked: true,
         revokedAt: new Date(),
-        revokedReason: isAdmin ? 'revoked_by_admin' : 'revoked_by_user',
+        revokedReason,
       },
     });
 
@@ -716,8 +839,8 @@ export const AuthService = {
     logger.info({
       layer: 'service',
       action: 'REVOKE_SESSION',
-      userId: requestingUserId,
-      payload: { sessionId, targetUserId: token.userId, isAdmin },
+      userId: actor.id,
+      payload: { sessionId, targetUserId: token.userId, revokedReason, actorRole: actor.role },
     });
   },
 

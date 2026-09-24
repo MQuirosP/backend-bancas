@@ -5,6 +5,7 @@ import { authRateLimiter } from '../../../middlewares/rateLimit.middleware';
 import { registerSchema, loginSchema, setActiveBancaSchema, syncSessionSchema } from '../validators/auth.validator';
 import { updateUserSchema } from '../validators/user.validator';
 import { protect, restrictTo } from '../../../middlewares/auth.middleware';
+import { bancaContextMiddleware } from '../../../middlewares/bancaContext.middleware';
 import { Role } from '../../../generated/prisma/client';
 
 const router = Router();
@@ -21,8 +22,9 @@ router.post('/set-active-banca', protect, restrictTo(Role.ADMIN, Role.BANCA), va
 router.post('/session/sync', protect, validateBody(syncSessionSchema), AuthController.syncSession);
 
 // Endpoints de sesiones (multi-dispositivo)
-router.get('/sessions/user/:userId', protect, AuthController.getUserSessions);
-router.delete('/sessions/:sessionId', protect, AuthController.revokeSession);
+router.get('/sessions', protect, bancaContextMiddleware, AuthController.getUserSessions);
+router.get('/sessions/user/:userId', protect, bancaContextMiddleware, AuthController.getUserSessions);
+router.delete('/sessions/:sessionId', protect, bancaContextMiddleware, AuthController.revokeSession);
 router.post('/logout/all', protect, AuthController.logoutAll);
 
 export default router;

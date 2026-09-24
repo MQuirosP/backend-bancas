@@ -403,30 +403,17 @@ export const AuthController = {
 
   /**
    * GET /auth/sessions/user/:userId
-   * Lista las sesiones activas de un usuario específico (para ADMIN)
+   * Lista las sesiones activas de un usuario específico según jerarquía RBAC
    */
   async getUserSessions(req: Request, res: Response) {
     const actor = (req as any).user;
-    const { userId } = req.params;
+    const userId = req.params.userId || actor?.id;
 
-    if (!actor) {
+    if (!actor || !userId) {
       throw new AppError('Unauthorized', 401);
     }
 
-    // Solo ADMIN puede ver sesiones de otros usuarios
-    if (actor.role !== Role.ADMIN && actor.id !== userId) {
-      throw new AppError('No tiene permisos para ver las sesiones de este usuario', 403);
-    }
-
-    // Verificar que el usuario existe
-    const targetUser = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, username: true },
-    });
-
-    if (!targetUser) {
-      throw new AppError('Usuario no encontrado', 404);
-    }
+    await AuthService.assertCanManageUserSessions(actor, userId);
 
     const sessions = await AuthService.getUserSessions(userId);
 
@@ -435,7 +422,7 @@ export const AuthController = {
 
   /**
    * DELETE /auth/sessions/:sessionId
-   * Revoca una sesión específica
+   * Revoca una sesión específica según jerarquía RBAC
    */
   async revokeSession(req: Request, res: Response) {
     const actor = (req as any).user;
@@ -445,8 +432,7 @@ export const AuthController = {
       throw new AppError('Unauthorized', 401);
     }
 
-    const isAdmin = actor.role === Role.ADMIN;
-    await AuthService.revokeSession(actor.id, sessionId, isAdmin);
+    await AuthService.revokeSession(actor, sessionId);
 
     return success(res, { message: 'Session revoked' });
   },
