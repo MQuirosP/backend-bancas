@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.22",
-  "versionCode": 28,
-  "buildNumber": 28,
+  "versionName": "1.0.23",
+  "versionCode": 29,
+  "buildNumber": 29,
   "minSupportedVersion": "1.0.15",
   "forceUpdate": true,
-  "changelog": "Mejoras en el mensaje para compartir tickets via WhatsApp.",
-  "releasedAt": "2026-09-20T18:00:00Z",
+  "changelog": "Sincronización de estado en comunicación bidireccional.",
+  "releasedAt": "2026-09-23T21:30:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "86856646d7c433d34609b01ea510a77493df14b5431c01919d92bd7815435c1d"
+      "sha256": "460954ec42556e11eba6ea845a3e0c951eebbb1f02ce072a26a05f7202a8d5c0"
     },
     "arm64-v8a": {
-      "sha256": "86856646d7c433d34609b01ea510a77493df14b5431c01919d92bd7815435c1d"
+      "sha256": "460954ec42556e11eba6ea845a3e0c951eebbb1f02ce072a26a05f7202a8d5c0"
     }
   }
 }
