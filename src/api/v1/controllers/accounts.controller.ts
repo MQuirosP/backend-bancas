@@ -374,9 +374,13 @@ export const AccountsController = {
     }
 
     // Validar relaciones según rol
-    let effectiveVentanaId = ventanaId;
-    let effectiveVendedorId = vendedorId;
-    let effectiveBancaId = bancaId; //  NUEVO: bancaId efectivo
+    const cleanVentanaId = (typeof ventanaId === 'string' && ventanaId.trim() && ventanaId !== '__NONE__') ? ventanaId.trim() : undefined;
+    const cleanVendedorId = (typeof vendedorId === 'string' && vendedorId.trim() && vendedorId !== '__NONE__') ? vendedorId.trim() : undefined;
+    const cleanBancaId = (typeof bancaId === 'string' && bancaId.trim() && bancaId !== '__NONE__') ? bancaId.trim() : undefined;
+
+    let effectiveVentanaId = cleanVentanaId;
+    let effectiveVendedorId = cleanVendedorId;
+    let effectiveBancaId = cleanBancaId; //  NUEVO: bancaId efectivo
 
     if (user.role === Role.VENTANA) {
       // Obtener ventanaId del usuario si no está en el token
@@ -385,7 +389,7 @@ export const AccountsController = {
           where: { id: user.id },
           select: { ventanaId: true },
         });
-        effectiveVentanaId = userWithVentana?.ventanaId || null;
+        effectiveVentanaId = userWithVentana?.ventanaId || undefined;
       } else {
         effectiveVentanaId = user.ventanaId;
       }

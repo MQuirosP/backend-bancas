@@ -9,5 +9,5 @@
     "test-worker-error.ts",
     "prisma/seed.ts"
   ],
-  "exec": "npx dotenv-cli -e .env.local -- ts-node src/index.ts"
+  "exec": "npx dotenv-cli -e .env.local -- ts-node --transpile-only src/index.ts"
 }
