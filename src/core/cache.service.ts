@@ -317,20 +317,30 @@ export class CacheService {
         const redis = getRedisClient();
         if (!redis) return;
 
+        const CHUNK_SIZE = Number(process.env.CACHE_SET_BATCH_CHUNK_SIZE) || 50;
+
         try {
-            const pipeline = redis.pipeline();
-            for (const entry of entries) {
-                const ttl = entry.ttlSeconds ?? config.redis.ttlCutoff;
-                pipeline.setex(entry.key, ttl, JSON.stringify(entry.value));
-                if (entry.tags && entry.tags.length > 0) {
-                    for (const tag of entry.tags) {
-                        const tagKey = `tag:${tag}`;
-                        pipeline.sadd(tagKey, entry.key);
-                        pipeline.expire(tagKey, 86400);
+            for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+                if (i > 0) {
+                    await new Promise((resolve) => setImmediate(resolve));
+                }
+                const chunk = entries.slice(i, i + CHUNK_SIZE);
+                const pipeline = redis.pipeline();
+
+                for (const entry of chunk) {
+                    const ttl = entry.ttlSeconds ?? config.redis.ttlCutoff;
+                    pipeline.setex(entry.key, ttl, JSON.stringify(entry.value));
+                    if (entry.tags && entry.tags.length > 0) {
+                        for (const tag of entry.tags) {
+                            const tagKey = `tag:${tag}`;
+                            pipeline.sadd(tagKey, entry.key);
+                            pipeline.expire(tagKey, 86400);
+                        }
                     }
                 }
+
+                await pipeline.exec();
             }
-            await pipeline.exec();
         } catch (error: any) {
             logger.warn({ layer: 'cache', action: 'SET_BATCH_ERROR', payload: { error: error?.message } });
         }

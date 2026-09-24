@@ -36,6 +36,9 @@ export const EnvSchema = z.object({
   TX_MAX_RETRIES: z.coerce.number().int().min(0).default(3),
   TX_BACKOFF_MIN_MS: z.coerce.number().int().min(0).default(200),
   TX_BACKOFF_MAX_MS: z.coerce.number().int().min(0).default(600),
+  TX_MAX_WAIT_MS: z.coerce.number().int().min(100).default(10000),
+  TX_TIMEOUT_MS: z.coerce.number().int().min(100).default(20000),
+  SLOW_TICKET_MS: z.coerce.number().int().min(1).default(500),
 
   // TRUST PROXY
   TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(1),

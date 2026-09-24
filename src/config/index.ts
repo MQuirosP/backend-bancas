@@ -42,8 +42,11 @@ export const config = {
     maxRetries: Number(parsed.data.TX_MAX_RETRIES),
     backoffMinMs: Number(parsed.data.TX_BACKOFF_MIN_MS),
     backoffMaxMs: Number(parsed.data.TX_BACKOFF_MAX_MS),
+    maxWaitMs: Number(parsed.data.TX_MAX_WAIT_MS),
+    timeoutMs: Number(parsed.data.TX_TIMEOUT_MS),
     isolationLevel: 'Serializable' as const,
   },
+  slowTicketMs: Number(parsed.data.SLOW_TICKET_MS),
   trustProxy: parsed.data.TRUST_PROXY ?? 1, // Por defecto: 1 proxy (Render, Heroku, etc.)
   
   // Redis configuration

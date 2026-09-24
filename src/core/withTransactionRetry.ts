@@ -8,6 +8,12 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+export type TxRetryMetrics = {
+  poolWaitMs: number;
+  txMs: number;
+  attempts: number;
+};
+
 export type TxRetryOptions = {
   /** Cliente Prisma sobre el que ejecutar la transacción (por defecto: prisma general) */
   client?: PrismaClient;
@@ -23,6 +29,8 @@ export type TxRetryOptions = {
   backoffMinMs?: number;
   /** Backoff máximo entre reintentos (por defecto: config.tx.backoffMaxMs) */
   backoffMaxMs?: number;
+  /** Callback opcional para telemetría de tiempos y reintentos */
+  onMetrics?: (metrics: TxRetryMetrics) => void;
 };
 
 /**
@@ -64,27 +72,71 @@ export async function withTransactionRetry<T>(
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
   opts: TxRetryOptions = {}
 ): Promise<T> {
+  const defaultMaxWait = Number(process.env.TX_MAX_WAIT_MS) || config.tx?.maxWaitMs || 10_000;
+  const defaultTimeout = Number(process.env.TX_TIMEOUT_MS) || config.tx?.timeoutMs || 20_000;
+
   const {
     isolationLevel = (config.tx.isolationLevel as Prisma.TransactionIsolationLevel) ??
       Prisma.TransactionIsolationLevel.ReadCommitted,
     maxRetries = config.tx.maxRetries ?? 3,
-    maxWaitMs = (config as any).tx?.maxWaitMs ?? 10_000,
-    timeoutMs = (config as any).tx?.timeoutMs ?? 20_000,
+    maxWaitMs = opts.maxWaitMs ?? defaultMaxWait,
+    timeoutMs = opts.timeoutMs ?? defaultTimeout,
     backoffMinMs = config.tx.backoffMinMs ?? 150,
     backoffMaxMs = config.tx.backoffMaxMs ?? 2_000,
   } = opts;
 
+  let attempts = 0;
+  let firstTxCallTime: number | null = null;
+  let firstCallbackTime: number | null = null;
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    attempts = attempt;
     try {
       // Hardening: Ejecutar a través del Circuit Breaker de Prisma
       const targetClient = opts.client || prisma;
-      return await ResilienceService.runPrisma(async () => {
-        return await targetClient.$transaction(fn, {
-          isolationLevel,
-          maxWait: maxWaitMs,
-          timeout: timeoutMs,
-        });
+      if (firstTxCallTime === null) {
+        firstTxCallTime = performance.now();
+      }
+
+      const result = await ResilienceService.runPrisma(async () => {
+        return await targetClient.$transaction(
+          async (tx) => {
+            if (firstCallbackTime === null) {
+              firstCallbackTime = performance.now();
+            }
+            return await fn(tx);
+          },
+          {
+            isolationLevel,
+            maxWait: maxWaitMs,
+            timeout: timeoutMs,
+          }
+        );
       });
+
+      const txEndTime = performance.now();
+      if (opts.onMetrics) {
+        try {
+          const poolWaitMs =
+            firstCallbackTime !== null && firstTxCallTime !== null
+              ? Math.max(0, firstCallbackTime - firstTxCallTime)
+              : 0;
+          const txMs =
+            firstCallbackTime !== null
+              ? Math.max(0, txEndTime - firstCallbackTime)
+              : Math.max(0, txEndTime - (firstTxCallTime ?? txEndTime));
+
+          opts.onMetrics({
+            poolWaitMs: Math.round(poolWaitMs * 100) / 100,
+            txMs: Math.round(txMs * 100) / 100,
+            attempts,
+          });
+        } catch {
+          // La telemetría nunca debe lanzar excepciones ni alterar el flujo
+        }
+      }
+
+      return result;
     } catch (error: any) {
       const msg = String(error?.message ?? "");
       const code = error?.code as string | undefined;

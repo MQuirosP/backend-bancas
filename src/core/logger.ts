@@ -66,12 +66,30 @@ function logBase(level: "info" | "warn" | "error" | "debug", data: LogPayload) {
   }
 }
 
+function normalizeLogArgs(
+  arg1: string | LogPayload,
+  arg2?: unknown
+): LogPayload {
+  if (typeof arg1 === "string") {
+    return {
+      layer: "service",
+      action: arg1,
+      payload: arg2,
+    };
+  }
+  return arg1;
+}
+
 export const logger = {
   raw: baseLogger, // direct access when needed
-  info: (data: LogPayload) => logBase("info", data),
-  warn: (data: LogPayload) => logBase("warn", data),
-  error: (data: LogPayload) => logBase("error", data),
-  debug: (data: LogPayload) => logBase("debug", data),
+  info: (dataOrAction: LogPayload | string, payload?: unknown) =>
+    logBase("info", normalizeLogArgs(dataOrAction, payload)),
+  warn: (dataOrAction: LogPayload | string, payload?: unknown) =>
+    logBase("warn", normalizeLogArgs(dataOrAction, payload)),
+  error: (dataOrAction: LogPayload | string, payload?: unknown) =>
+    logBase("error", normalizeLogArgs(dataOrAction, payload)),
+  debug: (dataOrAction: LogPayload | string, payload?: unknown) =>
+    logBase("debug", normalizeLogArgs(dataOrAction, payload)),
   /**
    * Create a child logger prefilled with given bindings (useful in middlewares).
    * Example: const reqLogger = logger.child({ requestId, userId })

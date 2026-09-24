@@ -3047,13 +3047,14 @@ gs."hour24" ASC
     const redis = getRedisClient();
     const lockKey = `lock:warmup:batch:${sorteoId}`;
     let lockAcquired = false;
+    const WARMUP_LOCK_TTL_MS = Number(process.env.WARMUP_LOCK_TTL_MS) || 45000;
     // const allPreLockKeys: string[] = [];
 
     if (redis) {
       try {
         // 1. Idempotencia y exclusión mutua distribuida: prevenir que 2 instancias en Render
         // procesen concurrentemente el mismo batch del sorteo.
-        const lockRes = await (redis as any).set(lockKey, "locked", "PX", 15000, "NX");
+        const lockRes = await (redis as any).set(lockKey, "locked", "PX", WARMUP_LOCK_TTL_MS, "NX");
         if (lockRes !== "OK") {
           logger.info({
             layer: "service",
@@ -3134,6 +3135,7 @@ gs."hour24" ASC
           }
 
           // ── Post-procesamiento O(n): accumulated / chronologicalIndex / resetAt ──
+          const WARMUP_CHUNK_SIZE = Number(process.env.WARMUP_CHUNK_SIZE) || 15;
           const cacheEntries: Array<{
             key: string;
             value: any;
@@ -3143,7 +3145,13 @@ gs."hour24" ASC
             l1TtlMs: number;
           }> = [];
 
-          for (const row of sqlRows) {
+          for (let i = 0; i < sqlRows.length; i++) {
+            // Ceder el event loop cooperativamente cada WARMUP_CHUNK_SIZE filas
+            if (i > 0 && i % WARMUP_CHUNK_SIZE === 0) {
+              await new Promise((resolve) => setImmediate(resolve));
+            }
+
+            const row = sqlRows[i];
             const vId = row.user_id as string;
             const initialAccumulated = Number(row.initial_accumulated) || 0;
             const resetAt = vendorResetMap.get(vId) ?? null;
@@ -3186,55 +3194,54 @@ gs."hour24" ASC
             const dayData = fullPayload?.data?.[0];
 
             if (dayData?.sorteos && Array.isArray(dayData.sorteos) && dayData.sorteos.length > 0) {
-              const events: any[] = dayData.sorteos;
-              const totalChronological = events.length;
+              const rawEvents: any[] = dayData.sorteos;
+              const totalChronological = rawEvents.length;
               let evAccumulated = initialAccumulated;
               let rApplied = false;
 
+              // Pre-calcular timestamps y flags una sola vez por evento para evitar
+              // instanciar new Date() repetidamente dentro de los comparadores de sort.
+              const decoratedEvents = rawEvents.map((event) => ({
+                event,
+                time: new Date(event.scheduledAt).getTime(),
+                isMov: typeof event.sorteoId === 'string' && event.sorteoId.startsWith('mov-'),
+              }));
+
               // 1. ORDENAR CRONOLÓGICAMENTE ASCENDENTE ANTES DE ACUMULAR
-              events.sort((a: any, b: any) => {
-                const dateA = new Date(a.scheduledAt).getTime();
-                const dateB = new Date(b.scheduledAt).getTime();
-                if (dateA !== dateB) return dateA - dateB;
-                const aIsMov = typeof a.sorteoId === 'string' && a.sorteoId.startsWith('mov-');
-                const bIsMov = typeof b.sorteoId === 'string' && b.sorteoId.startsWith('mov-');
-                if (aIsMov !== bIsMov) return aIsMov ? -1 : 1;
+              decoratedEvents.sort((a, b) => {
+                if (a.time !== b.time) return a.time - b.time;
+                if (a.isMov !== b.isMov) return a.isMov ? -1 : 1;
                 return 0;
               });
 
               // 2. CALCULAR EL ACUMULADO Y CHRONOLOGICAL INDEX EN ORDEN REAL
-              for (let i = 0; i < events.length; i++) {
-                const event = events[i];
+              for (let j = 0; j < decoratedEvents.length; j++) {
+                const item = decoratedEvents[j];
 
                 if (resetAt && !rApplied && resetAt.getTime() >= todayRange.fromAt.getTime()) {
-                  const eventTime = new Date(event.scheduledAt).getTime();
-                  if (eventTime >= resetAt.getTime()) {
+                  if (item.time >= resetAt.getTime()) {
                     evAccumulated = 0;
                     rApplied = true;
                   }
                 }
 
-                evAccumulated += Number(event.subtotal) || 0;
-                events[i] = {
-                  ...event,
+                evAccumulated += Number(item.event.subtotal) || 0;
+                item.event = {
+                  ...item.event,
                   accumulated: evAccumulated,
-                  chronologicalIndex: i + 1,
+                  chronologicalIndex: j + 1,
                   totalChronological,
                 };
               }
 
               // 3. REORDENAR DESCENDENTE PARA LA VISTA DE LA APK (MÁS RECIENTE ARRIBA)
-              events.sort((a: any, b: any) => {
-                const dateA = new Date(a.scheduledAt).getTime();
-                const dateB = new Date(b.scheduledAt).getTime();
-                if (dateA !== dateB) return dateB - dateA;
-                const aIsMov = typeof a.sorteoId === 'string' && a.sorteoId.startsWith('mov-');
-                const bIsMov = typeof b.sorteoId === 'string' && b.sorteoId.startsWith('mov-');
-                if (aIsMov !== bIsMov) return aIsMov ? 1 : -1;
+              decoratedEvents.sort((a, b) => {
+                if (a.time !== b.time) return b.time - a.time;
+                if (a.isMov !== b.isMov) return a.isMov ? 1 : -1;
                 return 0;
               });
 
-              dayData.sorteos = events;
+              dayData.sorteos = decoratedEvents.map((item) => item.event);
               fullPayload = { ...fullPayload, data: [dayData] };
             }
 

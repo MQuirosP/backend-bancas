@@ -13,6 +13,7 @@ import { restrictionCacheV2 } from '../utils/restrictionCacheV2'
 import { activeOperationsService } from '../core/activeOperations.service'
 import { warmupConnection } from '../core/connectionWarmup'
 import { SocketService } from '../core/socket.service'
+import { resourceMonitorService } from '../core/resourceMonitor.service'
 
 const server = http.createServer(app)
 
@@ -35,6 +36,9 @@ server.listen(config.port, 511, async () => {
 
   // Esperar conexión a DB antes de iniciar jobs y caches que la requieren
   await warmupConnection({ context: 'server.startup', maxAttempts: 5, baseDelayMs: 2000 });
+
+  // Iniciar monitor de event loop y pools
+  resourceMonitorService.start();
 
   //  OPTIMIZACIÓN: Inicializar Redis (opcional, no bloquea el servidor)
   try {
@@ -144,6 +148,7 @@ const gracefulShutdown = async (signal: string) => {
   try { stopAccountStatementSettlementJob(); } catch (e) {}
   try { stopMonthlyClosingJob(); } catch (e) {}
   try { restrictionCacheV2.stopWarmingProcess(); } catch (e) {}
+  try { resourceMonitorService.stop(); } catch (e) {}
   try { await SocketService.close(); } catch (e) {}
   try { closeRedisClient(); } catch (e) {}
 

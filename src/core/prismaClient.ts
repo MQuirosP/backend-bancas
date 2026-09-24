@@ -45,8 +45,8 @@ if (!global.__salesPool) {
   });
 }
 
-const generalPool = global.__prismaPool;
-const salesPool = global.__salesPool;
+export const generalPool: Pool = global.__prismaPool!;
+export const salesPool: Pool = global.__salesPool!;
 
 const generalAdapter = new PrismaPg(generalPool);
 const salesAdapter = new PrismaPg(salesPool);

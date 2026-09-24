@@ -10,8 +10,10 @@ import TicketRepository from "../../repositories/ticket.repository";
 import ActivityService from "../../core/activity.service";
 import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
-import prisma, { salesPrisma } from "../../core/prismaClient";
+import prisma, { salesPrisma, salesPool, generalPool } from "../../core/prismaClient";
+import { config } from "../../config";
 import { RestrictionRuleRepository } from "../../repositories/restrictionRule.repository";
+import { TicketTimingCollector } from "./pipeline/ticket.types";
 import { commissionService } from "../../domain/commission/CommissionService";
 import { CommissionContext } from "../../domain/commission/types/CommissionContext";
 import { getExclusionWhereCondition } from "../sorteo/sorteo-listas.helpers";
@@ -179,6 +181,18 @@ export const TicketService = {
     actorRole: Role = Role.VENDEDOR,
   ) {
     try {
+      const t0 = performance.now();
+      const initialPoolStats = {
+        sales_pool_waiting: salesPool.waitingCount,
+        sales_pool_total: salesPool.totalCount,
+        sales_pool_idle: salesPool.idleCount,
+        general_pool_waiting: generalPool.waitingCount,
+      };
+      const timingCollector: TicketTimingCollector = {
+        startTime: t0,
+        initialPoolStats,
+      };
+
       const { loteriaId, sorteoId } = data;
       if (!loteriaId || !sorteoId)
         throw new AppError("Missing loteriaId/sorteoId", 400);
@@ -422,6 +436,7 @@ export const TicketService = {
             createdByRole,
             scheduledAt: sorteo.scheduledAt,
             idempotencyKey: clientIdempotencyKey,
+            timingCollector,
             preFetched: {
               vendedor: vendedorToPass,
               sorteo: sorteo,
@@ -505,6 +520,58 @@ export const TicketService = {
           payload: { warnings },
         });
         (response as any).warnings = warnings;
+      }
+
+      // 6. Instrumentación y desglose de tiempos (POST /tickets)
+      try {
+        const t_now = performance.now();
+        const t_total = Math.round((t_now - timingCollector.startTime) * 100) / 100;
+        const txEndTime = timingCollector.tx_end_time ?? t_now;
+        const t_post = Math.round(Math.max(0, t_now - txEndTime) * 100) / 100;
+        const t_prefetch = timingCollector.t_prefetch ?? 0;
+        const t_pool_wait = timingCollector.t_pool_wait ?? 0;
+        const t_tx = timingCollector.t_tx ?? 0;
+        const tx_attempts = timingCollector.tx_attempts ?? 1;
+
+        const slowThreshold = config.slowTicketMs || 500;
+
+        // Registro info con solo t_total por request para cálculo de percentiles
+        logger.info({
+          layer: "service",
+          action: "ticket_request_timing",
+          userId,
+          requestId,
+          payload: {
+            ticketId: ticket.id,
+            t_total,
+          },
+        });
+
+        // Advertencia detallada si supera el umbral SLOW_TICKET_MS
+        if (t_total > slowThreshold) {
+          logger.warn({
+            layer: "service",
+            action: "slow_ticket_breakdown",
+            userId,
+            requestId,
+            payload: {
+              ticketId: ticket.id,
+              ticketNumber: ticket.ticketNumber,
+              t_total,
+              t_prefetch,
+              t_pool_wait,
+              t_tx,
+              t_post,
+              tx_attempts,
+              sales_pool_waiting: timingCollector.initialPoolStats.sales_pool_waiting,
+              sales_pool_total: timingCollector.initialPoolStats.sales_pool_total,
+              sales_pool_idle: timingCollector.initialPoolStats.sales_pool_idle,
+              general_pool_waiting: timingCollector.initialPoolStats.general_pool_waiting,
+            },
+          });
+        }
+      } catch {
+        // La instrumentación nunca debe lanzar excepciones ni alterar el flujo
       }
 
       return response;

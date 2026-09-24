@@ -30,6 +30,21 @@ export type TicketWarning = {
   message: string;
 };
 
+export type TicketTimingCollector = {
+  startTime: number;
+  initialPoolStats: {
+    sales_pool_waiting: number;
+    sales_pool_total: number;
+    sales_pool_idle: number;
+    general_pool_waiting: number;
+  };
+  t_prefetch?: number;
+  t_pool_wait?: number;
+  t_tx?: number;
+  tx_attempts?: number;
+  tx_end_time?: number;
+};
+
 export type CreateTicketOptions = {
   actorRole?: Role;
   commissionContext?: CommissionContext;
@@ -37,6 +52,7 @@ export type CreateTicketOptions = {
   createdBy?: string;
   createdByRole?: Role;
   idempotencyKey?: string;
+  timingCollector?: TicketTimingCollector;
   preFetched?: {
     vendedor?: any;
     sorteo?: any;

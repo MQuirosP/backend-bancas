@@ -21,6 +21,7 @@
 import SorteosAutoService from '../domain/sorteo/sorteosAuto.service';
 import logger from '../core/logger';
 import { warmupConnection } from '../core/connectionWarmup';
+import { getRedisClient } from '../core/redisClient';
 
 // Timers separados para timeout inicial y interval recurrente
 let openInitialTimer: NodeJS.Timeout | null = null;
@@ -29,6 +30,67 @@ let createInitialTimer: NodeJS.Timeout | null = null;
 let createRecurringTimer: NodeJS.Timeout | null = null;
 let closeInitialTimer: NodeJS.Timeout | null = null;
 let closeRecurringTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Adquiere un lock distribuido en Redis para un job cron automático.
+ * Previene ejecuciones duplicadas cuando hay múltiples réplicas (Render autoscaling).
+ * Utiliza una clave vinculada a la ventana temporal (hora UTC) para evitar que dos réplicas
+ * con desfases en setTimeout se disparen consecutivamente.
+ */
+async function acquireJobLock(
+  jobName: string,
+  ttlMs: number = 30 * 60 * 1000 // 30 minutos por defecto
+): Promise<{ acquired: boolean; release: () => Promise<void> }> {
+  const redis = getRedisClient();
+  if (!redis) {
+    // Si Redis no está disponible, continuar para no detener la operación
+    return { acquired: true, release: async () => {} };
+  }
+
+  // Clave que identifica el job y su ventana temporal de hora UTC ('YYYY-MM-DDTHH')
+  const timeWindow = new Date().toISOString().slice(0, 13);
+  const lockKey = `lock:cron:sorteosAuto:${jobName}:${timeWindow}`;
+  const instanceId = process.env.RENDER_INSTANCE_ID || `pid-${process.pid}`;
+
+  try {
+    const lockRes = await (redis as any).set(lockKey, instanceId, 'PX', ttlMs, 'NX');
+    if (lockRes !== 'OK') {
+      logger.info({
+        layer: 'job',
+        action: `SORTEOS_${jobName.toUpperCase()}_LOCK_SKIPPED`,
+        payload: {
+          jobName,
+          lockKey,
+          message: `Ejecución omitida: el job ${jobName} ya fue adquirido o ejecutado por otra réplica en la ventana ${timeWindow}.`,
+        },
+      });
+      return { acquired: false, release: async () => {} };
+    }
+
+    return {
+      acquired: true,
+      release: async () => {
+        try {
+          await redis.del(lockKey);
+        } catch (delErr: any) {
+          logger.warn({
+            layer: 'job',
+            action: `SORTEOS_${jobName.toUpperCase()}_LOCK_RELEASE_WARN`,
+            payload: { lockKey, error: delErr?.message },
+          });
+        }
+      },
+    };
+  } catch (err: any) {
+    logger.warn({
+      layer: 'job',
+      action: `SORTEOS_${jobName.toUpperCase()}_LOCK_CHECK_WARN`,
+      payload: { jobName, error: err?.message },
+    });
+    // Fail-open para no paralizar el negocio si Redis tiene problemas transitorios
+    return { acquired: true, release: async () => {} };
+  }
+}
 
 /**
  * Calcula milisegundos hasta la próxima hora específica en UTC
@@ -51,7 +113,16 @@ function getMillisecondsUntilNextRun(hour: number, minute: number): number {
 /**
  * Ejecuta la apertura automática de sorteos
  */
-async function executeAutoOpen(): Promise<void> {
+async function executeAutoOpen(isManual: boolean = false): Promise<void> {
+  let releaseLock: (() => Promise<void>) | null = null;
+  if (!isManual) {
+    const lockResult = await acquireJobLock('autoOpen');
+    if (!lockResult.acquired) {
+      return;
+    }
+    releaseLock = lockResult.release;
+  }
+
   try {
     logger.info({
       layer: 'job',
@@ -62,6 +133,7 @@ async function executeAutoOpen(): Promise<void> {
     // Warmup de conexión antes de ejecutar (🔥 F3.1: Usa Pooler puerto 6543)
     const isReady = await warmupConnection({ useDirect: false, context: 'autoOpen' });
     if (!isReady) {
+      if (releaseLock) await releaseLock();
       logger.error({
         layer: 'job',
         action: 'SORTEOS_AUTO_OPEN_SKIP',
@@ -72,7 +144,7 @@ async function executeAutoOpen(): Promise<void> {
 
     //  Pasar null para jobs cron (sin usuario autenticado)
     // La actividad se registrará con userId: null
-    const result = await SorteosAutoService.executeAutoOpen(null as any);
+    const result = await SorteosAutoService.executeAutoOpen(null as any, isManual);
 
     logger.info({
       layer: 'job',
@@ -109,7 +181,16 @@ async function executeAutoOpen(): Promise<void> {
 /**
  * Ejecuta la creación automática de sorteos
  */
-async function executeAutoCreate(): Promise<void> {
+async function executeAutoCreate(daysAhead: number = 1, isManual: boolean = false): Promise<void> {
+  let releaseLock: (() => Promise<void>) | null = null;
+  if (!isManual) {
+    const lockResult = await acquireJobLock('autoCreate');
+    if (!lockResult.acquired) {
+      return;
+    }
+    releaseLock = lockResult.release;
+  }
+
   try {
     logger.info({
       layer: 'job',
@@ -120,6 +201,7 @@ async function executeAutoCreate(): Promise<void> {
     // Warmup de conexión antes de ejecutar (🔥 F3.1: Usa Pooler puerto 6543)
     const isReady = await warmupConnection({ useDirect: false, context: 'autoCreate' });
     if (!isReady) {
+      if (releaseLock) await releaseLock();
       logger.error({
         layer: 'job',
         action: 'SORTEOS_AUTO_CREATE_SKIP',
@@ -129,7 +211,7 @@ async function executeAutoCreate(): Promise<void> {
     }
 
     //  Pasar null para jobs cron (sin usuario autenticado)
-    const result = await SorteosAutoService.executeAutoCreate(1, null as any); // 1 día por defecto (ajustado de 7)
+    const result = await SorteosAutoService.executeAutoCreate(daysAhead, null as any); // días hacia adelante
 
     logger.info({
       layer: 'job',
@@ -294,7 +376,7 @@ export async function triggerAutoOpen(): Promise<void> {
     action: 'SORTEOS_AUTO_OPEN_MANUAL_TRIGGER',
     payload: { message: 'Ejecución manual de apertura automática' },
   });
-  await executeAutoOpen();
+  await executeAutoOpen(true);
 }
 
 /**
@@ -306,13 +388,22 @@ export async function triggerAutoCreate(daysAhead: number = 7): Promise<void> {
     action: 'SORTEOS_AUTO_CREATE_MANUAL_TRIGGER',
     payload: { message: 'Ejecución manual de creación automática', daysAhead },
   });
-  await executeAutoCreate();
+  await executeAutoCreate(daysAhead, true);
 }
 
 /**
  * Ejecuta el cierre automático de sorteos sin ventas
  */
-async function executeAutoClose(): Promise<void> {
+async function executeAutoClose(isManual: boolean = false): Promise<void> {
+  let releaseLock: (() => Promise<void>) | null = null;
+  if (!isManual) {
+    const lockResult = await acquireJobLock('autoClose');
+    if (!lockResult.acquired) {
+      return;
+    }
+    releaseLock = lockResult.release;
+  }
+
   try {
     logger.info({
       layer: 'job',
@@ -323,6 +414,7 @@ async function executeAutoClose(): Promise<void> {
     // Warmup de conexión antes de ejecutar (🔥 F3.1: Usa Pooler puerto 6543)
     const isReady = await warmupConnection({ useDirect: false, context: 'autoClose' });
     if (!isReady) {
+      if (releaseLock) await releaseLock();
       logger.error({
         layer: 'job',
         action: 'SORTEOS_AUTO_CLOSE_SKIP',
@@ -444,6 +536,6 @@ export async function triggerAutoClose(): Promise<void> {
     action: 'SORTEOS_AUTO_CLOSE_MANUAL_TRIGGER',
     payload: { message: 'Ejecución manual de cierre automático' },
   });
-  await executeAutoClose();
+  await executeAutoClose(true);
 }
 

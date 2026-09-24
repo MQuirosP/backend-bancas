@@ -429,6 +429,12 @@ export const TicketRepository = {
       });
 
       // 3. [IN-TX] Transacción interactiva mínima: solo validación atómica de estado, topes e inserción
+      if (options?.timingCollector) {
+        options.timingCollector.t_prefetch = Math.round(
+          (performance.now() - options.timingCollector.startTime) * 100
+        ) / 100;
+      }
+
       const txResult = await withTransactionRetry(
         async (tx) => {
           // Race-check atómico dentro de la TX para evitar ventas sobre sorteos recién cerrados
@@ -477,11 +483,22 @@ export const TicketRepository = {
           maxRetries: 3,
           backoffMinMs: 150,
           backoffMaxMs: 2_000,
-          maxWaitMs: 10_000,
+          maxWaitMs: 5_000,
           timeoutMs: dynamicTimeout,
           client: salesPrisma,
+          onMetrics: (metrics) => {
+            if (options?.timingCollector) {
+              options.timingCollector.t_pool_wait = metrics.poolWaitMs;
+              options.timingCollector.t_tx = metrics.txMs;
+              options.timingCollector.tx_attempts = metrics.attempts;
+            }
+          },
         }
       );
+
+      if (options?.timingCollector) {
+        options.timingCollector.tx_end_time = performance.now();
+      }
 
       const ticket = TicketResponseBuilder.build(txResult, data, userId, options);
       await TicketRedisAccumulator.increment(ticket, txResult.sorteoScheduledAt, options);
