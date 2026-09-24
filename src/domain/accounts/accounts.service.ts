@@ -1,4 +1,4 @@
-﻿import { AccountsFilters, DayStatement, StatementResponse, StatementTotals, ACCOUNT_PREVIOUS_MONTH_METHOD, ACCOUNT_CARRY_OVER_NOTES } from "./accounts.types";
+import { AccountsFilters, DayStatement, StatementResponse, StatementTotals, ACCOUNT_PREVIOUS_MONTH_METHOD, ACCOUNT_CARRY_OVER_NOTES } from "./accounts.types";
 import { getMonthDateRange, toCRDateString, getStatementDateRange } from "./accounts.dates.utils";
 import { resolveDateRange } from "../../utils/dateRange";
 import { getMovementsForDay, getSorteoBreakdownBatch } from "./accounts.queries";
@@ -640,7 +640,12 @@ export const AccountsService = {
             const aggregatedMap = new Map<string, DayStatement>();
 
             for (const stmt of rawStatements) {
-                const dateKey = crDateService.postgresDateToCRString(stmt.date); // ️ CRÍTICO: Usar CR String como llave
+                const dateKey = crDateService.postgresDateToCRString(stmt.date); // ⚠️ CRÍTICO: Usar CR String como llave
+
+                const currentRemaining = Number(stmt.remainingBalance);
+                const currentAccumulated = stmt.accumulatedBalance !== null && stmt.accumulatedBalance !== undefined && stmt.accumulatedBalance !== 0
+                    ? Number(stmt.accumulatedBalance)
+                    : currentRemaining;
 
                 if (aggregatedMap.has(dateKey)) {
                     const existing = aggregatedMap.get(dateKey)!;
@@ -651,11 +656,12 @@ export const AccountsService = {
                     existing.vendedorCommission += Number(stmt.vendedorCommission);
                     existing.totalPaid += Number(stmt.totalPaid || 0);
                     existing.totalCollected += Number(stmt.totalCollected || 0);
-                    existing.totalPaymentsCollections += (Number(stmt.totalPaid || 0) - Number(stmt.totalCollected || 0)); //  CORREGIDO: totalPaid - totalCollected
+                    existing.totalPaymentsCollections += (Number(stmt.totalPaid || 0) - Number(stmt.totalCollected || 0)); // ⚠️ CORREGIDO: totalPaid - totalCollected
                     existing.balance += Number(stmt.balance);
 
                     // Aggregate remaining balances
-                    existing.remainingBalance += Number(stmt.remainingBalance);
+                    existing.remainingBalance += currentRemaining;
+                    existing.accumulatedBalance = (existing.accumulatedBalance || 0) + currentAccumulated;
                     existing.ticketCount += stmt.ticketCount;
                     if (!stmt.isSettled) existing.isSettled = false;
                 } else {
@@ -663,7 +669,7 @@ export const AccountsService = {
                     let currentPaid = Number(stmt.totalPaid || 0);
                     let currentCollected = Number(stmt.totalCollected || 0);
 
-                    //  QUIRÚRGICO: Si está liquidado, recalculamos el balance operativo usando los campos base
+                    // ⚠️ QUIRÚRGICO: Si está liquidado, recalculamos el balance operativo usando los campos base
                     // de Ventas - Premios - Comisión + Pagos Reales - Cobros Reales.
                     // Esto evita que inflaciones históricas (como el arrastre guardado en el campo 'balance')
                     // afecten los totales del reporte.
@@ -693,10 +699,11 @@ export const AccountsService = {
                         listeroCommission: Number(stmt.listeroCommission),
                         vendedorCommission: Number(stmt.vendedorCommission),
                         balance: currentBalance,
-                        remainingBalance: Number(stmt.remainingBalance),
+                        remainingBalance: currentRemaining,
+                        accumulatedBalance: currentAccumulated,
                         totalPaid: currentPaid,
                         totalCollected: currentCollected,
-                        totalPaymentsCollections: currentPaid - currentCollected, //  CORREGIDO: totalPaid - totalCollected
+                        totalPaymentsCollections: currentPaid - currentCollected, // ⚠️ CORREGIDO: totalPaid - totalCollected
                         isSettled: stmt.isSettled,
                         canEdit: false,
                         ticketCount: stmt.ticketCount,
@@ -727,7 +734,7 @@ export const AccountsService = {
                 let currentPaid = Number(stmt.totalPaid || 0);
                 let currentCollected = Number(stmt.totalCollected || 0);
 
-                //  QUIRÚRGICO: Si está liquidado, recalculamos el balance operativo usando los campos base
+                // ⚠️ QUIRÚRGICO: Si está liquidado, recalculamos el balance operativo usando los campos base
                 let currentBalance = stmt.isSettled
                     ? (Number(stmt.totalSales) - Number(stmt.totalPayouts) - Number(dimension === 'vendedor' ? stmt.vendedorCommission : stmt.listeroCommission) + currentPaid - currentCollected)
                     : Number(stmt.balance);
@@ -740,6 +747,11 @@ export const AccountsService = {
                         Number(dimension === 'vendedor' ? stmt.vendedorCommission : stmt.listeroCommission) +
                         currentPaid - currentCollected;
                 }
+
+                const currentRemaining = Number(stmt.remainingBalance);
+                const currentAccumulated = stmt.accumulatedBalance !== null && stmt.accumulatedBalance !== undefined && stmt.accumulatedBalance !== 0
+                    ? Number(stmt.accumulatedBalance)
+                    : currentRemaining;
 
                 return {
                     id: stmt.id,
@@ -760,9 +772,10 @@ export const AccountsService = {
                     vendedorCommission: Number(stmt.vendedorCommission),
                     totalPaid: currentPaid,
                     totalCollected: currentCollected,
-                    totalPaymentsCollections: currentPaid - currentCollected, //  CORREGIDO: totalPaid - totalCollected
+                    totalPaymentsCollections: currentPaid - currentCollected, // ⚠️ CORREGIDO: totalPaid - totalCollected
                     balance: currentBalance,
-                    remainingBalance: Number(stmt.remainingBalance),
+                    remainingBalance: currentRemaining,
+                    accumulatedBalance: currentAccumulated,
                     ticketCount: stmt.ticketCount,
                     isSettled: stmt.isSettled,
                     canEdit: !stmt.isSettled,
@@ -859,7 +872,7 @@ export const AccountsService = {
             if (statementsMap.has(dateStr)) {
                 const stmt = statementsMap.get(dateStr)!;
                 filledStatements.push(stmt);
-                lastKnownRemainingBalance = stmt.remainingBalance;
+                lastKnownRemainingBalance = stmt.accumulatedBalance ?? stmt.remainingBalance;
             } else {
                 // Generar día vacío (relleno)
                 // Esto asegura que el gráfico no tenga huecos
@@ -878,6 +891,7 @@ export const AccountsService = {
                     totalCollected: 0,
                     totalPaymentsCollections: 0,
                     remainingBalance: lastKnownRemainingBalance, // Arrastramos el último conocido
+                    accumulatedBalance: lastKnownRemainingBalance,
                     ticketCount: 0,
                     isSettled: false,
                     canEdit: false,
@@ -946,8 +960,8 @@ export const AccountsService = {
         const mBalance = mSales - mPayouts - mComToUse + mPaid - mCollected;
         const latestRealInMonth = monthlyStatements.find(s => s.totalSales > 0 || s.isSettled || s.totalPaid > 0 || s.totalCollected > 0 || (s.id && !s.id.startsWith('gap-')));
         const mRemainingBalance = latestRealInMonth 
-            ? Number(latestRealInMonth.remainingBalance || 0) 
-            : (monthlyStatements.length > 0 ? Number(monthlyStatements[0].remainingBalance || 0) : 0);
+            ? Number(latestRealInMonth.accumulatedBalance ?? latestRealInMonth.remainingBalance ?? 0) 
+            : (monthlyStatements.length > 0 ? Number(monthlyStatements[0].accumulatedBalance ?? monthlyStatements[0].remainingBalance ?? 0) : 0);
 
         const monthlyAccumulated: StatementTotals = {
             totalSales: parseFloat(mSales.toFixed(2)),
@@ -956,6 +970,7 @@ export const AccountsService = {
             totalPaid: parseFloat(mPaid.toFixed(2)),
             totalCollected: parseFloat(mCollected.toFixed(2)),
             totalRemainingBalance: parseFloat(mRemainingBalance.toFixed(2)),
+            accumulatedBalance: parseFloat(mRemainingBalance.toFixed(2)),
             settledDays: monthlyStatements.filter(s => s.isSettled).length,
             pendingDays: monthlyStatements.filter(s => !s.isSettled).length,
         };
@@ -971,7 +986,7 @@ export const AccountsService = {
                 totalPaid: parseFloat(pPaid.toFixed(2)),
                 totalCollected: parseFloat(pCollected.toFixed(2)),
                 totalRemainingBalance: parseFloat(pMovementBalance.toFixed(2)), // Resultado operativo neto del período
-
+                accumulatedBalance: parseFloat(pMovementBalance.toFixed(2)),
                 settledDays: periodStatements.filter(s => s.isSettled).length,
                 pendingDays: periodStatements.filter(s => !s.isSettled).length,
             },

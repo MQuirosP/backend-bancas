@@ -1,4 +1,4 @@
-﻿import { Role } from "../../generated/prisma/client";
+import { Role } from "../../generated/prisma/client";
 
 /**
  * Filtros para queries de accounts
@@ -136,6 +136,7 @@ export interface DayStatement {
     totalCollected: number;
     totalPaymentsCollections: number;
     remainingBalance: number;
+    accumulatedBalance?: number;
     isSettled: boolean;
     canEdit: boolean;
     ticketCount: number;
@@ -162,6 +163,7 @@ export interface StatementTotals {
     totalPaid: number;
     totalCollected: number;
     totalRemainingBalance: number;
+    accumulatedBalance?: number;
     settledDays: number;
     pendingDays: number;
 }
