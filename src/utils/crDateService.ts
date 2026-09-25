@@ -33,6 +33,18 @@ export function isDateInCRRange(dateStr: string, startDateCRStr: string, endDate
   return dateStr >= startDateCRStr && dateStr <= endDateCRStr;
 }
 
+export function subtractDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1, d - days, 12));
+  return tz.toDateStr(target);
+}
+
+export function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1, d + days, 12));
+  return tz.toDateStr(target);
+}
+
 export function getTodayCRString(): string {
   return tz.toDateStr();
 }
@@ -44,6 +56,8 @@ export const crDateService = {
   isDateInCRRange,
   getTodayCRString,
   getStartOfToday: () => tz.startOfDay(new Date()),
+  subtractDays,
+  addDays,
   CR_TIMEZONE_OFFSET_HOURS,
   CR_TIMEZONE_OFFSET_MS,
 };

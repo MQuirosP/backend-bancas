@@ -31,7 +31,8 @@ if (!global.__prismaPool) {
   global.__prismaPool = new Pool({
     connectionString: cleanedDbUrl,
     max: generalPoolMax,
-    connectionTimeoutMillis: 5000,
+    connectionTimeoutMillis: 3000,
+    idleTimeoutMillis: 10000,
     application_name: "bancas_backend_general",
   });
 }
@@ -40,7 +41,8 @@ if (!global.__salesPool) {
   global.__salesPool = new Pool({
     connectionString: cleanedDbUrl,
     max: salesPoolMax,
-    connectionTimeoutMillis: 5000,
+    connectionTimeoutMillis: 3000,
+    idleTimeoutMillis: 10000,
     application_name: "bancas_backend_sales",
   });
 }

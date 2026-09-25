@@ -32,7 +32,7 @@ export function initCacheSubscriber() {
 interface L1Entry { data: any; expiresAt: number; tags?: string[]; }
 const l1Cache = new Map<string, L1Entry>();
 const l1TagMap = new Map<string, Set<string>>(); // tag -> Set of keys
-const MAX_L1_SIZE = 500; // Límite de seguridad para evitar fugas de memoria
+const MAX_L1_SIZE = 200; // Límite estricto de seguridad para evitar OOM en contenedor de 512MB
 const inFlightPromises = new Map<string, Promise<any>>();
 
 // TTLs para L1: restricciones de vendedor 30s, cutoffs 60s
@@ -97,13 +97,13 @@ function evictOldestL1Entry(): void {
     if (firstKey !== undefined) deleteL1Entry(firstKey);
 }
 
-// Limpieza periódica de entradas expiradas (cada 5 minutos)
+// Limpieza periódica de entradas expiradas (cada 30 segundos)
 setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of l1Cache.entries()) {
         if (now > entry.expiresAt) deleteL1Entry(key);
     }
-}, 300_000).unref(); // unref() permite que el proceso de Node.js termine si solo queda este timer
+}, 30_000).unref(); // unref() permite que el proceso de Node.js termine si solo queda este timer
 
 /**
  * OPTIMIZACIÓN: Servicio de caché con jerarquía L1 (Memoria) -> L2 (Redis) + Graceful Degradation

@@ -1890,7 +1890,7 @@ gs."hour24" ASC
       (effectiveDate === "range" && effectiveToDate !== null && effectiveToDate < currentDayStr);
 
     const cacheTtlSeconds = isHistoricalPast ? 86400 : 300;
-    const cacheL1TtlMs = isHistoricalPast ? 3600_000 : 90_000;
+    const cacheL1TtlMs = isHistoricalPast ? 120_000 : 90_000;
 
     const tags = ['report:summary'];
     if (vendedorId) tags.push(`vendedor:${vendedorId}`);
@@ -2498,7 +2498,9 @@ gs."hour24" ASC
               } else {
                 //  Si el rango NO empieza el día 1, obtener el accumulatedBalance del día anterior
                 //  desde AccountStatement (fuente de verdad)
-                const previousDay = new Date(Date.UTC(firstYear, firstMonth - 1, firstDay - 1, 0, 0, 0, 0));
+                //  CRÍTICO: Usar fecha local Costa Rica (00:00 CR = 06:00 UTC) para evitar truncamiento por TZ
+                const previousDayStr = crDateService.subtractDays(firstEventDate, 1);
+                const previousDay = new Date(`${previousDayStr}T06:00:00.000Z`);
                 const previousDayStatement = await prisma.accountStatement.findFirst({
                   where: {
                     vendedorId,
@@ -2525,41 +2527,40 @@ gs."hour24" ASC
                   });
 
                   let baseBalance = 0;
-                  let gapStart = new Date(Date.UTC(firstYear, firstMonth - 1, 1, 0, 0, 0, 0)); // Fallback: inicio de mes
+                  let gapStartStr = `${firstYear}-${String(firstMonth).padStart(2, '0')}-01`; // Fallback: inicio de mes
 
                   if (lastStatementBeforeRange) {
                     baseBalance = Number(lastStatementBeforeRange.remainingBalance) || Number(lastStatementBeforeRange.accumulatedBalance) || 0;
                     // El gap empieza el día DESPUÉS de este último statement válido
-                    const lsDate = lastStatementBeforeRange.date;
-                    gapStart = new Date(Date.UTC(lsDate.getUTCFullYear(), lsDate.getUTCMonth(), lsDate.getUTCDate() + 1, 0, 0, 0, 0));
+                    const lsDateStr = crDateService.postgresDateToCRString(lastStatementBeforeRange.date);
+                    gapStartStr = crDateService.addDays(lsDateStr, 1);
                   } else {
                     baseBalance = Number(rangePreviousMonthBalance) || 0;
                   }
 
                   // Si hay un gap de días sin statement, calcular los movimientos faltantes matemáticamente
-                  if (!params.summaryOnly && gapStart <= previousDay) {
-                    const gapTicketsSum = await prisma.$queryRaw<any[]>(Prisma.sql`
-                SELECT SUM(t."totalAmount") - SUM(t."totalCommission") - SUM(CASE WHEN t."isWinner" THEN t."totalPayout" ELSE 0 END) as "gapBalance"
-                FROM "Ticket" t
-                JOIN "Sorteo" s ON t."sorteoId" = s.id
-                WHERE t."deletedAt" IS NULL
-                  AND t."vendedorId" = CAST(${vendedorId} AS uuid)
-                  AND s.status::text = ${SorteoStatus.EVALUATED}
-                  AND s."scheduledAt" >= CAST(${gapStart.toISOString().split('T')[0]} AS timestamp)
-                  AND s."scheduledAt" < CAST(${new Date(previousDay.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]} AS timestamp)
-              `);
+                  // REGLA 4 AGENTS.md: NUNCA escanear Ticket/Jugada interactivamente. Se usa ResumenCierreDiario (O(1)).
+                  if (!params.summaryOnly && gapStartStr <= previousDayStr) {
+                    const [gapSalesRes, gapPaymentsRes] = await Promise.all([
+                      prisma.$queryRaw<any[]>(Prisma.sql`
+                        SELECT COALESCE(SUM("totalVendida" - "comisionVendedor" - "ganado"), 0) as "gapBalance"
+                        FROM "ResumenCierreDiario"
+                        WHERE "vendedorId" = CAST(${vendedorId} AS uuid)
+                          AND "businessDate" >= ${gapStartStr}::date
+                          AND "businessDate" <= ${previousDayStr}::date
+                      `),
+                      prisma.$queryRaw<any[]>(Prisma.sql`
+                        SELECT COALESCE(SUM(CASE WHEN m.type = 'payment' THEN m.amount ELSE -m.amount END), 0) as "gapMovements"
+                        FROM "AccountPayment" m
+                        WHERE m."vendedorId" = CAST(${vendedorId} AS uuid)
+                          AND m.date >= ${gapStartStr}::date
+                          AND m.date <= ${previousDayStr}::date
+                          AND m."isReversed" = false
+                      `),
+                    ]);
 
-                    const gapPaymentsSum = await prisma.$queryRaw<any[]>(Prisma.sql`
-                SELECT SUM(CASE WHEN m.type = 'payment' THEN m.amount ELSE -m.amount END) as "gapMovements"
-                FROM "AccountPayment" m
-                WHERE m."vendedorId" = CAST(${vendedorId} AS uuid)
-                  AND m.date >= CAST(${gapStart.toISOString().split('T')[0]} AS date)
-                  AND m.date <= CAST(${previousDay.toISOString().split('T')[0]} AS date)
-                  AND m.status = 'COMPLETED'
-              `);
-
-                    const gapBalance = Number(gapTicketsSum[0]?.gapBalance) || 0;
-                    const gapMovements = Number(gapPaymentsSum[0]?.gapMovements) || 0;
+                    const gapBalance = Number(gapSalesRes[0]?.gapBalance) || 0;
+                    const gapMovements = Number(gapPaymentsRes[0]?.gapMovements) || 0;
                     initialAccumulatedForRange = baseBalance + gapBalance + gapMovements;
                   } else {
                     initialAccumulatedForRange = baseBalance;
