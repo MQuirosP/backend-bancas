@@ -58,4 +58,7 @@ export const EnvSchema = z.object({
   // POOL SEGREGATION
   SALES_POOL_MAX: z.coerce.number().int().min(1).default(8),
   GENERAL_POOL_MAX: z.coerce.number().int().min(1).default(17),
+
+  // TELEMETRIA
+  TELEMETRY_ENABLED: parseBooleanWithDefault(false),
 });

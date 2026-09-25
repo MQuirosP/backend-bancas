@@ -15,6 +15,7 @@ const createLimiter = (options: {
   message: string;
   keyGenerator?: (req: any) => string;
   useLocalOnly?: boolean; // OPTIMIZACIÓN: Permite forzar almacenamiento en memoria local
+  handler?: (req: Request, res: Response, next: NextFunction, limiterOptions: any) => void;
 }) => {
   const store = (options.useLocalOnly !== true && isRedisAvailable())
     ? new RedisStore({
@@ -33,7 +34,7 @@ const createLimiter = (options: {
     keyGenerator: options.keyGenerator,
     // CAMBIO AQUÍ: Usamos un booleano simple o deshabilitamos la validación que da problemas
     validate: { ip: false }, 
-    handler: (req, res, _next, limiterOptions) => {
+    handler: options.handler ?? ((req, res, _next, limiterOptions) => {
       logger.warn({
         layer: 'middleware',
         action: 'RATE_LIMIT_HIT',
@@ -51,7 +52,7 @@ const createLimiter = (options: {
         message: options.message,
         retryAfter: Math.ceil(limiterOptions.windowMs / 1000)
       });
-    }
+    })
   });
 };
 
@@ -96,4 +97,40 @@ export const salesRateLimiter = createLimiter({
   prefix: 'sales',
   message: 'Límite de ventas por minuto alcanzado. Por favor, espera un momento.',
   keyGenerator: (req) => (req as any).user?.id || ipKeyGenerator(req) || 'unknown'
+});
+
+/**
+ * 4. Resumen Evaluado: Máximo 60 peticiones / minuto por IP / Vendedor
+ * Umbral holgado para permitir ráfagas de navegación y refrescos manuales en la APK
+ * mientras previene que bucles infinitos saturen el Event Loop y el generalPool.
+ */
+export const evaluatedSummaryRateLimiter = createLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  prefix: 'eval-summary',
+  message: 'Demasiadas solicitudes de reporte. Espere unos segundos.',
+  useLocalOnly: true, // Memoria local para rechazo inmediato (< 0.05ms) sin roundtrip a Redis
+  keyGenerator: (req) => {
+    const userId = (req as any).user?.id;
+    return userId ? `user:${userId}` : (ipKeyGenerator(req) || req.ip || 'unknown');
+  },
+  handler: (req, res) => {
+    logger.warn({
+      layer: 'middleware',
+      action: 'RATE_LIMIT_HIT',
+      payload: {
+        ip: req.ip,
+        path: req.path,
+        userId: (req as any).user?.id,
+        type: 'eval-summary'
+      }
+    });
+
+    res.status(429).json({
+      status: 'error',
+      statusCode: 429,
+      message: 'Demasiadas solicitudes de reporte. Espere unos segundos.',
+      error: 'Demasiadas solicitudes de reporte. Espere unos segundos.'
+    });
+  }
 });

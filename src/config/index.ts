@@ -76,4 +76,5 @@ export const config = {
     prismaCbResetMs: parsed.data.PRISMA_CB_RESET_MS,
     redisCbResetMs: parsed.data.REDIS_CB_RESET_MS,
   },
+  telemetryEnabled: parsed.data.TELEMETRY_ENABLED,
 }

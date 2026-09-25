@@ -20,6 +20,7 @@ import {
 import { protect } from "../../../middlewares/auth.middleware";
 import { bancaContextMiddleware } from "../../../middlewares/bancaContext.middleware";
 import { requireAdmin, requireAdminOrBanca, requireAdminVentanaOrVendedor } from "../../../middlewares/roleGuards.middleware";
+import { evaluatedSummaryRateLimiter } from "../../../middlewares/rateLimit.middleware";
 import { SorteosAutoController } from "../controllers/sorteosAuto.controller";
 import { validateBody } from "../../../middlewares/validate.middleware";
 import { UpdateSorteosAutoConfigSchema } from "../validators/sorteosAuto.validator";
@@ -109,7 +110,7 @@ router.post("/:id/listas/include", requireAdminOrBanca, validateListaIdParam, va
 
 // Lecturas
 // IMPORTANTE: Las rutas literales deben ir ANTES de las rutas con parámetros
-router.get("/evaluated-summary", validateEvaluatedSummaryQuery, SorteoController.evaluatedSummary);
+router.get("/evaluated-summary", evaluatedSummaryRateLimiter, validateEvaluatedSummaryQuery, SorteoController.evaluatedSummary);
 router.get("/", validateListSorteosQuery, SorteoController.list);
 router.get("/:id", validateIdParam, SorteoController.findById);
 

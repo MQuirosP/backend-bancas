@@ -1,9 +1,14 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../../../core/types";
 import logger from "../../../core/logger";
+import { config } from "../../../config";
 
 export const TelemetryController = {
   async record(req: AuthenticatedRequest, res: Response) {
+    if (!config.telemetryEnabled) {
+      return res.status(202).json({ success: true, disabled: true });
+    }
+
     const { event, durationMs, success, metadata } = req.body;
 
     logger.info({
