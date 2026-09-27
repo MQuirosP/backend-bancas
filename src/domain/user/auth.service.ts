@@ -11,6 +11,7 @@ import ActivityService from '../../core/activity.service';
 import { ActivityType, Role, Prisma } from '../../generated/prisma/client';
 import { withConnectionRetry } from '../../core/withConnectionRetry';
 import { CacheService } from '../../core/cache.service';
+import { getRequiredApkVersion, isVersionOutdated, isNativeAndroidClient } from '../../utils/versionValidator';
 
 const ACCESS_SECRET = config.jwtAccessSecret;
 const REFRESH_SECRET = config.jwtRefreshSecret;
@@ -143,6 +144,24 @@ export const AuthService = {
         layer: 'service'
       });
       throw new AppError('Invalid credentials', 401);
+    }
+
+    // Validar versión mínima de APK obligatoria para rol VENDEDOR en cliente nativo Android
+    const isAndroid = isNativeAndroidClient(
+      { headers: { 'user-agent': context?.userAgent } },
+      data.platform
+    );
+    if (user.role === Role.VENDEDOR && isAndroid) {
+      const minRequired = getRequiredApkVersion();
+      const clientVersion = data.appVersion;
+
+      if (!clientVersion || isVersionOutdated(clientVersion, minRequired)) {
+        throw new AppError(
+          `Es obligatorio actualizar la aplicación a la versión ${minRequired} para iniciar sesión. Tu versión actual es ${clientVersion || 'desconocida'}.`,
+          426,
+          'UPGRADE_REQUIRED'
+        );
+      }
     }
 
     // Actualizar platform y appVersion si vienen en el request

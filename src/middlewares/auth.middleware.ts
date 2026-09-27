@@ -7,6 +7,7 @@ import { Role } from "../generated/prisma/client";
 import prisma from "../core/prismaClient";
 import { withConnectionRetry } from "../core/withConnectionRetry";
 import { CacheService } from "../core/cache.service";
+import { getRequiredApkVersion, isVersionOutdated, isNativeAndroidClient } from "../utils/versionValidator";
 
 /**
  * Interfaz para la sesión cacheada del usuario
@@ -150,6 +151,20 @@ export const protect = async (
     ventanaId: user.ventanaId, 
     bancaId: user.bancaId 
   };
+
+  // 4) Validar versión mínima de APK obligatoria para rol VENDEDOR en cliente nativo Android
+  if (user.role === Role.VENDEDOR && isNativeAndroidClient(req)) {
+    const minRequired = getRequiredApkVersion();
+    const headerVersion = req.headers['x-app-version'] as string | undefined;
+
+    if (!headerVersion || isVersionOutdated(headerVersion, minRequired)) {
+      throw new AppError(
+        `Versión de aplicación no soportada (${headerVersion || 'desconocida'}). Es obligatorio actualizar a la versión ${minRequired} para continuar.`,
+        426,
+        'UPGRADE_REQUIRED'
+      );
+    }
+  }
 
   // Respaldo pasivo: actualizar appVersion en background si viene el header y difiere
   const headerVersion = req.headers['x-app-version'] as string | undefined;
