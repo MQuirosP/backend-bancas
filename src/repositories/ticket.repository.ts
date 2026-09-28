@@ -463,6 +463,28 @@ export const TicketRepository = {
         }
       } catch {}
 
+      // 2.5. [PRE-TX] Pre-calcular ScopeCache y DynamicLimits FUERA de la transacción interactiva
+      const t_risk_prefetch_start = performance.now();
+      const { prefetchedCache, prefetchedDynamicLimits } =
+        await TicketRiskValidator.prefetchRiskCalculations({
+          data,
+          meta: preTxMeta,
+          userId,
+          options,
+          candidateRules: prefecthedRules,
+        });
+      if (options) {
+        if (!options.preFetched) options.preFetched = {};
+        options.preFetched.cache = prefetchedCache;
+        options.preFetched.dynamicLimits = prefetchedDynamicLimits;
+      }
+      try {
+        if (options?.timingCollector?.prefetch_breakdown) {
+          options.timingCollector.prefetch_breakdown.t_risk_prefetch =
+            Math.round((performance.now() - t_risk_prefetch_start) * 100) / 100;
+        }
+      } catch {}
+
       // 3. [IN-TX] Transacción interactiva mínima: solo validación atómica de estado, topes e inserción
       if (options?.timingCollector) {
         options.timingCollector.t_prefetch = Math.round(
@@ -486,6 +508,8 @@ export const TicketRepository = {
             userId,
             options,
             prefecthedRules,
+            prefetchedCache,
+            prefetchedDynamicLimits,
           });
 
           const commissions = TicketCommissionCalculator.calculate({

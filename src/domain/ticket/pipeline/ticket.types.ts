@@ -1,6 +1,7 @@
 import { BetType, Role } from "../../../generated/prisma/client";
 import { ReportDimension } from "../../../types/enums/report.enum";
 import { CommissionContext } from "../../commission/types/CommissionContext";
+import { ScopeCache } from "../../../repositories/helpers/ticket-restriction.helper";
 
 export type CreateTicketInput = {
   loteriaId: string;
@@ -53,6 +54,7 @@ export type TicketTimingCollector = {
     t_multipliers?: number;
     t_pre_tx_meta?: number;
     t_rules?: number;
+    t_risk_prefetch?: number;
   };
 };
 
@@ -71,6 +73,8 @@ export type CreateTicketOptions = {
     loteria?: any;
     multipliers?: any[];
     rules?: any[];
+    cache?: ScopeCache;
+    dynamicLimits?: Map<string, number>;
   };
 };
 
