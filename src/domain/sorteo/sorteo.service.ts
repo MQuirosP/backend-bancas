@@ -3146,7 +3146,7 @@ gs."hour24" ASC
             ttlSeconds: number;
             tags: string[];
             useL1: boolean;
-            l1TtlMs: number;
+            l1TtlMs?: number;
           }> = [];
 
           for (let i = 0; i < sqlRows.length; i++) {
