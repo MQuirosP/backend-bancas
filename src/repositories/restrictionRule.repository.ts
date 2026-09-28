@@ -17,7 +17,7 @@ interface L1CutoffEntry {
 const l1CutoffCache = new Map<string, L1CutoffEntry>();
 // Deduplicación en vuelo (Single-Flight) para evitar estampidas en cold-cache
 const inFlightCutoffPromises = new Map<string, Promise<EffectiveSalesCutoffDetailed>>();
-const L1_CUTOFF_TTL_MS = 120_000; // 2 minutos de TTL en memoria local
+const L1_CUTOFF_TTL_MS = 600_000; // 10 minutos de TTL en memoria local
 
 export function clearL1CutoffCache(bancaId?: string): void {
   if (!bancaId) {

@@ -237,9 +237,9 @@ class RestrictionCacheV2 {
   /**
    * Get data from cache with enhanced logic
    */
-  async get<T>(key: string): Promise<T | null> {
+  async get<T>(key: string, useL1: boolean = false, l1TtlMs: number = 600_000): Promise<T | null> {
     try {
-      const entry = await CacheService.get<CacheEntry<T>>(key);
+      const entry = await CacheService.get<CacheEntry<T>>(key, useL1, l1TtlMs);
 
       if (!entry) {
         this.metrics.misses++;
@@ -260,7 +260,7 @@ class RestrictionCacheV2 {
       const newTtl = this.calculateTTL(key, entry.hits);
       if (newTtl !== entry.ttl) {
         entry.ttl = newTtl;
-        await CacheService.set(key, entry, newTtl);
+        await CacheService.set(key, entry, newTtl, [], useL1, l1TtlMs);
       }
 
       this.metrics.hits++;
@@ -289,7 +289,9 @@ class RestrictionCacheV2 {
     key: string,
     data: T,
     customTtl?: number,
-    dependencies: string[] = []
+    dependencies: string[] = [],
+    useL1: boolean = false,
+    l1TtlMs: number = 600_000
   ): Promise<void> {
     try {
       const size = this.estimateSize(data);
@@ -306,7 +308,7 @@ class RestrictionCacheV2 {
         size,
       };
 
-      await CacheService.set(key, entry, ttl);
+      await CacheService.set(key, entry, ttl, dependencies, useL1, l1TtlMs);
 
       // Track dependencies
       for (const dep of dependencies) {
@@ -554,7 +556,7 @@ class RestrictionCacheV2 {
     userId?: string | null;
   }): Promise<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" } | null> {
     const key = this.getCutoffKey(params);
-    return this.get(key);
+    return this.get(key, true, 600_000);
   }
 
   /**
@@ -566,7 +568,7 @@ class RestrictionCacheV2 {
     dependencies: string[] = []
   ): Promise<void> {
     const key = this.getCutoffKey(params);
-    await this.set(key, value, undefined, dependencies);
+    await this.set(key, value, undefined, dependencies, true, 600_000);
   }
 
   /**

@@ -288,53 +288,22 @@ export async function resolveBaseMultiplierX(
   return await CacheService.wrap<{ valueX: number; source: string }>(
     cacheKey,
     async () => {
-      // 0) Override por usuario (directo en X) - HIGHEST PRIORITY
-      const [userOverride, ventanaOverride, bls, lmBase, lmNumero, lot] = await Promise.all([
-        tx.multiplierOverride.findFirst({
-          where: {
-            scope: OverrideScope.USER,
-            userId,
-            loteriaId,
-            multiplierType: BetType.NUMERO,
-            isActive: true,
-          },
-          select: { baseMultiplierX: true },
-        }),
-        // 0.5) Override por ventana - SECOND PRIORITY
-        tx.multiplierOverride.findFirst({
-          where: {
-            scope: OverrideScope.VENTANA,
-            ventanaId,
-            loteriaId,
-            multiplierType: BetType.NUMERO,
-            isActive: true,
-          },
-          select: { baseMultiplierX: true },
-        }),
-        // 1) Config por banca/lotería
-        tx.bancaLoteriaSetting.findUnique({
-          where: { bancaId_loteriaId: { bancaId, loteriaId } },
-          select: { baseMultiplierX: true },
-        }),
-        // 2) Multiplicador de la Lotería (tabla loteriaMultiplier) - Base
-        tx.loteriaMultiplier.findFirst({
-          where: { loteriaId, isActive: true, name: "Base" },
-          select: { valueX: true },
-        }),
-        // 2) Multiplicador de la Lotería (tabla loteriaMultiplier) - NUMERO
-        tx.loteriaMultiplier.findFirst({
-          where: { loteriaId, isActive: true, kind: BetType.NUMERO },
-          orderBy: { createdAt: "asc" },
-          select: { valueX: true, name: true },
-        }),
-        // 3) Fallback: rulesJson en Lotería
-        tx.loteria.findUnique({
-          where: { id: loteriaId },
-          select: { rulesJson: true },
-        }),
-      ]);
+      // 0) Overrides por usuario o ventana en 1 sola consulta consolidada
+      const overrides = await tx.multiplierOverride.findMany({
+        where: {
+          loteriaId,
+          multiplierType: BetType.NUMERO,
+          isActive: true,
+          OR: [
+            { scope: OverrideScope.USER, userId },
+            { scope: OverrideScope.VENTANA, ventanaId },
+          ],
+        },
+        select: { scope: true, baseMultiplierX: true },
+      });
 
-      // Evaluar resultados en orden de prioridad
+      // Evaluar USER con máxima prioridad
+      const userOverride = overrides.find((o) => o.scope === OverrideScope.USER);
       if (typeof userOverride?.baseMultiplierX === "number") {
         return {
           valueX: userOverride.baseMultiplierX,
@@ -342,12 +311,20 @@ export async function resolveBaseMultiplierX(
         };
       }
 
+      // Evaluar VENTANA con segunda prioridad
+      const ventanaOverride = overrides.find((o) => o.scope === OverrideScope.VENTANA);
       if (typeof ventanaOverride?.baseMultiplierX === "number") {
         return {
           valueX: ventanaOverride.baseMultiplierX,
           source: "multiplierOverride[scope=VENTANA]",
         };
       }
+
+      // 1) Config por banca/lotería
+      const bls = await tx.bancaLoteriaSetting.findUnique({
+        where: { bancaId_loteriaId: { bancaId, loteriaId } },
+        select: { baseMultiplierX: true },
+      });
 
       if (typeof bls?.baseMultiplierX === "number") {
         return {
@@ -356,16 +333,38 @@ export async function resolveBaseMultiplierX(
         };
       }
 
+      // 2) Multiplicadores de la Lotería (Base o NUMERO)
+      const lmCandidates = await tx.loteriaMultiplier.findMany({
+        where: {
+          loteriaId,
+          isActive: true,
+          OR: [
+            { name: "Base" },
+            { kind: BetType.NUMERO },
+          ],
+        },
+        orderBy: { createdAt: "asc" },
+        select: { valueX: true, name: true, kind: true },
+      });
+
+      const lmBase = lmCandidates.find((m) => m.name === "Base");
       if (typeof lmBase?.valueX === "number" && lmBase.valueX > 0) {
         return { valueX: lmBase.valueX, source: "loteriaMultiplier[name=Base]" };
       }
 
+      const lmNumero = lmCandidates.find((m) => m.kind === BetType.NUMERO);
       if (typeof lmNumero?.valueX === "number" && lmNumero.valueX > 0) {
         return {
           valueX: lmNumero.valueX,
           source: `loteriaMultiplier[kind=NUMERO,name=${lmNumero.name ?? ""}]`,
         };
       }
+
+      // 3) Fallback: rulesJson en Lotería
+      const lot = await tx.loteria.findUnique({
+        where: { id: loteriaId },
+        select: { rulesJson: true },
+      });
 
       const rulesX = (lot?.rulesJson as any)?.baseMultiplierX;
       if (typeof rulesX === "number" && rulesX > 0) {
@@ -383,13 +382,15 @@ export async function resolveBaseMultiplierX(
         400
       );
     },
-    86400, // 24 horas (86400 segundos)
+    3600, // 1 hora en Redis (3600 segundos)
     [
       `user-override:${userId}`,
       `ventana-override:${ventanaId}`,
       `banca-setting:${bancaId}`,
       `loteria:${loteriaId}`
-    ]
+    ],
+    true, // useL1 = true (sub-milisegundo en RAM local)
+    300_000 // 5 minutos TTL en memoria local L1
   );
 }
 

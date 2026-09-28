@@ -47,7 +47,8 @@
     "resync:sequential": "npx dotenv-cli -e .env.local -- ts-node scripts/resync-today.ts",
     "test": "npx dotenv-cli -e .env.test -- jest --runInBand --detectOpenHandles",
     "test:watch": "npx dotenv-cli -e .env.test -- jest --watch",
-    "test:coverage": "npx dotenv-cli -e .env.test -- jest --coverage"
+    "test:coverage": "npx dotenv-cli -e .env.test -- jest --coverage",
+    "audit:sessions": "npx dotenv-cli -e .env.local -- npx tsx src/scripts/audit-sessions-pool.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.5",
