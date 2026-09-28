@@ -261,8 +261,10 @@ export class SorteoEvaluationCoordinator {
     }
 
     // 6. Notificación en Tiempo Real a Clientes Conectados (WebSocket BROADCAST)
-    // Se emite INMEDIATAMENTE DESPUÉS de que el warmup confirma la inyección en L1/L2.
-    // Cuando la campana suene en las terminales, el 100% de los datos ya existe en memoria.
+    // Ceder el Event Loop cooperativamente para permitir que peticiones de I/O concurrentes (/tickets)
+    // se procesen antes de la serialización y emisión masiva a todos los sockets conectados.
+    await new Promise((resolve) => setImmediate(resolve));
+
     try {
       SocketService.notifySorteoEvaluated({
         sorteoId: id,

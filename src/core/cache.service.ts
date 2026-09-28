@@ -321,9 +321,6 @@ export class CacheService {
 
         try {
             for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
-                if (i > 0) {
-                    await new Promise((resolve) => setImmediate(resolve));
-                }
                 const chunk = entries.slice(i, i + CHUNK_SIZE);
                 const pipeline = redis.pipeline();
 

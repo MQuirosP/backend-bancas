@@ -27,6 +27,11 @@ import { getRedisClient } from "../../core/redisClient";
 import crypto from 'crypto';
 import { ConcurrencyManager, SharedWarmupPool, SingleFlight } from "../../utils/concurrency";
 import { SorteoEvaluationCoordinator } from "./sorteoEvaluation.coordinator";
+import {
+  WARMUP_CHUNK_SIZE,
+  WARMUP_CACHE_DISPATCH_SIZE,
+  WARMUP_LOCK_TTL_MS,
+} from "./warmup.constants";
 
 const FINAL_STATES: Set<SorteoStatus> = new Set([
   SorteoStatus.EVALUATED,
@@ -3048,7 +3053,6 @@ gs."hour24" ASC
     const redis = getRedisClient();
     const lockKey = `lock:warmup:batch:${sorteoId}`;
     let lockAcquired = false;
-    const WARMUP_LOCK_TTL_MS = Number(process.env.WARMUP_LOCK_TTL_MS) || 45000;
     // const allPreLockKeys: string[] = [];
 
     if (redis) {
@@ -3136,7 +3140,6 @@ gs."hour24" ASC
           }
 
           // ── Post-procesamiento O(n): accumulated / chronologicalIndex / resetAt ──
-          const WARMUP_CHUNK_SIZE = Number(process.env.WARMUP_CHUNK_SIZE) || 15;
           const cacheEntries: Array<{
             key: string;
             value: any;
@@ -3277,8 +3280,14 @@ gs."hour24" ASC
             });
           }
 
-          // Inyección masiva atómica: L1 RAM + Pipeline Upstash Redis L2
-          await CacheService.setBatch(cacheEntries);
+          // Inyección masiva controlada por lotes desde el orquestador: L1 RAM + Pipeline Redis L2
+          for (let j = 0; j < cacheEntries.length; j += WARMUP_CACHE_DISPATCH_SIZE) {
+            if (j > 0) {
+              await new Promise((resolve) => setImmediate(resolve));
+            }
+            const chunk = cacheEntries.slice(j, j + WARMUP_CACHE_DISPATCH_SIZE);
+            await CacheService.setBatch(chunk);
+          }
 
           batchSucceeded = true;
           batchTotalVendors = sqlRows.length;

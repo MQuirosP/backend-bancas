@@ -1,5 +1,6 @@
 import logger from "../../core/logger";
 import SorteoService from "./sorteo.service";
+import { WARMUP_CHUNK_SIZE, WARMUP_COOLDOWN_MS } from "./warmup.constants";
 
 export interface WarmupResult {
   totalVendors: number;
@@ -33,7 +34,8 @@ interface BancaWarmupState {
  *    sufran retrasos.
  */
 export class WarmupCoordinator {
-  private static readonly COOLDOWN_MS = 300;
+  public static readonly WARMUP_CHUNK_SIZE = WARMUP_CHUNK_SIZE;
+  private static readonly COOLDOWN_MS = WARMUP_COOLDOWN_MS;
   private static states = new Map<string, BancaWarmupState>();
 
   private static getState(bancaKey: string): BancaWarmupState {
