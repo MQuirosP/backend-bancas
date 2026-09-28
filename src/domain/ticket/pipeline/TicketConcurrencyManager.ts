@@ -34,8 +34,15 @@ export class TicketConcurrencyManager {
       // Evaluar dinámicamente si existe alguna regla activa de Monto Compartido a nivel de Ventana o Banca (appliesToVendedor = false)
       let hasSharedVentanaLimit = false;
       try {
-        const rulesCacheKey = buildRulesCacheKey({ userId, ventanaId, bancaId: targetBancaId });
-        const candidateRules = await getCachedRestrictionRules<any>(rulesCacheKey);
+        let candidateRules: any[] | null | undefined = options?.preFetched?.rules;
+        if (!candidateRules) {
+          const rulesCacheKey = buildRulesCacheKey({ userId, ventanaId, bancaId: targetBancaId });
+          candidateRules = await getCachedRestrictionRules<any>(rulesCacheKey);
+          if (candidateRules && options) {
+            if (!options.preFetched) options.preFetched = {};
+            options.preFetched.rules = candidateRules;
+          }
+        }
 
         if (Array.isArray(candidateRules) && candidateRules.length > 0) {
           hasSharedVentanaLimit = candidateRules.some((rule: any) => {

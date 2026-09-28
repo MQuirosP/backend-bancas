@@ -35,7 +35,8 @@ import { TicketResponseBuilder } from "../domain/ticket/pipeline/TicketResponseB
 export type { CreateTicketInput, CreateTicketOptions, TicketWarning };
 
 
-const RULES_CACHE_TTL_SECONDS = 120; // 2 minutos en Redis
+const RULES_CACHE_TTL_SECONDS = 300; // 5 minutos en Redis
+const RULES_L1_TTL_MS = 300_000; // 5 minutos en memoria local L1 (RAM O(1))
 
 export function buildRulesCacheKey(params: {
   userId: string;
@@ -46,11 +47,11 @@ export function buildRulesCacheKey(params: {
 }
 
 export async function getCachedRestrictionRules<T = unknown>(key: string): Promise<T[] | null> {
-  return CacheService.get<T[]>(key);
+  return CacheService.get<T[]>(key, true, RULES_L1_TTL_MS);
 }
 
 export async function setCachedRestrictionRules<T = unknown>(key: string, rules: T[]): Promise<void> {
-  await CacheService.set(key, rules, RULES_CACHE_TTL_SECONDS, ['rules']).catch(() => {});
+  await CacheService.set(key, rules, RULES_CACHE_TTL_SECONDS, ['rules'], true, RULES_L1_TTL_MS).catch(() => {});
 }
 
 /** Llamar desde el controller/repository de RestrictionRule en mutaciones (create/update/delete) */
@@ -444,11 +445,18 @@ export const TicketRepository = {
       } catch {}
 
       const t_rules_start = performance.now();
-      const prefecthedRules = await TicketRiskValidator.prefetchRules({
-        userId,
-        ventanaId: data.ventanaId,
-        bancaId: preTxMeta.bancaId,
-      });
+      const prefecthedRules =
+        options?.preFetched?.rules && options.preFetched.rules.length > 0
+          ? options.preFetched.rules
+          : await TicketRiskValidator.prefetchRules({
+              userId,
+              ventanaId: data.ventanaId,
+              bancaId: preTxMeta.bancaId,
+            });
+      if (options) {
+        if (!options.preFetched) options.preFetched = {};
+        options.preFetched.rules = prefecthedRules;
+      }
       try {
         if (options?.timingCollector?.prefetch_breakdown) {
           options.timingCollector.prefetch_breakdown.t_rules = Math.round((performance.now() - t_rules_start) * 100) / 100;

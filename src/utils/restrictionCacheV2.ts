@@ -581,7 +581,7 @@ class RestrictionCacheV2 {
     number?: string | null;
   }): Promise<any | null> {
     const key = this.getRestrictionsKey(params);
-    return this.get(key);
+    return this.get(key, true, 300_000);
   }
 
   /**
@@ -593,7 +593,7 @@ class RestrictionCacheV2 {
     dependencies: string[] = []
   ): Promise<void> {
     const key = this.getRestrictionsKey(params);
-    await this.set(key, value, undefined, dependencies);
+    await this.set(key, value, undefined, dependencies, true, 300_000);
   }
 
   /**
