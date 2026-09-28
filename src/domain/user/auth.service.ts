@@ -284,13 +284,18 @@ export const AuthService = {
           });
         }
 
-        // STEP 4: COUNT sesiones activas del pool de la banca
+        // STEP 4: COUNT sesiones activas del pool de la banca (exclusivo para VENDEDOR)
         if (banca?.vendorLimit != null) {
           const poolCount = await tx.refreshToken.count({
             where: {
               bancaId,
               revoked: false,
               expiresAt: { gt: new Date() },
+              user: {
+                role: Role.VENDEDOR,
+                isActive: true,
+                deletedAt: null,
+              },
             },
           });
 

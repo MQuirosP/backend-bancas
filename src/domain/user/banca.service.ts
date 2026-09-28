@@ -131,10 +131,10 @@ export const BancaService = {
       // Revocar SOLO sesiones de VENDEDOR de ESTA banca
       const revoked = await prisma.refreshToken.updateMany({
         where: {
+          bancaId: id,
           revoked: false,
           user: {
-            bancaId: id,         // acotado al tenant que cambió
-            role: Role.VENDEDOR, // solo VENDEDOR
+            role: Role.VENDEDOR,
           },
         },
         data: {
