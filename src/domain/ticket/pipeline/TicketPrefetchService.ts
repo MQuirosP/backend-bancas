@@ -4,14 +4,17 @@ import { AppError } from "../../../core/errors";
 import { getBusinessDateCRInfo } from "../../../utils/businessDate";
 import { resolveBaseMultiplierX } from "../../../repositories/ticket.repository";
 import { CreateTicketInput, CreateTicketOptions, TransactionMeta, PreTxMeta } from "./ticket.types";
+import { CacheService } from "../../../core/cache.service";
 
 export class TicketPrefetchService {
   /**
    * Pre-carga los multiplicadores requeridos fuera de la transacción para reducir el hold-time.
+   * Utiliza CacheService.wrap con TTL largo (24h) en Redis y L1 para evitar consultas a Postgres.
    */
   static async fetchMultipliersIfNeeded(
     jugadas: CreateTicketInput["jugadas"],
-    options?: CreateTicketOptions
+    options?: CreateTicketOptions,
+    loteriaId?: string
   ): Promise<any[]> {
     if (options?.preFetched?.multipliers) {
       return options.preFetched.multipliers;
@@ -25,21 +28,56 @@ export class TicketPrefetchService {
       )
     );
 
-    if (numeroMultiplierIds.length > 0) {
-      return await salesPrisma.loteriaMultiplier.findMany({
-        where: { id: { in: numeroMultiplierIds } },
-        select: {
-          id: true,
-          name: true,
-          valueX: true,
-          isActive: true,
-          kind: true,
-          loteriaId: true,
-        },
-      });
+    if (numeroMultiplierIds.length === 0) {
+      return [];
     }
 
-    return [];
+    // 1. Si tenemos loteriaId, consultar el catálogo completo de la lotería desde caché L1/Redis
+    if (loteriaId) {
+      const cacheKey = `multipliers:loteria:${loteriaId}`;
+      const allMultipliers = await CacheService.wrap<any[]>(
+        cacheKey,
+        () =>
+          salesPrisma.loteriaMultiplier.findMany({
+            where: { loteriaId, isActive: true },
+            select: {
+              id: true,
+              name: true,
+              valueX: true,
+              isActive: true,
+              kind: true,
+              loteriaId: true,
+            },
+          }),
+        86400, // 24 horas TTL en Redis
+        [`loteria:${loteriaId}`, `multipliers:${loteriaId}`],
+        true, // useL1: true (RAM local)
+        86400_000 // 24 horas TTL L1
+      );
+
+      if (allMultipliers && allMultipliers.length > 0) {
+        const matched = allMultipliers.filter((m) =>
+          numeroMultiplierIds.includes(m.id)
+        );
+        // Si todos los multiplicadores solicitados están en el catálogo cacheado de la lotería
+        if (matched.length === numeroMultiplierIds.length) {
+          return matched;
+        }
+      }
+    }
+
+    // 2. Fallback directo si no se pasó loteriaId o algún ID no estaba en el catálogo activo
+    return await salesPrisma.loteriaMultiplier.findMany({
+      where: { id: { in: numeroMultiplierIds } },
+      select: {
+        id: true,
+        name: true,
+        valueX: true,
+        isActive: true,
+        kind: true,
+        loteriaId: true,
+      },
+    });
   }
 
   /**

@@ -201,52 +201,33 @@ export const TicketService = {
       const clientIdempotencyKey: string | undefined =
         data.idempotencyKey ?? data.requestId;
 
-      // 1. Actor autenticado
+      // 1. Fetch paralelo inicial de entidades independientes: Actor autenticado y Sorteo
       const t_act_start = performance.now();
-      const actor = await CacheService.wrap(
-        `user:${userId}`,
-        () =>
-          withConnectionRetry(
-            () =>
-              salesPrisma.user.findUnique({
-                where: { id: userId },
-                select: {
-                  id: true,
-                  role: true,
-                  ventanaId: true,
-                  isActive: true,
-                  commissionPolicyJson: true,
-                  name: true,
-                  code: true,
-                  phone: true,
-                  settings: true,
-                },
-              }),
-            { context: "TicketService.create.actor" },
-          ),
-        3600, // 1 hour TTL
-        [`user:${userId}`],
-      );
-      try {
-        if (timingCollector.prefetch_breakdown) {
-          timingCollector.prefetch_breakdown.t_actor = Math.round((performance.now() - t_act_start) * 100) / 100;
-        }
-      } catch {}
-      if (!actor) throw new AppError("Authenticated user not found", 401);
-
-      // 2. Resolver Vendedor y Ventana
-      const t_eff_start = performance.now();
-      const { effectiveVendedorId, ventanaId, vendedorToPass } =
-        await resolveEffectiveActor(actor, data?.vendedorId);
-      try {
-        if (timingCollector.prefetch_breakdown) {
-          timingCollector.prefetch_breakdown.t_effective_actor = Math.round((performance.now() - t_eff_start) * 100) / 100;
-        }
-      } catch {}
-
-      // 3. Fetch Masivo Consolidado
-      const t_core_start = performance.now();
-      const [sorteo, ventanaWithBanca, listeroUser] = await Promise.all([
+      const [actor, sorteo] = await Promise.all([
+        CacheService.wrap(
+          `user:${userId}`,
+          () =>
+            withConnectionRetry(
+              () =>
+                salesPrisma.user.findUnique({
+                  where: { id: userId },
+                  select: {
+                    id: true,
+                    role: true,
+                    ventanaId: true,
+                    isActive: true,
+                    commissionPolicyJson: true,
+                    name: true,
+                    code: true,
+                    phone: true,
+                    settings: true,
+                  },
+                }),
+              { context: "TicketService.create.actor" },
+            ),
+          3600, // 1 hour TTL
+          [`user:${userId}`],
+        ),
         CacheService.wrap(
           `sorteo:${sorteoId}`,
           () =>
@@ -271,6 +252,28 @@ export const TicketService = {
           300, // 5 minutes TTL
           [`sorteo:${sorteoId}`],
         ),
+      ]);
+      try {
+        if (timingCollector.prefetch_breakdown) {
+          timingCollector.prefetch_breakdown.t_actor = Math.round((performance.now() - t_act_start) * 100) / 100;
+        }
+      } catch {}
+      if (!actor) throw new AppError("Authenticated user not found", 401);
+      if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
+
+      // 2. Resolver Vendedor y Ventana
+      const t_eff_start = performance.now();
+      const { effectiveVendedorId, ventanaId, vendedorToPass } =
+        await resolveEffectiveActor(actor, data?.vendedorId);
+      try {
+        if (timingCollector.prefetch_breakdown) {
+          timingCollector.prefetch_breakdown.t_effective_actor = Math.round((performance.now() - t_eff_start) * 100) / 100;
+        }
+      } catch {}
+
+      // 3. Fetch Masivo Consolidado de Ventana y Listero (dependientes de ventanaId resuelta)
+      const t_core_start = performance.now();
+      const [ventanaWithBanca, listeroUser] = await Promise.all([
         CacheService.wrap(
           `ventana:${ventanaId}`,
           () =>
@@ -321,8 +324,6 @@ export const TicketService = {
           timingCollector.prefetch_breakdown.t_core_entities = Math.round((performance.now() - t_core_start) * 100) / 100;
         }
       } catch {}
-
-      if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
       if (sorteo.scheduledAt) {
         sorteo.scheduledAt = normalizeDateCR(
           sorteo.scheduledAt,

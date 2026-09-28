@@ -418,7 +418,11 @@ export const TicketRepository = {
     try {
       // 1. [PRE-TX] Pre-cargar multiplicadores requeridos si no venían
       const t_mult_start = performance.now();
-      const preFetchedMultipliers = await TicketPrefetchService.fetchMultipliersIfNeeded(data.jugadas, options);
+      const preFetchedMultipliers = await TicketPrefetchService.fetchMultipliersIfNeeded(
+        data.jugadas,
+        options,
+        data.loteriaId
+      );
       try {
         if (options?.timingCollector?.prefetch_breakdown) {
           options.timingCollector.prefetch_breakdown.t_multipliers = Math.round((performance.now() - t_mult_start) * 100) / 100;
