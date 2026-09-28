@@ -2683,7 +2683,8 @@ export const DashboardService = {
         };
       },
       ttl,
-      ['dashboard']
+      ['dashboard'],
+      false // useL1: false — dashboards no compiten por slots L1 contra el motor transaccional
     );
   },
 
@@ -2809,7 +2810,8 @@ export const DashboardService = {
         };
       },
       ttl,
-      ['dashboard']
+      ['dashboard'],
+      false // useL1: false — dashboards no compiten por slots L1 contra el motor transaccional
     );
   },
 };

@@ -1928,11 +1928,11 @@ gs."hour24" ASC
               } else {
                 const lockRes = await (redis as any).set(inflightLockKey, "1", "PX", 2000, "NX");
                 if (lockRes !== "OK") {
-                  // Esperar hasta 1500ms sondeando la caché (el batch de Postgres o warmup puede tardar 400-800ms)
+                  // Esperar hasta 1500ms sondeando la caché en Redis L2 (useL1:false — summaries no ocupan slots L1)
                   const waitStart = Date.now();
                   while (Date.now() - waitStart < 1500) {
                     await new Promise((r) => setTimeout(r, 50));
-                    const cached = await CacheService.get<any>(cacheKey, true, cacheL1TtlMs);
+                    const cached = await CacheService.get<any>(cacheKey, false, cacheL1TtlMs);
                     if (cached !== null) {
                       logger.info({
                         layer: "service",
@@ -3012,9 +3012,9 @@ gs."hour24" ASC
         // TTL L2: 24 horas (86400s) si es ayer o rango histórico pasado; 300s si involucra hoy
         (effectiveDate === 'yesterday' || (effectiveDate === 'range' && effectiveToDate !== null && effectiveToDate < currentDayStr)) ? 86400 : 300,
         tags,
-        true,
-        // TTL L1: 1 hora (3600000ms) si es histórico; 90s si es hoy
-        (effectiveDate === 'yesterday' || (effectiveDate === 'range' && effectiveToDate !== null && effectiveToDate < currentDayStr)) ? 3600_000 : 90_000,
+        false, // useL1: false — resúmenes contables no ocupan slots de L1 (reservado para hot-path /tickets)
+        // l1TtlMs: no aplica (useL1: false)
+        undefined,
         isForceRefresh
       );
     });
@@ -3189,8 +3189,7 @@ gs."hour24" ASC
               value: summaryPayload,
               ttlSeconds: 300,
               tags: ['report:summary', `vendedor:${vId}`],
-              useL1: true,
-              l1TtlMs: 90_000,
+              useL1: false, // Solo Redis L2 — slots L1 reservados para hot-path /tickets
             });
 
             // ── B. summaryOnly=false — running sum + sort ─────────────────────
@@ -3275,8 +3274,7 @@ gs."hour24" ASC
               value: fullPayload,
               ttlSeconds: 300,
               tags: ['report:summary', `vendedor:${vId}`],
-              useL1: true,
-              l1TtlMs: 90_000,
+              useL1: false, // Solo Redis L2 — payloads ~10-15 KB no deben ocupar slots L1
             });
           }
 
