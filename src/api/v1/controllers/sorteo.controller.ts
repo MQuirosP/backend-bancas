@@ -2,6 +2,10 @@ import { Response } from "express";
 import SorteoService from "../../../domain/sorteo/sorteo.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { crDateService } from "../../../utils/crDateService";
+import { AppError } from "../../../core/errors";
+import logger from "../../../core/logger";
+import { isConnectionError } from "../../../core/withConnectionRetry";
+import { error as errorResponse } from "../../../utils/responses";
 
 export const SorteoController = {
   async create(req: AuthenticatedRequest, res: Response) {
@@ -268,25 +272,111 @@ export const SorteoController = {
     // Solo ADMIN, BANCA y VENTANA pueden usar ignoreReset (ver historial)
     const canIgnoreReset = req.user!.role !== "VENDEDOR";
 
-    const result = await SorteoService.evaluatedSummary(
-      {
-        date,
-        fromDate,
-        toDate,
-        scope: scope || 'mine',
-        loteriaId,
-        status,
-        isActive: isActiveBool,
-        // Si la petición viene de un vendedor (scope=mine), forzamos false para que SIEMPRE viaje la lista de sorteos completa
-        summaryOnly: (scope === 'mine' || !scope)
-          ? false
-          : (summaryOnly === 'true' || summaryOnly === true || summaryOnly === '1'),
-        userRole: req.user!.role,
-        ignoreReset: canIgnoreReset && ignoreReset === 'true',
-      },
-      vendedorId
-    );
-    res.json({ success: true, ...result });
+    // Respetar explícitamente summaryOnly si el cliente lo solicita como true/'true'/'1'
+    const isSummaryOnlyRequested =
+      summaryOnly === 'true' || summaryOnly === true || summaryOnly === '1';
+
+    try {
+      const result = await SorteoService.evaluatedSummary(
+        {
+          date,
+          fromDate,
+          toDate,
+          scope: scope || 'mine',
+          loteriaId,
+          status,
+          isActive: isActiveBool,
+          summaryOnly: isSummaryOnlyRequested,
+          userRole: req.user!.role,
+          ignoreReset: canIgnoreReset && ignoreReset === 'true',
+        },
+        vendedorId
+      );
+      return res.json({ success: true, ...result });
+    } catch (error: any) {
+      const isConnErr =
+        isConnectionError(error) ||
+        error?.code === 'TIMEOUT_EXCEEDED' ||
+        error?.message?.toLowerCase().includes('timeout') ||
+        error?.message?.toLowerCase().includes('connect') ||
+        error?.message?.toLowerCase().includes('pool');
+
+      if (isConnErr) {
+        logger.warn({
+          layer: 'controller',
+          action: 'EVALUATED_SUMMARY_FALLBACK_TRIGGERED',
+          payload: {
+            vendedorId,
+            error: error?.message || String(error),
+            code: error?.code,
+            summaryOnly: isSummaryOnlyRequested,
+          },
+        });
+
+        res.setHeader('Retry-After', '3');
+        res.setHeader('X-Fallback-Mode', 'true');
+
+        // Retornar estructura segura de contingencia para no romper las terminales APK
+        return res.status(200).json({
+          success: true,
+          data: [],
+          meta: {
+            totals: {
+              totalSales: 0,
+              totalCommission: 0,
+              commissionByNumber: 0,
+              commissionByReventado: 0,
+              totalPrizes: 0,
+              totalTickets: 0,
+              totalPaid: 0,
+              totalCollected: 0,
+              totalBalance: 0,
+              totalRemainingBalance: 0,
+              totalSubtotal: 0,
+            },
+            monthlyAccumulated: {
+              totalSales: 0,
+              totalCommission: 0,
+              commissionByNumber: 0,
+              commissionByReventado: 0,
+              totalPrizes: 0,
+              totalTickets: 0,
+              totalPaid: 0,
+              totalCollected: 0,
+              totalBalance: 0,
+              totalRemainingBalance: 0,
+              totalSubtotal: 0,
+            },
+            dateFilter: date || "today",
+            ...(fromDate ? { fromDate } : {}),
+            ...(toDate ? { toDate } : {}),
+            totalSorteos: 0,
+            totalDays: 0,
+            syncing: true,
+            fallback: true,
+            message: "Sincronizando balances en segundo plano. Los datos se actualizarán en breve.",
+          },
+        });
+      }
+
+      if (error instanceof AppError) {
+        return errorResponse(res, error.message, error.statusCode, error.meta);
+      }
+
+      logger.error({
+        layer: 'controller',
+        action: 'EVALUATED_SUMMARY_UNEXPECTED_ERROR',
+        meta: { error: (error as any)?.message || String(error) },
+      });
+
+      res.setHeader('Retry-After', '3');
+      return errorResponse(
+        res,
+        "Servicio temporalmente no disponible. Intente de nuevo en unos segundos.",
+        503,
+        { syncing: true }
+      );
+    }
   },
 
 };

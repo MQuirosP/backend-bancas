@@ -40,7 +40,7 @@ function nextDelayMs(
 /**
  * Verifica si un error es un error de conexión que puede ser reintentado
  */
-function isConnectionError(error: any): boolean {
+export function isConnectionError(error: any): boolean {
   const code = error?.code as string | undefined;
   const msg = String(error?.message ?? "").toLowerCase();
 

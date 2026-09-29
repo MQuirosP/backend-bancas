@@ -1905,10 +1905,23 @@ gs."hour24" ASC
 
     const isForceRefresh = Boolean(params.forceRefresh);
 
-    return SingleFlight.do(cacheKey, async () => {
-      return CacheService.wrap(
-        cacheKey,
-        async () => {
+    const MAX_EVALUATED_SUMMARY_MS = 3500;
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        const err: any = new Error("Database timeout exceeded in evaluatedSummary (3500ms)");
+        err.code = "TIMEOUT_EXCEEDED";
+        reject(err);
+      }, MAX_EVALUATED_SUMMARY_MS);
+      if (typeof timeoutHandle.unref === 'function') timeoutHandle.unref();
+    });
+
+    try {
+      return await SingleFlight.do(cacheKey, async () => {
+        return Promise.race([
+          CacheService.wrap(
+            cacheKey,
+            async () => {
           // Mutex distribuido ligero: si múltiples réplicas en Render reciben miss simultáneo,
           // una sola calcula en DB y las demás esperan el resultado en caché L1/L2.
           const redis = getRedisClient();
@@ -3016,8 +3029,13 @@ gs."hour24" ASC
         // l1TtlMs: no aplica (useL1: false)
         undefined,
         isForceRefresh
-      );
-    });
+      ),
+      timeoutPromise,
+    ]);
+  });
+} finally {
+  if (timeoutHandle) clearTimeout(timeoutHandle);
+}
   },
 
   /**
