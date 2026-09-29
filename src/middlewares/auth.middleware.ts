@@ -5,9 +5,11 @@ import { AppError } from "../core/errors";
 import { AuthenticatedRequest } from "../core/types";
 import { Role } from "../generated/prisma/client";
 import prisma from "../core/prismaClient";
-import { withConnectionRetry } from "../core/withConnectionRetry";
+import { withConnectionRetry, isConnectionError } from "../core/withConnectionRetry";
 import { CacheService } from "../core/cache.service";
 import { getRequiredApkVersion, isVersionOutdated, isNativeAndroidClient } from "../utils/versionValidator";
+import { SingleFlight } from "../utils/concurrency";
+import logger from "../core/logger";
 
 /**
  * Interfaz para la sesión cacheada del usuario
@@ -29,73 +31,81 @@ export interface UserSession {
 export async function getCachedUser(userId: string): Promise<UserSession | null> {
   const cacheKey = `auth:session:${userId}`;
   
-  // 1. Intentar obtener de L1 (Memoria) o L2 (Redis)
-  const cached = await CacheService.get<UserSession>(cacheKey, true);
+  // 1. Intentar obtener de L1 (Memoria) o L2 (Redis) con TTL L1 de 10 min
+  const cached = await CacheService.get<UserSession>(cacheKey, true, 600_000);
   if (cached) {
     // Expiración deslizante: refrescar TTL en Redis (1800s / 30m) para mantener caliente la sesión de vendedores activos
     CacheService.touch(cacheKey, 1800).catch(() => {});
     return cached;
   }
 
-  // 2. DB Lean Query: Solo los campos indispensables + Sesiones activas en paralelo
-  const [user, activeTokens] = await Promise.all([
-    withConnectionRetry(
-      () => prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          role: true,
-          isActive: true,
-          ventanaId: true,
-          bancaId: true,
-          appVersion: true,
-          ventana: {
-            select: { bancaId: true }
-          }
-        }
-      }),
-      { context: 'authMiddleware.getCachedUser', maxRetries: 2 }
-    ),
-    withConnectionRetry(
-      () => prisma.refreshToken.findMany({
-        where: {
-          userId,
-          OR: [
-            { revoked: false },
-            {
-              revoked: true,
-              revokedReason: 'rotation',
-              revokedAt: { gt: new Date(Date.now() - 60000) } // Período de gracia de 60 segundos
+  // 2. Coalescencia SingleFlight para evitar que múltiples requests concurrentes
+  // para el mismo userId consulten a la base de datos simultáneamente (Thundering Herd)
+  return await SingleFlight.do(cacheKey, async () => {
+    // Doble verificación dentro de SingleFlight por si otra promesa en vuelo ya pobló la caché
+    const doubleCheck = await CacheService.get<UserSession>(cacheKey, true, 600_000);
+    if (doubleCheck) {
+      return doubleCheck;
+    }
+
+    // DB Lean Query: Solo los campos indispensables + Sesiones activas en paralelo
+    const [user, activeTokens] = await Promise.all([
+      withConnectionRetry(
+        () => prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            id: true,
+            role: true,
+            isActive: true,
+            ventanaId: true,
+            bancaId: true,
+            appVersion: true,
+            ventana: {
+              select: { bancaId: true }
             }
-          ],
-          expiresAt: { gt: new Date() }
-        },
-        select: {
-          token: true
-        }
-      }),
-      { context: 'authMiddleware.getActiveSessions', maxRetries: 2 }
-    )
-  ]);
+          }
+        }),
+        { context: 'authMiddleware.getCachedUser', maxRetries: 1 }
+      ),
+      withConnectionRetry(
+        () => prisma.refreshToken.findMany({
+          where: {
+            userId,
+            OR: [
+              { revoked: false },
+              {
+                revoked: true,
+                revokedReason: 'rotation',
+                revokedAt: { gt: new Date(Date.now() - 60000) } // Período de gracia de 60 segundos
+              }
+            ],
+            expiresAt: { gt: new Date() }
+          },
+          select: {
+            token: true
+          }
+        }),
+        { context: 'authMiddleware.getActiveSessions', maxRetries: 1 }
+      )
+    ]);
 
-  if (!user) return null;
+    if (!user) return null;
 
-  const session: UserSession = {
-    id: user.id,
-    role: user.role,
-    isActive: user.isActive,
-    ventanaId: user.ventanaId,
-    bancaId: user.bancaId ?? user.ventana?.bancaId ?? null,
-    activeSessionIds: activeTokens.map((t) => t.token),
-    appVersion: user.appVersion ?? null
-  };
+    const session: UserSession = {
+      id: user.id,
+      role: user.role,
+      isActive: user.isActive,
+      ventanaId: user.ventanaId,
+      bancaId: user.bancaId ?? user.ventana?.bancaId ?? null,
+      activeSessionIds: activeTokens.map((t) => t.token),
+      appVersion: user.appVersion ?? null
+    };
 
-  // 3. Persistir en caché (1800s / 30 min en Redis, 60s en Memoria mediante el flag true)
-  // OPTIMIZACIÓN: Se remueven los tags para evitar comandos SADD y EXPIRE adicionales.
-  // La invalidación se realiza directamente por clave usando CacheService.del.
-  await CacheService.set(cacheKey, session, 1800, [], true);
+    // 3. Persistir en caché (1800s / 30 min en Redis, 600s / 10 min en Memoria L1)
+    await CacheService.set(cacheKey, session, 1800, [], true, 600_000);
 
-  return session;
+    return session;
+  });
 }
 
 export const protect = async (
@@ -126,8 +136,62 @@ export const protect = async (
     throw new AppError("Invalid token", 401);
   }
 
-  // 1) Obtener usuario desde caché jerárquico
-  const user = await getCachedUser(decoded.sub);
+  // 1) Obtener usuario desde caché jerárquico o DB con timeout preventivo de 1,500ms y fallback JWT
+  let user: UserSession | null = null;
+
+  try {
+    let timeoutId: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error("AUTH_TIMEOUT_EXCEEDED"));
+      }, 1500);
+    });
+
+    user = await Promise.race([
+      getCachedUser(decoded.sub),
+      timeoutPromise,
+    ]).finally(() => {
+      if (timeoutId) clearTimeout(timeoutId);
+    });
+  } catch (err: any) {
+    const isConnErr =
+      isConnectionError(err) ||
+      err?.message === "AUTH_TIMEOUT_EXCEEDED" ||
+      err?.message?.includes("timeout exceeded when trying to connect") ||
+      err?.message?.includes("connection timeout") ||
+      err?.code === "P1001" ||
+      err?.code === "P1017" ||
+      err?.code === "P2024";
+
+    if (isConnErr) {
+      logger.warn({
+        layer: 'middleware',
+        action: 'AUTH_FALLBACK_JWT_USED',
+        userId: decoded.sub,
+        payload: {
+          reason: err?.message || String(err),
+          role: decoded.role,
+          sid: decoded.sid,
+        },
+      });
+
+      // Construir sesión de contingencia a partir de los claims criptográficamente verificados del JWT
+      user = {
+        id: decoded.sub,
+        role: decoded.role,
+        isActive: true,
+        ventanaId: decoded.ventanaId ?? null,
+        bancaId: decoded.bancaId ?? null,
+        activeSessionIds: decoded.sid ? [decoded.sid] : [],
+        appVersion: null,
+      };
+
+      // Almacenar temporalmente en L1 (60s) para no golpear la DB mientras se recupera
+      CacheService.set(`auth:session:${decoded.sub}`, user, 60, [], true, 60_000).catch(() => {});
+    } else {
+      throw err;
+    }
+  }
 
   if (!user) {
     throw new AppError("User not found or session expired", 401);
@@ -169,11 +233,21 @@ export const protect = async (
   // Respaldo pasivo: actualizar appVersion en background si viene el header y difiere
   const headerVersion = req.headers['x-app-version'] as string | undefined;
   if (headerVersion && headerVersion !== user.appVersion) {
+    const updatedUser = user;
     setImmediate(() => {
       prisma.user.update({
-        where: { id: user.id },
+        where: { id: updatedUser.id },
         data: { appVersion: headerVersion },
-      }).then(() => CacheService.del(`auth:session:${user.id}`)).catch(() => {});
+      }).then(() => {
+        return CacheService.set(
+          `auth:session:${updatedUser.id}`,
+          { ...updatedUser, appVersion: headerVersion },
+          1800,
+          [],
+          true,
+          600_000
+        );
+      }).catch(() => {});
     });
   }
   

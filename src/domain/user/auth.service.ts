@@ -12,6 +12,7 @@ import { ActivityType, Role, Prisma } from '../../generated/prisma/client';
 import { withConnectionRetry } from '../../core/withConnectionRetry';
 import { CacheService } from '../../core/cache.service';
 import { getRequiredApkVersion, isVersionOutdated, isNativeAndroidClient } from '../../utils/versionValidator';
+import { UserSession } from '../../middlewares/auth.middleware';
 
 const ACCESS_SECRET = config.jwtAccessSecret;
 const REFRESH_SECRET = config.jwtRefreshSecret;
@@ -372,9 +373,22 @@ export const AuthService = {
       });
     }
 
-    // Invalida el caché de sesión de forma incondicional para asegurar que el nuevo token
-    // esté en la lista activeSessionIds en la próxima consulta
-    await CacheService.del(`auth:session:${user.id}`).catch(() => {});
+    // Pre-calentar la sesión en caché con el nuevo token para garantizar Cache Hit inmediato
+    const existingCached = await CacheService.get<UserSession>(`auth:session:${user.id}`, true, 600_000).catch(() => null);
+    const activeSessionIds = (data.deviceId && user.role !== Role.ADMIN && user.role !== Role.BANCA)
+      ? [refreshTokenRaw]
+      : Array.from(new Set([...(existingCached?.activeSessionIds ?? []), refreshTokenRaw]));
+
+    const sessionToCache: UserSession = {
+      id: user.id,
+      role: user.role,
+      isActive: user.isActive,
+      ventanaId: user.ventanaId,
+      bancaId: bancaId ?? user.bancaId ?? (user as any).ventana?.bancaId ?? null,
+      activeSessionIds,
+      appVersion: user.appVersion ?? null,
+    };
+    await CacheService.set(`auth:session:${user.id}`, sessionToCache, 1800, [], true, 600_000).catch(() => {});
 
     const accessToken = jwt.sign(
       {
@@ -575,14 +589,24 @@ export const AuthService = {
       { context: 'authRefresh.rotateToken', maxRetries: 2 }
     );
 
-    // Invalida el caché de sesión de forma defensiva tras la rotación de tokens
-    await CacheService.del(`auth:session:${user.id}`).catch((err) => {
-      logger.warn({
-        layer: 'cache',
-        action: 'INVALIDATE_ERROR_ON_REFRESH',
-        payload: { userId: user.id, error: err.message },
-      });
-    });
+    // Pre-calentar la sesión en caché con el nuevo sid rotado para garantizar Cache Hit inmediato
+    const existingCached = await CacheService.get<UserSession>(`auth:session:${user.id}`, true, 600_000).catch(() => null);
+    const updatedSessions = Array.from(new Set([
+      ...(existingCached?.activeSessionIds?.filter(s => s !== tokenRecord.token) ?? []),
+      tokenRecord.token, // Período de gracia de rotación (60s)
+      newRefreshTokenId,
+    ]));
+
+    const sessionToCache: UserSession = {
+      id: user.id,
+      role: user.role,
+      isActive: user.isActive,
+      ventanaId: user.ventanaId,
+      bancaId: bancaId ?? user.bancaId ?? null,
+      activeSessionIds: updatedSessions,
+      appVersion: user.appVersion ?? null,
+    };
+    await CacheService.set(`auth:session:${user.id}`, sessionToCache, 1800, [], true, 600_000).catch(() => {});
   
     // bancaId ya fue resuelto arriba para la inyección del token
 
