@@ -47,6 +47,7 @@ model Banca {
   multiplierOverrides         MultiplierOverride[]
   refreshTokens               RefreshToken[]
   restrictionRules            RestrictionRule[]
+  resumenSorteoMultiplicadors ResumenSorteoMultiplicador[]
   savedReports                SavedReport[]
   sorteos                     Sorteo[]
   sorteosAutoConfigs          SorteosAutoConfig[]
@@ -56,7 +57,6 @@ model Banca {
   ventanas                    Ventana[]
   webhooks                    Webhook[]
   sorteoListaExclusiones      SorteoListaExclusion[]
-  resumenSorteoMultiplicadors ResumenSorteoMultiplicador[]
 }
 
 model Ventana {
@@ -129,6 +129,7 @@ model User {
   multiplierOverrides                     MultiplierOverride[]
   refreshTokens                           RefreshToken[]
   restrictionRules                        RestrictionRule[]
+  resumenSorteoMultiplicadors             ResumenSorteoMultiplicador[]
   savedReports                            SavedReport[]
   sorteosAutoConfigUpdated                SorteosAutoConfig[]                @relation("SorteosAutoConfigUpdatedBy")
   ticketsCreated                          Ticket[]                           @relation("TicketCreatedBy")
@@ -140,7 +141,6 @@ model User {
   bancas                                  UserBanca[]
   exclusionsCreated                       SorteoListaExclusion[]             @relation("ExclusionExcludedBy")
   exclusionsAsVendedor                    SorteoListaExclusion[]             @relation("ExclusionVendedor")
-  resumenSorteoMultiplicadors             ResumenSorteoMultiplicador[]
 
   @@index([email])
   @@index([name])
@@ -259,6 +259,8 @@ model Ticket {
   @@index([bancaId, ventanaId, businessDate, status], map: "idx_ticket_dashboard_lookup", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
   @@index([sorteoId, businessDate, isActive], map: "idx_ticket_sorteo_businessdate_active")
   @@index([businessDate, ventanaId, vendedorId], map: "idx_ticket_winners_perf", where: raw("((\"isWinner\" = true) AND (\"isActive\" = true) AND (\"deletedAt\" IS NULL))"))
+  @@index([bancaId, businessDate], map: "idx_ticket_banca_businessdate_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
+  @@index([sorteoId, businessDate, isActive], map: "idx_ticket_sorteo_business_active", where: raw("((\"deletedAt\" IS NULL) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
 }
 
 /// Contador global diario de tickets basado en businessDate (CR)
@@ -326,8 +328,6 @@ model Jugada {
   ticket                  Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
   @@index([ticketId, multiplierId], map: "idx_jugada_exclusiones_lookup", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
-  @@index([ticketId, number, type, isActive, isExcluded, amount, payout, commissionAmount, commissionPercent, commissionOrigin, listeroCommissionAmount, finalMultiplierX], map: "idx_jugada_maestro_final", where: raw("(\"deletedAt\" IS NULL)"))
-  @@index([number, ticketId, amount, type], map: "idx_jugada_number_amount_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
   @@index([ticketId, isWinner, deletedAt, payout], map: "idx_jugada_ticket_winner", where: raw("((\"deletedAt\" IS NULL) AND (\"isWinner\" = true))"))
   @@index([ticketId])
   @@index([bancaId, ticketId, multiplierId], map: "idx_jugada_bancaid_multiplier_counts", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (type = 'NUMERO'::\"BetType\") AND (\"multiplierId\" IS NOT NULL))"))
@@ -356,12 +356,12 @@ model Sorteo {
   digits                      Int                          @default(2)
   bancaId                     String?                      @db.Uuid
   DailyNumberSales            DailyNumberSales[]
+  resumenSorteoMultiplicadors ResumenSorteoMultiplicador[]
   banca                       Banca?                       @relation(fields: [bancaId], references: [id])
   extraMultiplier             LoteriaMultiplier?           @relation("SorteoExtraMultiplier", fields: [extraMultiplierId], references: [id])
   loteria                     Loteria                      @relation(fields: [loteriaId], references: [id])
   tickets                     Ticket[]
   exclusions                  SorteoListaExclusion[]
-  resumenSorteoMultiplicadors ResumenSorteoMultiplicador[]
 
   @@unique([loteriaId, scheduledAt, bancaId])
   @@index([loteriaId, deletedAt], map: "idx_sorteos_loteria_id_deleted_at")
@@ -374,6 +374,7 @@ model Sorteo {
   @@index([status, scheduledAt, loteriaId], map: "idx_sorteo_status_scheduled", where: raw("(\"deletedAt\" IS NULL)"))
   @@index([id, status], map: "idx_sorteo_id_status")
   @@index([scheduledAt], map: "idx_sorteo_scheduled_at")
+  @@index([scheduledAt, status], map: "idx_sorteo_scheduled_evaluated", where: raw("(\"deletedAt\" IS NULL)"))
 }
 
 model SorteoListaExclusion {
@@ -461,6 +462,8 @@ model RestrictionRule {
   @@index([salesPercentage], map: "idx_restriction_rules_sales_percentage", where: raw("(\"salesPercentage\" IS NOT NULL)"))
   @@index([userId], map: "idx_restrictionrule_userId_fk")
   @@index([ventanaId], map: "idx_restrictionrule_ventanaId_fk")
+  @@index([salesCutoffMinutes], map: "idx_restriction_rule_sales_cutoff_minutes")
+  @@index([isActive, bancaId, ventanaId, userId], map: "idx_restriction_rules_lookup_active")
 }
 
 model LoteriaMultiplier {
@@ -479,9 +482,9 @@ model LoteriaMultiplier {
   banca                       Banca?                       @relation(fields: [bancaId], references: [id])
   loteria                     Loteria                      @relation(fields: [loteriaId], references: [id])
   restrictionRules            RestrictionRule[]
+  resumenSorteoMultiplicadors ResumenSorteoMultiplicador[]
   appliedInSorteos            Sorteo[]                     @relation("SorteoExtraMultiplier")
   sorteoListaExclusions       SorteoListaExclusion[]       @relation("ExclusionMultiplier")
-  resumenSorteoMultiplicadors ResumenSorteoMultiplicador[]
 
   @@index([loteriaId, kind, isActive])
   @@index([bancaId])
@@ -539,6 +542,7 @@ model RefreshToken {
   @@index([bancaId, revoked, expiresAt], map: "idx_refreshtoken_pool_count")
   @@index([userId, deviceId], map: "idx_refresh_token_user_device", where: raw("(\"deviceId\" IS NOT NULL)"))
   @@index([expiresAt], map: "idx_refresh_token_expires_at")
+  @@index([userId, expiresAt, revoked], map: "idx_refreshtoken_user_active_lookup")
 }
 
 model UserBanca {
@@ -904,6 +908,9 @@ model ResumenCierreDiario {
   @@index([bancaId])
   @@index([sorteoId])
   @@index([vendedorId])
+  @@index([vendedorId, businessDate, tipo, totalVendida, comisionVendedor, ganado, ticketsCount], map: "idx_rcd_vendedor_businessdate")
+  @@index([vendedorId, sorteoId, totalVendida, comisionTotal, ganado, ticketsCount], map: "idx_rcd_vendedor_sorteo")
+  @@index([bancaId, businessDate], map: "idx_resumen_cierre_banca_businessdate")
 }
 
 model DailyNumberSales {
@@ -933,31 +940,42 @@ model DailyNumberSales {
 }
 
 model ResumenSorteoMultiplicador {
-  id                    String   @id @default(uuid()) @db.Uuid
-  sorteoId              String   @db.Uuid
-  vendedorId            String   @db.Uuid
-  multiplierId          String?  @db.Uuid
-  bancaId               String?  @db.Uuid
-  totalSales            Float    @default(0)
-  totalCommission       Float    @default(0)
-  commissionByNumber    Float    @default(0)
-  commissionByReventado Float    @default(0)
-  totalPrizes           Float    @default(0)
-  ticketCount           Int      @default(0)
-  winningTicketsCount   Int      @default(0)
-  paidTicketsCount      Int      @default(0)
-  createdAt             DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime @default(now()) @db.Timestamptz(6)
+  id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sorteoId              String             @db.Uuid
+  vendedorId            String             @db.Uuid
+  multiplierId          String?            @db.Uuid
+  bancaId               String?            @db.Uuid
+  totalSales            Float              @default(0)
+  totalCommission       Float              @default(0)
+  commissionByNumber    Float              @default(0)
+  commissionByReventado Float              @default(0)
+  totalPrizes           Float              @default(0)
+  ticketCount           Int                @default(0)
+  winningTicketsCount   Int                @default(0)
+  paidTicketsCount      Int                @default(0)
+  createdAt             DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime           @default(now()) @db.Timestamptz(6)
+  banca                 Banca?             @relation(fields: [bancaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  multiplier            LoteriaMultiplier? @relation(fields: [multiplierId], references: [id], onUpdate: NoAction)
+  sorteo                Sorteo             @relation(fields: [sorteoId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  vendedor              User               @relation(fields: [vendedorId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  sorteo     Sorteo             @relation(fields: [sorteoId], references: [id], onDelete: Cascade)
-  vendedor   User               @relation(fields: [vendedorId], references: [id], onDelete: Cascade)
-  multiplier LoteriaMultiplier? @relation(fields: [multiplierId], references: [id], onDelete: SetNull)
-  banca      Banca?             @relation(fields: [bancaId], references: [id], onDelete: Cascade)
-
-  @@unique([sorteoId, vendedorId, multiplierId], name: "uniq_sorteo_vendedor_multiplier")
+  @@unique([sorteoId, vendedorId, multiplierId], name: "uniq_sorteo_vendedor_multiplier", map: "uniq_sorteo_vendedor_multiplier")
   @@index([sorteoId, vendedorId], map: "idx_rsm_sorteo_vendedor")
   @@index([vendedorId, sorteoId], map: "idx_rsm_vendedor_sorteo")
   @@index([bancaId, createdAt], map: "idx_rsm_banca_created")
+}
+
+model cron_execution_logs {
+  id               BigInt   @id @default(autoincrement())
+  job_name         String
+  status           String
+  executed_at      DateTime @default(now()) @db.Timestamptz(6)
+  affected_rows    Int?
+  effective_number String?  @db.VarChar(2)
+  error_message    String?
+
+  @@index([job_name, status, executed_at(sort: Desc)], map: "idx_cron_logs_job_status_executed")
 }
 
 enum OverrideScope {
