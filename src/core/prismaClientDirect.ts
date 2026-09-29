@@ -1,6 +1,7 @@
 import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { tenantIsolationExtension } from "./prismaExtensions";
 
 declare global {
   var __prismaDirect: PrismaClient | undefined;
@@ -37,7 +38,7 @@ function createDirectClient(): PrismaClient {
   return new PrismaClient({
     adapter,
     log: ["warn", "error"],
-  });
+  }).$extends(tenantIsolationExtension) as unknown as PrismaClient;
 }
 
 /**

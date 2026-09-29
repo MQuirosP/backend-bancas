@@ -25,6 +25,7 @@ import { warmupConnection } from '../core/connectionWarmup';
 import { AccountStatementRepository } from '../repositories/accountStatement.repository';
 import logger from '../core/logger';
 import { activeOperationsService } from '../core/activeOperations.service';
+import { runAsGlobalJob } from '../core/tenantContext';
 
 let settlementTimer: NodeJS.Timeout | null = null;
 
@@ -722,7 +723,7 @@ export function startAccountStatementSettlementJob(): void {
     // Schedule first run
     settlementTimer = setTimeout(() => {
       // Execute immediately (sin userId porque es automático)
-      executeSettlement().catch((error) => {
+      runAsGlobalJob(() => executeSettlement()).catch((error) => {
         logger.error({
           layer: 'job',
           action: 'SETTLEMENT_JOB_EXECUTION_ERROR',
@@ -732,7 +733,7 @@ export function startAccountStatementSettlementJob(): void {
 
       // Schedule to repeat every 24 hours
       settlementTimer = setInterval(() => {
-        executeSettlement().catch((error) => {
+        runAsGlobalJob(() => executeSettlement()).catch((error) => {
           logger.error({
             layer: 'job',
             action: 'SETTLEMENT_JOB_EXECUTION_ERROR',

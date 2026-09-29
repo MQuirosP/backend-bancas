@@ -1,6 +1,7 @@
 import { Prisma } from '../../generated/prisma/client';
 import prisma from '../../core/prismaClient';
 import logger from '../../core/logger';
+import { runAsGlobalJob } from '../../core/tenantContext';
 
 export class CierreRollupService {
   private static activeRollups = new Map<string, Promise<void>>();
@@ -72,39 +73,40 @@ export class CierreRollupService {
    * para ceder el Event Loop de Node.js y proteger la E/S de disco en PostgreSQL.
    */
   private static async runAggregation(startDate: string, endDate: string): Promise<void> {
-    try {
-      logger.info({
-        layer: 'service',
-        action: 'ROLLUP_AGGREGATE_START',
-        payload: { startDate, endDate, strategy: 'MICRO_BATCH_DAILY' },
-      });
+    return runAsGlobalJob(async () => {
+      try {
+        logger.info({
+          layer: 'service',
+          action: 'ROLLUP_AGGREGATE_START',
+          payload: { startDate, endDate, strategy: 'MICRO_BATCH_DAILY' },
+        });
 
-      // Generar listado de fechas YYYY-MM-DD a procesar
-      const dates: string[] = [];
-      let curr = new Date(`${startDate}T00:00:00Z`);
-      const end = new Date(`${endDate}T00:00:00Z`);
-      while (curr <= end) {
-        dates.push(curr.toISOString().split('T')[0]);
-        curr.setDate(curr.getDate() + 1);
-      }
+        // Generar listado de fechas YYYY-MM-DD a procesar
+        const dates: string[] = [];
+        let curr = new Date(`${startDate}T00:00:00Z`);
+        const end = new Date(`${endDate}T00:00:00Z`);
+        while (curr <= end) {
+          dates.push(curr.toISOString().split('T')[0]);
+          curr.setDate(curr.getDate() + 1);
+        }
 
-      let totalRowsInserted = 0;
+        let totalRowsInserted = 0;
 
-      // Iterar estrictamente día por día con independencia transaccional
-      for (const targetDate of dates) {
-        const lockKey = `rollup_${targetDate}`;
+        // Iterar estrictamente día por día con independencia transaccional
+        for (const targetDate of dates) {
+          const lockKey = `rollup_${targetDate}`;
 
-        const rowsInserted = await prisma.$transaction(async (tx) => {
-          // Advisory lock por día específico para evitar carreras concurrentes
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+          const rowsInserted = await prisma.$transaction(async (tx) => {
+            // Advisory lock por día específico para evitar carreras concurrentes
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
 
-          // 1. Limpiar agregación del día específico
-          await tx.$executeRaw`
-            DELETE FROM "ResumenCierreDiario"
-            WHERE "businessDate" = ${targetDate}::date
-          `;
+            // 1. Limpiar agregación del día específico (operación global a nivel de fecha de negocio)
+            await tx.$executeRaw`
+              DELETE FROM "ResumenCierreDiario"
+              WHERE "businessDate" = ${targetDate}::date
+            `;
 
-          // 2. Insertar agregación diaria calculada
+            // 2. Insertar agregación diaria calculada
           const result = await tx.$executeRaw`
             WITH relevant_tickets AS (
               SELECT t.id,
@@ -221,5 +223,6 @@ export class CierreRollupService {
       });
       throw error;
     }
+    });
   }
 }

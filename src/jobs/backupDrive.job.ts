@@ -1,5 +1,6 @@
 import { GoogleDriveBackupService } from "../domain/backup/GoogleDriveBackupService";
 import logger from "../core/logger";
+import { runAsGlobalJob } from "../core/tenantContext";
 
 let backupInitialTimer: NodeJS.Timeout | null = null;
 let backupRecurringTimer: NodeJS.Timeout | null = null;
@@ -17,26 +18,28 @@ function getMillisecondsUntilNextRun(hourUTC: number, minuteUTC: number): number
 }
 
 async function executeBackup(): Promise<void> {
-  logger.info({
-    layer: "job",
-    action: "GOOGLE_DRIVE_BACKUP_START",
-    payload: { timestamp: new Date().toISOString() },
-  });
-
-  try {
-    const result = await GoogleDriveBackupService.executeBackup();
+  return runAsGlobalJob(async () => {
     logger.info({
       layer: "job",
-      action: "GOOGLE_DRIVE_BACKUP_SUCCESS",
-      payload: result,
+      action: "GOOGLE_DRIVE_BACKUP_START",
+      payload: { timestamp: new Date().toISOString() },
     });
-  } catch (error: any) {
-    logger.error({
-      layer: "job",
-      action: "GOOGLE_DRIVE_BACKUP_FAIL",
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    });
-  }
+
+    try {
+      const result = await GoogleDriveBackupService.executeBackup();
+      logger.info({
+        layer: "job",
+        action: "GOOGLE_DRIVE_BACKUP_SUCCESS",
+        payload: result,
+      });
+    } catch (error: any) {
+      logger.error({
+        layer: "job",
+        action: "GOOGLE_DRIVE_BACKUP_FAIL",
+        meta: { error: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  });
 }
 
 export function startGoogleDriveBackupJob(): void {

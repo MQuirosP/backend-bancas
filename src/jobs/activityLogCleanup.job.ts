@@ -15,6 +15,7 @@
 import ActivityLogService from '../domain/user/activityLog.service';
 import { warmupConnection } from '../core/connectionWarmup';
 import logger from '../core/logger';
+import { runAsGlobalJob } from '../core/tenantContext';
 
 // Simplified scheduler (no external dependencies)
 // If you want to use a library like node-cron or agenda, replace this
@@ -44,11 +45,12 @@ function getMillisecondsUntilNextCleanup(): number {
  * Deletes logs older than 45 days
  */
 async function executeCleanup(): Promise<void> {
-  const RETENTION_DAYS = 45;
+  return runAsGlobalJob(async () => {
+    const RETENTION_DAYS = 45;
 
-  try {
-    // 🔥 F3.1: Warmup del Pooler (puerto 6543) antes de empezar
-    const isReady = await warmupConnection({ useDirect: false, context: 'activityLogCleanup' });
+    try {
+      // 🔥 F3.1: Warmup del Pooler (puerto 6543) antes de empezar
+      const isReady = await warmupConnection({ useDirect: false, context: 'activityLogCleanup' });
     if (!isReady) {
       console.error('[Activity Log Cleanup] Connection warmup failed, skipping cleanup');
       return;
@@ -100,6 +102,7 @@ async function executeCleanup(): Promise<void> {
       }
     }
   }
+  });
 }
 
 /**

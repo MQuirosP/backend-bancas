@@ -5,6 +5,7 @@ import { AppError } from '../core/errors';
 import { AuthenticatedRequest, BancaContext } from '../core/types';
 import { Role } from '../generated/prisma/client';
 import { CacheService } from '../core/cache.service';
+import { runWithTenant } from '../core/tenantContext';
 
 /**
  * Middleware para establecer el contexto de banca activa (filtro de vista)
@@ -48,7 +49,10 @@ export async function bancaContextMiddleware(
             userId: user.id,
             hasAccess: true,
           };
-          return next();
+          return runWithTenant(
+            { bancaId: user.bancaId, role: user.role as Role, userId: user.id, ventanaId: user.ventanaId, bypassIsolation: false },
+            () => next()
+          );
         }
         // No tiene acceso a ninguna banca
         throw new AppError("No tienes bancas asignadas", 403, "FORBIDDEN");
@@ -77,7 +81,10 @@ export async function bancaContextMiddleware(
         res.setHeader('X-Banca-Context-Fallback', activeBancaId || '');
       }
 
-      return next();
+      return runWithTenant(
+        { bancaId: activeBancaId, role: user.role as Role, userId: user.id, ventanaId: user.ventanaId, bypassIsolation: false },
+        () => next()
+      );
     }
 
     // ========================================================================
@@ -91,7 +98,10 @@ export async function bancaContextMiddleware(
           userId: user.id,
           hasAccess: true,
         };
-        return next();
+        return runWithTenant(
+          { bancaId: user.bancaId, role: user.role as Role, userId: user.id, ventanaId: user.ventanaId, bypassIsolation: false },
+          () => next()
+        );
       }
 
       // Fallback: JWT viejo sin bancaId — resolver desde BD
@@ -109,6 +119,8 @@ export async function bancaContextMiddleware(
         }
       }
 
+      let resolvedBancaId: string | null = null;
+
       if (ventanaId) {
         const ventana = await prisma.ventana.findUnique({
           where: { id: ventanaId },
@@ -116,16 +128,22 @@ export async function bancaContextMiddleware(
         });
 
         if (ventana) {
+          resolvedBancaId = ventana.bancaId;
           req.bancaContext = {
-            bancaId: ventana.bancaId,
+            bancaId: resolvedBancaId,
             userId: user.id,
             hasAccess: true,
           };
         }
       }
-      return next();
+
+      return runWithTenant(
+        { bancaId: resolvedBancaId, role: user.role as Role, userId: user.id, ventanaId, bypassIsolation: false },
+        () => next()
+      );
     }
 
+    // ========================================================================
     // 3. CASO: ADMIN (Global Admin)
     // ========================================================================
     // Para ADMIN: leer header (solo filtro de vista, sin validación de asignación)
@@ -156,7 +174,11 @@ export async function bancaContextMiddleware(
       hasAccess: hasAccess || (isGlobalAdmin && activeBancaId === null),
     };
 
-    next();
+    // ADMIN: bancaId null → bypassIsolation=false pero la extensión no filtra si bancaId es null
+    return runWithTenant(
+      { bancaId: activeBancaId, role: user.role as Role, userId: user.id, ventanaId: user.ventanaId, bypassIsolation: false },
+      () => next()
+    );
   } catch (error) {
     logger.error({
       layer: 'middleware',

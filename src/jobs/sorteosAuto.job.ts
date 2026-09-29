@@ -22,6 +22,7 @@ import SorteosAutoService from '../domain/sorteo/sorteosAuto.service';
 import logger from '../core/logger';
 import { warmupConnection } from '../core/connectionWarmup';
 import { getRedisClient } from '../core/redisClient';
+import { runAsGlobalJob } from '../core/tenantContext';
 
 // Timers separados para timeout inicial y interval recurrente
 let openInitialTimer: NodeJS.Timeout | null = null;
@@ -144,7 +145,7 @@ async function executeAutoOpen(isManual: boolean = false): Promise<void> {
 
     //  Pasar null para jobs cron (sin usuario autenticado)
     // La actividad se registrará con userId: null
-    const result = await SorteosAutoService.executeAutoOpen(null as any, isManual);
+    const result = await runAsGlobalJob(() => SorteosAutoService.executeAutoOpen(null as any, isManual));
 
     logger.info({
       layer: 'job',
@@ -211,7 +212,7 @@ async function executeAutoCreate(daysAhead: number = 1, isManual: boolean = fals
     }
 
     //  Pasar null para jobs cron (sin usuario autenticado)
-    const result = await SorteosAutoService.executeAutoCreate(daysAhead, null as any); // días hacia adelante
+    const result = await runAsGlobalJob(() => SorteosAutoService.executeAutoCreate(daysAhead, null as any));
 
     logger.info({
       layer: 'job',
@@ -424,7 +425,7 @@ async function executeAutoClose(isManual: boolean = false): Promise<void> {
     }
 
     //  Pasar null para jobs cron (sin usuario autenticado)
-    const result = await SorteosAutoService.executeAutoClose(null as any);
+    const result = await runAsGlobalJob(() => SorteosAutoService.executeAutoClose(null as any));
 
     logger.info({
       layer: 'job',

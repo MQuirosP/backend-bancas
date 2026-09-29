@@ -1,6 +1,7 @@
 import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
+import { tenantIsolationExtension } from "./prismaExtensions";
 
 declare global {
   var __prisma: PrismaClient | undefined;
@@ -56,19 +57,19 @@ const salesAdapter = new PrismaPg(salesPool);
 // Instancia General (Reportes, Dashboards, Cierres, Evaluaciones)
 export const prisma: PrismaClient =
   global.__prisma ??
-  new PrismaClient({
+  (new PrismaClient({
     adapter: generalAdapter,
     log: ["warn", "error"],
-  });
+  }).$extends(tenantIsolationExtension) as unknown as PrismaClient);
 global.__prisma = prisma;
 
 // Instancia de Ventas (Fast-Path Crítico Exclusivo para Emisión de Tickets)
 export const salesPrisma: PrismaClient =
   global.__salesPrisma ??
-  new PrismaClient({
+  (new PrismaClient({
     adapter: salesAdapter,
     log: ["warn", "error"],
-  });
+  }).$extends(tenantIsolationExtension) as unknown as PrismaClient);
 global.__salesPrisma = salesPrisma;
 
 /**

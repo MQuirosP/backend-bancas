@@ -26,6 +26,7 @@ import {
 import logger from '../core/logger';
 import { crDateService } from '../utils/crDateService';
 import { activeOperationsService } from '../core/activeOperations.service';
+import { runAsGlobalJob } from '../core/tenantContext';
 
 let monthlyClosingTimer: NodeJS.Timeout | null = null;
 
@@ -475,7 +476,7 @@ export function startMonthlyClosingJob(): void {
         }
 
         // Execute immediately
-        executeMonthlyClosing().catch((error) => {
+        runAsGlobalJob(() => executeMonthlyClosing()).catch((error) => {
             logger.error({
                 layer: 'job',
                 action: 'MONTHLY_CLOSING_JOB_EXECUTION_ERROR',
@@ -525,7 +526,7 @@ function scheduleNextMonthlyClosing(): void {
             return;
         }
 
-        executeMonthlyClosing()
+        runAsGlobalJob(() => executeMonthlyClosing())
             .then(() => {
                 // Reschedule for next month after successful execution
                 scheduleNextMonthlyClosing();

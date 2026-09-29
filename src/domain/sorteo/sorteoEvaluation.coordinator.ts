@@ -9,6 +9,7 @@ import { CacheService } from "../../core/cache.service";
 import ActivityService from "../../core/activity.service";
 import { clearSorteoCache } from "../../utils/sorteoCache";
 import { SocketService } from "../../core/socket.service";
+import { runAsGlobalJob } from "../../core/tenantContext";
 
 const EVALUABLE_STATES = new Set<SorteoStatus>([SorteoStatus.OPEN]);
 
@@ -95,13 +96,13 @@ export class SorteoEvaluationCoordinator {
     userId: string,
     bancaId?: string,
   ): Promise<void> {
-
-    // Cascada de resolución: priorizar bancaId explícito, luego del registro evaluado, luego del existente
-    const targetBancaId =
-      bancaId ||
-      evaluatedSorteo?.bancaId ||
-      existingSorteo?.bancaId ||
-      null;
+    return runAsGlobalJob(async () => {
+      // Cascada de resolución: priorizar bancaId explícito, luego del registro evaluado, luego del existente
+      const targetBancaId =
+        bancaId ||
+        evaluatedSorteo?.bancaId ||
+        existingSorteo?.bancaId ||
+        null;
     // 1. Sincronización de Cuentas (Nativo en PostgreSQL vía fn_sync_sorteo_statements)
     try {
       logger.info({
@@ -283,5 +284,6 @@ export class SorteoEvaluationCoordinator {
         payload: { sorteoId: id, error: wsErr?.message || String(wsErr) },
       });
     }
+    });
   }
 }
