@@ -8,6 +8,7 @@ import { runCheckCierres } from './check-cierres-cli';
 import { runSorteosWizard } from './sorteos-cli';
 import { runAcopioSalesRebuild } from './acopio-cli';
 import { runMonitorEvaluation } from './monitor-evaluation-cli';
+import { runTicketsWizard } from './tickets-cli';
 
 /**
  * main-wizard.ts
@@ -74,9 +75,10 @@ async function main() {
     console.log(`  [4] 📈  Auditoría de Cierres Diarios por Banca (ResumenCierreDiario)`);
     console.log(`  [5] 🧮  Re-Agregación de Acopio de Ventas (DailyNumberSales)`);
     console.log(`  [6] 📡  Monitoreo en Tiempo Real de Sorteos y Terminales (Better Stack Logs)`);
+    console.log(`  [7] 🎟️   Anulación de Tickets por Consecutivo (Soft-Delete & Resincronización)`);
     console.log(`  [0] 🚪  Salir`);
 
-    const optionChoice = await ask(`\nOpción (0-6): `);
+    const optionChoice = await ask(`\nOpción (0-7): `);
 
     if (optionChoice === '0' || isBack(optionChoice)) {
       console.log(`\n👋  Saliendo de la Suite de Soporte.`);
@@ -122,6 +124,9 @@ async function main() {
       const minInput = await ask(`\n⏱️  Ventana en minutos a consultar [ENTER para 15 minutos]: `);
       const minutes = parseInt(minInput, 10) || 15;
       await runMonitorEvaluation(minutes);
+      await ask(`\nPresione ENTER para continuar...`);
+    } else if (optionChoice === '7') {
+      await runTicketsWizard();
       await ask(`\nPresione ENTER para continuar...`);
     } else {
       console.log(`❌  Opción no válida.`);

@@ -20,5 +20,7 @@ router.post('/sorteos/action', OpsController.handleSorteoAction);
 router.post('/statements/check', OpsController.checkStatements);
 router.post('/statements/fix', OpsController.fixStatements);
 router.post('/acopio/rebuild', OpsController.auditAndRebuildAcopio);
+router.post('/tickets/preview', OpsController.previewTickets);
+router.post('/tickets/cancel', OpsController.cancelTickets);
 
 export default router;

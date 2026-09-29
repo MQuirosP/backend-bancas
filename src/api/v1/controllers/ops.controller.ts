@@ -7,6 +7,7 @@ import { recalculateMonthlyClosingForDimension } from '../../../domain/accounts/
 import { DailyNumberSalesService } from '../../../domain/sorteo/dailyNumberSales.service';
 import { AccountsService } from '../../../domain/accounts/accounts.service';
 import ActivityService from '../../../core/activity.service';
+import { TicketsOpsService } from '../../../domain/ticket/ticketsOps.service';
 import { SorteoStatus, ActivityType, Prisma } from '../../../generated/prisma/client';
 
 /**
@@ -420,4 +421,43 @@ export class OpsController {
       res.status(500).json({ success: false, error: err.message });
     }
   }
+
+  /**
+   * Previsualización de tickets por consecutivo
+   */
+  static async previewTickets(req: Request, res: Response): Promise<void> {
+    try {
+      const { ticketNumbers } = req.body;
+      if (!Array.isArray(ticketNumbers) || ticketNumbers.length === 0) {
+        res.status(400).json({ success: false, error: 'Lista de números de ticket requerida' });
+        return;
+      }
+      const tickets = await TicketsOpsService.findTicketsByNumbers(ticketNumbers);
+      res.json({ success: true, tickets });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Anulación / Soft-delete de tickets por consecutivo con resincronización de saldos y cierres
+   */
+  static async cancelTickets(req: Request, res: Response): Promise<void> {
+    try {
+      const { ticketNumbers, reason, forceWithPayments } = req.body;
+      if (!Array.isArray(ticketNumbers) || ticketNumbers.length === 0) {
+        res.status(400).json({ success: false, error: 'Lista de números de ticket requerida' });
+        return;
+      }
+      const result = await TicketsOpsService.cancelTickets({
+        ticketNumbers,
+        reason: reason || 'Anulación de soporte técnico por error de digitación',
+        forceWithPayments: Boolean(forceWithPayments)
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
 }
+
