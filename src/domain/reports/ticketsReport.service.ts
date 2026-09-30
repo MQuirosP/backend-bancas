@@ -9,6 +9,8 @@ import logger from '../../core/logger';
 import { resolveDateRange, normalizePagination, calculatePercentage, calculatePreviousPeriod, calculateChangePercent } from '../../api/v1/utils/reports.utils';
 import { DateToken, PaymentStatus, PaginationMeta, ReportMeta, DateRange } from '../../api/v1/types/reports.types';
 import { formatIsoLocal } from '../../utils/datetime';
+import { CacheService } from '../../core/cache.service';
+import { crDateService } from '../../utils/crDateService';
 
 // Helper para formatear solo fecha YYYY-MM-DD
 const formatDateOnly = (date: Date): string => formatIsoLocal(date).split('T')[0];
@@ -737,6 +739,17 @@ export const TicketsReportService = {
       filters.toDate
     );
 
+    const todayCRStr = crDateService.dateUTCToCRString(new Date());
+    const isToday = dateRange.toString >= todayCRStr;
+    const ttl = isToday ? 15 : 300;
+    const topLimit = filters.top || 10;
+
+    const cacheKey = `reports:tickets:numbers-analysis:${filters.bancaId || 'all'}:${filters.ventanaId || 'all'}:${filters.vendedorId || 'all'}:${filters.loteriaId || 'all'}:${filters.betType || 'all'}:${dateRange.fromString}:${dateRange.toString}:${topLimit}:${Boolean(filters.includeComparison)}:${Boolean(filters.includeWinners)}:${Boolean(filters.includeExposure)}`;
+
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
+
     // 1. Obtener la lista de sorteos dentro del rango y sus estados
     const sorteos = await prisma.sorteo.findMany({
       where: {
@@ -1127,6 +1140,10 @@ export const TicketsReportService = {
         comparisonEnabled: filters.includeComparison || false,
       },
     };
+  },
+  ttl,
+  ['reports', 'dashboard']
+);
   },
 
   /**

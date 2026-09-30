@@ -1782,14 +1782,14 @@ export const DashboardService = {
   /**
    * Exposición: análisis de riesgo por número y lotería
    * ⚡ OPTIMIZACIÓN: Consolidado en 1 sola consulta SQL agrupada sobre sorteos OPEN
-   * + Caché L1/Redis de 30s con invalidación por WebSocket (DASHBOARD_UPDATED)
+   * + Caché L1/Redis de 15s con invalidación por WebSocket (DASHBOARD_UPDATED)
    */
   async calculateExposure(filters: DashboardFilters) {
     const topLimit = filters.top || 10;
     const { fromDateStr, toDateStr } = getBusinessDateRangeStrings(filters);
     const todayCRStr = crDateService.dateUTCToCRString(new Date());
     const isToday = toDateStr >= todayCRStr;
-    const ttl = isToday ? 30 : 300;
+    const ttl = isToday ? 15 : 300;
 
     const cacheKey = `dashboard:exposure:${filters.bancaId || 'all'}:${filters.ventanaId || 'all'}:${filters.vendedorId || 'all'}:${fromDateStr}:${toDateStr}:${topLimit}:${filters.betType || 'all'}:${filters.status || 'all'}:${filters.loteriaId || 'all'}`;
 
