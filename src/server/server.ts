@@ -37,8 +37,10 @@ server.listen(config.port, 511, async () => {
   // Esperar conexión a DB antes de iniciar jobs y caches que la requieren
   await warmupConnection({ context: 'server.startup', maxAttempts: 5, baseDelayMs: 2000 });
 
-  // Iniciar monitor de event loop y pools
-  resourceMonitorService.start();
+  // Iniciar monitor de event loop y pools (desactivado por default para evitar ruido)
+  if (process.env.ENABLE_RESOURCE_MONITOR === 'true') {
+    resourceMonitorService.start();
+  }
 
   //  OPTIMIZACIÓN: Inicializar Redis (opcional, no bloquea el servidor)
   try {

@@ -65,6 +65,8 @@ function recordSocketAuthFailure(fingerprint: string): void {
 export const SocketEvents = {
   SORTEO_EVALUADO: 'sorteo:evaluado',
   SORTEO_REVERTIDO: 'sorteo:revertido',
+  SORTEOS_UPDATED: 'sorteos:updated',
+  DASHBOARD_UPDATED: 'dashboard:updated',
   BANCA_SWITCH: 'banca:switch',
 } as const;
 
@@ -98,6 +100,17 @@ export interface SorteoRevertedPayload {
   scheduledAt: string;
   bancaId: string | null;
   revertedAt: string;
+}
+
+export interface SorteosUpdatedPayload {
+  bancaId?: string | null;
+  action?: 'created' | 'updated' | 'status_changed' | 'activated';
+  sorteoId?: string;
+}
+
+export interface DashboardUpdatedPayload {
+  bancaId?: string | null;
+  date?: string;
 }
 
 export class SocketService {
@@ -464,6 +477,42 @@ export class SocketService {
         bancaId: payload.bancaId,
         sorteoId: payload.sorteoId,
       },
+    });
+  }
+
+  /**
+   * Notifica a la banca (y admins globales) que la lista o estado de sorteos cambió.
+   */
+  static notifySorteosUpdated(payload: SorteosUpdatedPayload): void {
+    if (!this.io) return;
+
+    if (payload.bancaId) {
+      this.io.to(SocketRooms.banca(payload.bancaId)).emit(SocketEvents.SORTEOS_UPDATED, payload);
+    }
+    this.io.to(SocketRooms.admins).emit(SocketEvents.SORTEOS_UPDATED, payload);
+
+    logger.info({
+      layer: 'socket',
+      action: 'SORTEOS_UPDATED_BROADCAST',
+      payload,
+    });
+  }
+
+  /**
+   * Notifica a la banca (y admins globales) que las métricas o balances del dashboard cambiaron.
+   */
+  static notifyDashboardUpdated(payload: DashboardUpdatedPayload): void {
+    if (!this.io) return;
+
+    if (payload.bancaId) {
+      this.io.to(SocketRooms.banca(payload.bancaId)).emit(SocketEvents.DASHBOARD_UPDATED, payload);
+    }
+    this.io.to(SocketRooms.admins).emit(SocketEvents.DASHBOARD_UPDATED, payload);
+
+    logger.info({
+      layer: 'socket',
+      action: 'DASHBOARD_UPDATED_BROADCAST',
+      payload,
     });
   }
 }

@@ -119,7 +119,7 @@ export const UserRepository = {
     }
 
     const [rawData, total] = await withConnectionRetry(
-      () => prisma.$transaction([
+      () => Promise.all([
         prisma.user.findMany({
           where,
           skip,

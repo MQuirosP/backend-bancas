@@ -23,6 +23,7 @@ import logger from '../core/logger';
 import { warmupConnection } from '../core/connectionWarmup';
 import { getRedisClient } from '../core/redisClient';
 import { runAsGlobalJob } from '../core/tenantContext';
+import { SocketService } from '../core/socket.service';
 
 // Timers separados para timeout inicial y interval recurrente
 let openInitialTimer: NodeJS.Timeout | null = null;
@@ -158,6 +159,10 @@ async function executeAutoOpen(isManual: boolean = false): Promise<void> {
       },
     });
 
+    if (result.openedCount > 0) {
+      SocketService.notifySorteosUpdated({ action: 'status_changed' });
+    }
+
     if (result.errors.length > 0) {
       logger.warn({
         layer: 'job',
@@ -225,6 +230,10 @@ async function executeAutoCreate(daysAhead: number = 1, isManual: boolean = fals
         executedAt: result.executedAt.toISOString(),
       },
     });
+
+    if (result.createdCount > 0) {
+      SocketService.notifySorteosUpdated({ action: 'created' });
+    }
 
     if (result.errors.length > 0) {
       logger.warn({

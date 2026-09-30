@@ -297,6 +297,9 @@ export const UserService = {
       });
     }
 
+    // Invalidar caché de listados de usuarios
+    await CacheService.invalidateTag('users').catch(() => {});
+
     return result!;
   },
 
@@ -328,49 +331,50 @@ export const UserService = {
   }) {
     const page = params.page && params.page > 0 ? params.page : 1;
     const pageSize = params.pageSize && params.pageSize > 0 ? params.pageSize : 10;
+    const effectiveBancaId = params.bancaId;
 
-    let effectiveBancaId = params.bancaId;
-    let allowedBancaIds: string[] | undefined = undefined;
+    const actorKey = params.actor ? `${params.actor.role}:${params.actor.id}` : 'system';
+    const cacheKey = `users:list:${actorKey}:${effectiveBancaId || 'all'}:${params.ventanaId || 'all'}:${params.role || 'all'}:${page}:${pageSize}:${params.isActive ?? 'all'}:${params.search?.trim() || 'none'}`;
 
-    //  NUEVO: Aislamiento para rol BANCA
-    if (params.actor && params.actor.role === Role.BANCA) {
-      const userBancas = await prisma.userBanca.findMany({
-        where: { userId: params.actor.id },
-        select: { bancaId: true },
-      });
-      const assignedBancaIds = userBancas.map(ub => ub.bancaId);
+    return CacheService.wrap(
+      cacheKey,
+      async () => {
+        let allowedBancaIds: string[] | undefined = undefined;
 
-      if (effectiveBancaId) {
-        if (!assignedBancaIds.includes(effectiveBancaId)) {
-          throw new AppError('No tienes permiso para ver usuarios de esta banca', 403, 'FORBIDDEN');
+        // 🛡️ Aislamiento para rol BANCA
+        if (params.actor && params.actor.role === Role.BANCA) {
+          const userBancas = await prisma.userBanca.findMany({
+            where: { userId: params.actor.id },
+            select: { bancaId: true },
+          });
+          const assignedBancaIds = userBancas.map(ub => ub.bancaId);
+
+          if (effectiveBancaId) {
+            if (!assignedBancaIds.includes(effectiveBancaId)) {
+              throw new AppError('No tienes permiso para ver usuarios de esta banca', 403, 'FORBIDDEN');
+            }
+          } else {
+            // Si no especifica banca, filtrar por todas las asignadas
+            allowedBancaIds = assignedBancaIds;
+            if (allowedBancaIds.length === 0) return { data: [], meta: { total: 0, page, pageSize, totalPages: 0, hasNextPage: false, hasPrevPage: false } };
+          }
         }
-      } else {
-        // Si no especifica banca, filtrar por todas las asignadas
-        allowedBancaIds = assignedBancaIds;
-        if (allowedBancaIds.length === 0) return { data: [], meta: { total: 0, page, pageSize, totalPages: 0, hasNextPage: false, hasPrevPage: false } };
-      }
-    }
 
-    const { data, total } = await UserRepository.listPaged({
-      page,
-      pageSize,
-      role: params.role as Role | undefined,
-      search: params.search?.trim() || undefined,
-      ventanaId: params.ventanaId,
-      bancaId: effectiveBancaId,
-      isActive: params.isActive,
-    });
+        const { data, total } = await UserRepository.listPaged({
+          page,
+          pageSize,
+          role: params.role as Role | undefined,
+          search: params.search?.trim() || undefined,
+          ventanaId: params.ventanaId,
+          bancaId: effectiveBancaId,
+          isActive: params.isActive,
+        });
 
-    //  NUEVO: Si hay múltiples bancas permitidas y no se pasó una específica,
-    // necesitamos que el repositorio soporte `bancaId: { in: allowedBancaIds }`.
-    // Pero por ahora, si allowedBancaIds está presente, haremos una query manual o ajustaremos el repo.
-    
-    // CORRECCIÓN: Ajustar query si es BANCA sin bancaId específico
-    let finalData = data;
-    let finalTotal = total;
+        let finalData = data;
+        let finalTotal = total;
 
-    if (allowedBancaIds && !effectiveBancaId) {
-        const { data: isolatedData, total: isolatedTotal } = await UserRepository.listPaged({
+        if (allowedBancaIds && !effectiveBancaId) {
+          const { data: isolatedData, total: isolatedTotal } = await UserRepository.listPaged({
             page,
             pageSize,
             role: params.role as Role | undefined,
@@ -378,16 +382,20 @@ export const UserService = {
             ventanaId: params.ventanaId,
             isActive: params.isActive,
             bancaId: { in: allowedBancaIds }, 
-        });
-        finalData = isolatedData;
-        finalTotal = isolatedTotal;
-    }
+          });
+          finalData = isolatedData;
+          finalTotal = isolatedTotal;
+        }
 
-    const totalPages = Math.ceil(finalTotal / pageSize);
-    return {
-      data: finalData,
-      meta: { total: finalTotal, page, pageSize, totalPages, hasNextPage: page < totalPages, hasPrevPage: page > 1 },
-    };
+        const totalPages = Math.ceil(finalTotal / pageSize);
+        return {
+          data: finalData,
+          meta: { total: finalTotal, page, pageSize, totalPages, hasNextPage: page < totalPages, hasPrevPage: page > 1 },
+        };
+      },
+      60, // 60s TTL en L1 y Redis
+      ['users']
+    );
   },
 
   async update(id: string, dto: UpdateUserDTO, actor?: { id: string; role: Role }) {
@@ -666,6 +674,9 @@ export const UserService = {
       await CacheService.del(`auth:session:${id}`); // Fuerza invalidación directa de L1 y L2 para la sesión
     }
 
+    // Invalidar caché de listados de usuarios al modificar un usuario
+    await CacheService.invalidateTag('users').catch(() => {});
+
     // Si cambió la banca/ventana del vendedor, invalidar también su caché de estados de cuenta
     // para que se muestre el historial completo correctamente en la nueva banca
     const isBancaTransfer = toUpdate.ventanaId !== undefined || toUpdate.bancaId !== undefined;
@@ -754,6 +765,7 @@ export const UserService = {
     await CacheService.invalidateTag(`user:${id}`).catch((err) =>
       logger.warn({ layer: 'service', action: 'CACHE_INVALIDATE_FAIL', userId: id, meta: { error: err.message } })
     );
+    await CacheService.invalidateTag('users').catch(() => {});
 
     // Log de auditoría
     if (actorId) {
@@ -1090,6 +1102,9 @@ export const UserService = {
       data: { isActive: true },
       select: { id: true, name: true, username: true, email: true, role: true, ventanaId: true, isActive: true, createdAt: true },
     });
+
+    // Invalidar caché de listados al reactivar
+    await CacheService.invalidateTag('users').catch(() => {});
 
     // Log de auditoría
     if (actorId) {

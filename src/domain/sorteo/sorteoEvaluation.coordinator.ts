@@ -277,6 +277,7 @@ export class SorteoEvaluationCoordinator {
         bancaId: targetBancaId,
         evaluatedAt: new Date().toISOString(),
       });
+      SocketService.notifyDashboardUpdated({ bancaId: targetBancaId });
     } catch (wsErr: any) {
       logger.warn({
         layer: "coordinator",

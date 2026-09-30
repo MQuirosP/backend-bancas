@@ -43,6 +43,7 @@ export const UserBancaController = {
 
     // Invalida la relación asignada de UserBanca en caché
     await CacheService.invalidateTag(`user-bancas:${userId}`).catch(() => {});
+    await CacheService.invalidateTag('users').catch(() => {});
 
     res.status(201).json(result);
   },
@@ -76,6 +77,7 @@ export const UserBancaController = {
 
     // Invalida la relación asignada de UserBanca en caché
     await CacheService.invalidateTag(`user-bancas:${userId}`).catch(() => {});
+    await CacheService.invalidateTag('users').catch(() => {});
 
     res.json({ message: 'Banca predeterminada actualizada exitosamente' });
   },
@@ -100,6 +102,7 @@ export const UserBancaController = {
 
     // Invalida la relación asignada de UserBanca en caché
     await CacheService.invalidateTag(`user-bancas:${userId}`).catch(() => {});
+    await CacheService.invalidateTag('users').catch(() => {});
 
     res.json({ message: 'Banca removida exitosamente' });
   }

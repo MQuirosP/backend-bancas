@@ -27,6 +27,7 @@ import { getRedisClient } from "../../core/redisClient";
 import crypto from 'crypto';
 import { ConcurrencyManager, SharedWarmupPool, SingleFlight } from "../../utils/concurrency";
 import { SorteoEvaluationCoordinator } from "./sorteoEvaluation.coordinator";
+import { SocketService } from "../../core/socket.service";
 import {
   WARMUP_CHUNK_SIZE,
   WARMUP_CACHE_DISPATCH_SIZE,
@@ -219,7 +220,9 @@ const SorteoService = {
     // Invalidar cache de sorteos
     const { clearSorteoCache } = require('../../utils/sorteoCache');
     clearSorteoCache();
+    CacheService.invalidateTag('sorteos').catch(() => { });
     CacheService.invalidateTag(`sorteo:${s.id}`).catch(() => { });
+    SocketService.notifySorteosUpdated({ bancaId, action: 'created', sorteoId: s.id });
 
     const loteriaObj = await prisma.loteria.findUnique({
       where: { id: data.loteriaId },
@@ -280,6 +283,7 @@ const SorteoService = {
     clearSorteoCache();
     CacheService.invalidateTag('sorteos').catch(() => { });
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => { });
+    SocketService.notifySorteosUpdated({ bancaId: existing.bancaId, action: 'updated', sorteoId: id });
 
     const details: Record<string, any> = {};
     if (data.name && data.name !== existing.name) details.name = data.name;
@@ -327,7 +331,9 @@ const SorteoService = {
     const s = await SorteoRepository.update(id, {
       isActive,
     } as UpdateSorteoDTO);
+    CacheService.invalidateTag('sorteos').catch(() => { });
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => { });
+    SocketService.notifySorteosUpdated({ bancaId: existing.bancaId, action: 'activated', sorteoId: id });
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
     const lotName = existing.loteria?.name || 'Lotería';
@@ -366,6 +372,7 @@ const SorteoService = {
     const s = await SorteoRepository.forceOpen(id);
     CacheService.invalidateTag('sorteos').catch(() => { });
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => { });
+    SocketService.notifySorteosUpdated({ bancaId: existing.bancaId, action: 'status_changed', sorteoId: id });
 
     const sFormattedAt = formatDateCRWithTZ(existing.scheduledAt);
     const lotName = existing.loteria?.name || 'Lotería';
@@ -428,6 +435,7 @@ const SorteoService = {
     clearSorteoCache();
     CacheService.invalidateTag('sorteos').catch(() => { });
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => { });
+    SocketService.notifySorteosUpdated({ bancaId: existing.bancaId, action: 'status_changed', sorteoId: id });
 
     const details: Prisma.InputJsonObject = {
       from: {
@@ -526,6 +534,7 @@ const SorteoService = {
     });
     CacheService.invalidateTag('sorteos').catch(() => { });
     CacheService.invalidateTag(`sorteo:${id}`).catch(() => { });
+    SocketService.notifySorteosUpdated({ bancaId: existing.bancaId, action: 'status_changed', sorteoId: id });
 
     const sFormattedAt = formatDateCRWithTZ(s.scheduledAt);
     const lotName = s.loteria?.name || 'Lotería';
@@ -1073,7 +1082,7 @@ const SorteoService = {
             },
           };
         },
-        15, // TTL 15 segundos
+        60, // TTL 60 segundos (invalidación reactiva instantánea por WebSocket)
         tags
       );
     }
