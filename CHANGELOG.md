@@ -5,6 +5,47 @@
 
 ---
 
+## v1.4.0 - Aislamiento Multi-Tenant, Pools Dedicados, Sincronización Realtime por WebSockets y Caché Resiliente
+
+ **Fecha:** 2026-09-29
+ **Rama:** `master`
+
+### 🏢 1. Aislamiento Multi-Tenant Estricto a Nivel de Aplicación
+- **Propagación Asíncrona de Contexto:** Implementación de `AsyncLocalStorage` en `bancaContextMiddleware` para capturar el tenant activo (`bancaId`) y propagarlo de forma transparente a través de toda la cadena de ejecución sin alterar firmas de métodos.
+- **Inyección Automática de Filtros (Prisma Client Extension):** El cliente de Prisma ahora reescribe automáticamente las consultas para forzar el scope `bancaId` en entidades multi-inquilino, previniendo fugas cruzadas de datos incluso en queries dinámicas.
+- **Aislamiento en Salas de WebSockets:** Eliminación de salas globales compartidas. Los canales de WebSocket (`join_sorteo_room`, `join_dashboard_room`) ahora aplican RBAC estricto, aislando los eventos en tiempo real exclusivamente a los inquilinos autorizados (`banca_${bancaId}`).
+
+### ⚡ 2. Arquitectura de Pools de Conexiones Dedicados
+- **Pool de Ventas (`salesPool`) vs Pool General (`generalPool`):** Separación física de los pools de PostgreSQL para garantizar que las transacciones críticas de venta y emisión de tiquetes nunca sufran inanición (*starvation*) ni contención de conexiones frente a reportes pesados o consultas analíticas.
+- **Eliminación de Transacciones Interactivas Innecesarias:** Removido el uso de `prisma.$transaction` en operaciones de lectura y paginación (`TicketRepository`), evitando retención prolongada de conexiones en el pool.
+- **Depuración de Índices Obsoletos:** Eliminación del índice sobredimensionado `idx_jugada_maestro_final` para optimizar drásticamente el rendimiento de I/O en escrituras masivas durante la creación de tiquetes.
+
+### 🛡️ 3. Caché Resiliente, Deduplicación SingleFlight y Circuit Breakers
+- **Deduplicación de Peticiones (`SingleFlight`):** Implementación de in-flight promise sharing en autenticación (`getCachedUser`) y en analítica de números (`numbers-analysis`), eliminando el efecto *Thundering Herd* durante picos de concurrencia.
+- **Precalentamiento de Sesiones (Session Pre-Warming):** Al iniciar sesión (`login`) o refrescar token (`refreshToken`), la sesión del usuario se hidrata de inmediato en la caché L1 (RAM) y L2 (Redis) mediante escritura directa (*write-through*).
+- **Circuit Breaker Criptográfico de JWT:** Mecanismo de fallback de seguridad ante latencias extremas (>1,500 ms) en la base de datos o en Redis, validando la firma criptográfica del JWT y permitiendo la continuidad operativa de terminales de venta.
+- **Caché de Alta Rotación en Analítica en Vivo:** TTL corto (15s) para los widgets de exposición de riesgo (`calculateExposure`) y análisis de números más jugados (`numbers-analysis`), reduciendo la carga en la base de datos en más de un 80%.
+- **Caché en Listado de Usuarios:** Implementación de caché de 60 segundos con invalidación automática basada en tags (`users`).
+
+### 🔄 4. Sincronización en Tiempo Real por WebSockets (Event-Driven)
+- **Notificaciones Inmediatas de Sorteos y Dashboard:** El backend ahora emite eventos `SORTEOS_UPDATED` y `DASHBOARD_UPDATED` al cambiar el estado de un sorteo o finalizar una evaluación, permitiendo al frontend actualizar los dashboards al instante.
+- **Optimización de Polling en Clientes:** Se redujo la agresividad del short-polling continuo (ajustado de 20s a 30s) al combinarse con invalidación instantánea guiada por eventos WebSocket.
+
+### 📊 5. Optimización Analítica de Riesgos (Exposición en Vivo)
+- **Consolidación de Consultas SQL de Exposición:** La función `calculateExposure` se redujo de 4 barridos secuenciales de tablas a una única consulta SQL consolidada sobre sorteos abiertos en PostgreSQL, disminuyendo los tiempos de ejecución de ~600 ms a ~60 ms.
+
+### 🛠️ 6. Herramienta de Operaciones y Mantenimiento (CLI Wizard)
+- **Interactive Operations Wizard (`npm run ops`):** Nueva herramienta interactiva de línea de comandos (`src/scripts/CLI/main-wizard.ts`) para tareas críticas fuera de banda:
+  - Anulación de tiquetes fuera del tiempo de gracia con registro forense.
+  - Sincronización forzada de estados de cuenta y balances diarios.
+  - Monitoreo en tiempo real de evaluaciones de sorteos (`npm run monitor`).
+
+### 🔒 7. Seguridad y Restricciones de Clientes
+- **Control de Versión Mínima de APK:** Restricción obligatoria de versión mínima (v426) para aplicaciones móviles Android de vendedores, bloqueando versiones desactualizadas o vulnerables.
+- **Control de Monitoreo de Recursos:** El servicio de monitoreo en segundo plano (`resourceMonitorService`) ahora se encuentra protegido detrás de la variable `ENABLE_RESOURCE_MONITOR` (desactivado por defecto) para eliminar ruidos y consumo residual en producción.
+
+---
+
 ## v1.3.2 - Refactorización de Tipos y Eliminación de Magic Strings
 
  **Fecha:** 2026-08-06

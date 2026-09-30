@@ -25,13 +25,14 @@ Este repositorio contiene el backend core del sistema de bancas. Diseñado bajo 
 
 ## 🚀 Características Principales
 
-*   **🏢 Aislamiento Multi-Tenant Lógico:** Seguridad e integridad relacional garantizadas mediante políticas de control a nivel de aplicación (RBAC y filtros obligatorios por `bancaId`).
-*   **⚡ Transaccionalidad ACID Robusta:** Control estricto de concurrencia y protección contra condiciones de carrera en ventas masivas mediante reintentos de transacciones serializables (`withTransactionRetry`).
-*   **🛡️ Sistema de Resiliencia Centralizado:** Middleware con Circuit Breakers (`ResilienceService`) que protege el pool de conexiones frente a sobrecargas y degrada las funciones secundarias si es necesario.
-*   **🏎️ Caché Híbrida L1/L2:** Mitigación del efecto "Thundering Herd" mediante una capa in-memory (L1) y Redis (L2) con deduplicación de promesas en vuelo (Request Coalescing).
+*   **🏢 Aislamiento Multi-Tenant Lógico:** Seguridad e integridad relacional garantizadas a nivel de aplicación mediante propagación de contexto con `AsyncLocalStorage`, reescritura automática de queries en Prisma Client por `bancaId`, y salas de WebSockets aisladas por inquilino.
+*   **⚡ Pools de Conexiones Dedicados:** Separación física del pool de conexiones de base de datos (`salesPool` con máxima prioridad y timeouts reducidos frente a `generalPool` para reportes y dashboards), garantizando que la emisión de tiquetes nunca sufra inanición (*starvation*) frente a cargas analíticas pesadas.
+*   **🛡️ Sistema de Resiliencia y Circuit Breaker de JWT:** Middleware centralizado (`ResilienceService`) que protege la base de datos contra ráfagas, combinado con un interruptor criptográfico (*circuit breaker*) de JWT que asegura la operación continua de terminales incluso ante latencias severas (>1,500 ms) en DB o Redis.
+*   **🏎️ Caché Híbrida Multinivel con SingleFlight:** Mitigación del efecto *Thundering Herd* combinando memoria local (L1) y Redis (L2) con deduplicación de promesas en vuelo (`SingleFlight`), precalentamiento inmediato de sesiones en login/refresh (*write-through*), y TTLs de alta rotación (15s) para analítica en vivo.
+*   **🔄 Sincronización Realtime por WebSockets:** Notificaciones inmediatas (`SORTEOS_UPDATED`, `DASHBOARD_UPDATED`) emitidas a los clientes ante cambios de estado en sorteos o evaluaciones concluidas, eliminando el polling agresivo y manteniendo los paneles actualizados en tiempo real.
 *   **🌐 Blindaje TCP y Sincronización con Reverse Proxy:** Sockets HTTP en Node.js optimizados (`keepAliveTimeout = 65s`, `headersTimeout = 66s`, `backlog = 511`) para eliminar colisiones de conexión 502/503 y absorber ráfagas concurrentes detrás del Load Balancer de Render.
-*   **📊 Analítica Incremental (Rollups):** Cierres diarios mediante agregaciones directas SQL sin el costo de almacenamiento ni latencia de vistas materializadas.
-
+*   **📊 Analítica de Riesgo y Cierres Optimizados:** Exposición de riesgo calculada en tiempo real mediante consultas SQL consolidadas en una sola pasada (reduciendo la latencia de ~600 ms a ~60 ms) y liquidaciones contables agregadas directamente sin la sobrecarga de vistas materializadas.
+*   **🛠️ Herramienta CLI de Operaciones:** Wizard interactivo de terminal (`npm run ops`) para tareas administrativas críticas: anulación de tiquetes fuera de gracia con registro forense, sincronización forzada de balances diarios y monitoreo de sorteos en vivo.
 *   **💵 Comisiones Jerárquicas:** Resolución dinámica de comisiones en cascada: Vendedor (Listero) ➔ Ventana (Sucursal) ➔ Banca, persistiendo snapshots inmutables por jugada.
 
 ---
@@ -43,9 +44,10 @@ Este repositorio contiene el backend core del sistema de bancas. Diseñado bajo 
 | **Runtime** | Node.js (v20.x) + TypeScript | Entorno asíncrono no bloqueante y tipado estricto. |
 | **Framework** | Express.js (v4.21.2) | Ruteo HTTP rápido y tuberías de middlewares. |
 | **Persistencia**| PostgreSQL (Supabase) + Prisma ORM | Almacenamiento seguro, llaves foráneas y migraciones declarativas. |
-| **Conectividad**| `@prisma/adapter-pg` + `pg-pool` | Manejo y calentamiento dinámico del pool de conexiones. |
-| **Caché** | Redis (ioredis) + Caché en RAM | Caché de segundo nivel distribuido y primer nivel local. |
+| **Pools de Conexión**| Doble `@prisma/adapter-pg` (`salesPool` + `generalPool`) | Pools dedicados para evitar inanición de ventas ante reportes pesados. |
+| **Caché** | Redis (ioredis) + Caché en RAM (L1) | Estrategia híbrida de caché con coalescencia de promesas `SingleFlight`. |
 | **Validación** | Zod + Enums | Validación estricta, eliminación de *magic strings* y tipado fuerte (Enums) desde la API hasta la DB. |
+| **Realtime** | Socket.IO (WebSocket) | Sincronización de eventos en tiempo real con salas aisladas por banca. |
 | **Logging** | Pino Logger | Bitácora estructurada JSON ultrarrápida para auditoría forense. |
 
 ---
@@ -60,11 +62,16 @@ src/
 ├── api/v1/
 │   ├── controllers/   # Manejo de entradas/salidas HTTP, códigos de estado y respuestas.
 │   ├── routes/        # Definición de endpoints HTTP y asociación de middlewares.
-│   ├── services/      # Lógica pura de negocio, orquestación y transacciones financieras.
+│   ├── services/      # Lógica pura de negocio, orquestación y exportación de reportes.
 │   └── validators/    # Esquemas Zod para la capa de presentación de requests.
 ├── core/              # Clientes globales compartidos (Prisma, Redis, Logger, Circuit Breakers).
-├── middlewares/       # Seguridad (RBAC, Rate Limiting), Manejo de Errores y Contexto Multi-Tenant.
-├── repositories/      # Acceso exclusivo a la base de datos y helpers de transacciones.
+├── domain/            # Lógica de dominio modular (ticket, comisiones, sorteos, respaldos).
+│   ├── ticket/        # Tubería de venta de tiquetes, idempotencia y render de imágenes.
+│   ├── commission/    # Resolutor de comisiones y políticas jerárquicas.
+│   └── backup/        # Servicio de respaldo automatizado a Google Drive.
+├── middlewares/       # Seguridad (RBAC, Rate Limiting), Manejo de Errores y Contexto Multi-Tenant (AsyncLocalStorage).
+├── repositories/      # Acceso exclusivo a base de datos y enrutamiento entre pools de conexión.
+├── scripts/CLI/       # Wizard CLI interactivo de operaciones y monitoreo en vivo de evaluaciones.
 └── utils/             # Funciones utilitarias (fechas timezone Costa Rica, RBAC, etc.).
 ```
 
@@ -83,15 +90,21 @@ El acceso a los recursos sigue una jerarquía de cuatro niveles, donde el middle
 
 ## 📈 Optimización de Base de Datos y Caché
 
-### Estrategia de Caché-Aside y Request Coalescing
-Para los endpoints de alto costo computacional (como las opciones de filtrado dinámico en la lista de tiquetes), el backend implementa:
-1.  **Deduplicación en vuelo (Coalescing):** Si entran 10 peticiones concurrentes del mismo vendedor solicitando los mismos filtros, solo se realiza una consulta a la base de datos. Las otras 9 esperan la misma promesa activa en un mapa local (`_filterOptionsInFlight`).
-2.  **Caché L2 con tags:** Claves de caché distribuidas en Redis con invalidación controlada por etiquetas de eventos (ej. cuando se crea un tiquete, se invalidan los filtros asociados al usuario).
+### Pools de Conexiones Dedicados
+Para asegurar disponibilidad continua y latencias inferiores a 100 ms en la venta de tiquetes, las conexiones a PostgreSQL están segregadas físicamente:
+1.  **Pool de Ventas (`salesPool`):** Dedicado exclusivamente a la emisión, anulación y validaciones críticas de tiquetes. Posee timeouts estrictos y margen garantizado de conexiones.
+2.  **Pool General (`generalPool`):** Destinado a analítica, exportaciones (Excel, PDF), gestión de usuarios y dashboards administrativos, evitando que degraden las ventas.
+
+### Estrategia de Caché-Aside, SingleFlight y Precalentamiento
+*   **Deduplicación en Vuelo (`SingleFlight`):** Consultas idénticas simultáneas (autenticación de usuario, analítica de números) comparten una única promesa activa, realizando una sola petición a la base de datos y entregando el resultado a todos los clientes concurrentes.
+*   **Precalentamiento de Sesiones (*Session Pre-Warming*):** Al autenticarse o refrescar token, la sesión se escribe inmediatamente en L1 (RAM) y L2 (Redis) mediante escritura directa (*write-through*).
+*   **Caché de Alta Rotación en Analítica:** Endpoints analíticos exigentes (`calculateExposure`, `numbers-analysis`) utilizan TTLs cortos de 15 segundos para absorber tráfico masivo en dashboards con carga prácticamente nula en la base de datos.
 
 ### Catálogo de Indexación de Producción
 La base de datos cuenta con una estrategia de indexación selectiva para mitigar el costo de lectura:
 *   **Índices Compuestos Parciales:** Se usan para restringir los árboles B-Tree a datos activos. Por ejemplo, `idx_ticket_banca_sorteo_winner_perf` solo indexa registros donde `isActive = true` y `isWinner = true`, manteniendo el índice en memoria RAM.
-*   **Índices de Cobertura (`INCLUDE`):** Índices en la tabla `Jugada` (como `idx_jugada_maestro_final`) incluyen los valores de `amount` y `payout` en sus páginas hoja, permitiendo realizar consultas mediante **Index Only Scan** sin leer la tabla en disco (Heap).
+*   **Índices de Cobertura (`INCLUDE`):** Consultas clave emplean índices de cobertura sobre hojas de `Jugada` para resolver peticiones vía **Index Only Scan** sin acceder a disco (Heap).
+*   **Depuración de Índices:** Índices redundantes u obsoletos (como `idx_jugada_maestro_final`) fueron eliminados para reducir la amplificación de escrituras y la latencia de I/O en la creación de tiquetes.
 
 ---
 
@@ -117,26 +130,30 @@ Crea un archivo `.env` en la raíz guiándote por el archivo `.env.example`:
 | Variable | Descripción | Ejemplo |
 | :--- | :--- | :--- |
 | `DATABASE_URL` | URL de conexión para peticiones web (puerto pooler 6543) | `postgresql://...:6543/postgres` |
+| `SALES_DATABASE_URL` | *(Opcional)* URL de base de datos dedicada a emisión de ventas | `postgresql://...:6543/postgres` |
 | `DIRECT_URL` | URL de conexión directa para migraciones y scripts (puerto 5432) | `postgresql://...:5432/postgres` |
 | `REDIS_URL` | URL de conexión de Redis | `redis://localhost:6379` |
 | `JWT_ACCESS_SECRET` | Llave secreta para firmar tokens de acceso | `tu_secreto_seguro` |
 | `BUSINESS_CUTOFF_HOUR_CR` | Hora por defecto de corte comercial (CR) | `23:59` |
+| `ENABLE_RESOURCE_MONITOR` | Activar daemon de monitoreo de recursos (`true`/`false`) | `false` |
 
-### Pasos de Instalación
+### Pasos de Instalación y Operación
 
 ```bash
 # 1. Instalar dependencias del proyecto
 npm install
 
 # 2. Generar el cliente de base de datos Prisma
-npx prisma generate
+npm run prisma:generate
 
 # 3. Aplicar migraciones pendientes
 npx prisma migrate dev
 
 # 4. Iniciar servidor de desarrollo (Hot reload con Nodemon)
 npm run dev
-```
+
+# 5. Iniciar el Wizard CLI de operaciones interactivas
+npm run ops
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "lottery-backend",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "description": "Backend para Plataforma de Lotería con Node.js, Express, Prisma y Supabase.",
   "main": "dist/index.js",
   "engines": {
