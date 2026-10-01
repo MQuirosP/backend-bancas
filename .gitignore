@@ -86,6 +86,9 @@ src/scripts/*backfill*.ts
 # Scripts manuales (no versionar excepto la suite CLI de operaciones)
 scripts/*
 !scripts/CLI/
+!scripts/db/
+scripts/db/*
+!scripts/db/*.sql
 tmp/
 
 # Respaldos y backups

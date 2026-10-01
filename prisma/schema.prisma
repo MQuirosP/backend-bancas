@@ -113,6 +113,11 @@ model User {
   appVersion                              String?                            @db.VarChar(50)
   bancaId                                 String?                            @db.Uuid
   maxSessionsPerVendedor                  Int?
+  creditLimit                             Float?
+  creditAlertThreshold                    Int                                @default(80)
+  creditBlockMode                         Boolean                            @default(true)
+  creditLimitUpdatedAt                    DateTime?
+  creditLimitUpdatedById                  String?                            @db.Uuid
   accountPaymentsPaid                     AccountPayment[]                   @relation("AccountPaymentPaidBy")
   accountPaymentsReversed                 AccountPayment[]                   @relation("AccountPaymentReversedBy")
   accountPayments                         AccountPayment[]
@@ -261,6 +266,7 @@ model Ticket {
   @@index([businessDate, ventanaId, vendedorId], map: "idx_ticket_winners_perf", where: raw("((\"isWinner\" = true) AND (\"isActive\" = true) AND (\"deletedAt\" IS NULL))"))
   @@index([bancaId, businessDate], map: "idx_ticket_banca_businessdate_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
   @@index([sorteoId, businessDate, isActive], map: "idx_ticket_sorteo_business_active", where: raw("((\"deletedAt\" IS NULL) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
+  @@index([vendedorId, businessDate], map: "idx_ticket_vendedor_businessdate", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status NOT IN ('CANCELLED'::\"TicketStatus\", 'EXCLUDED'::\"TicketStatus\")))"))
 }
 
 /// Contador global diario de tickets basado en businessDate (CR)
@@ -1067,6 +1073,7 @@ enum ActivityType {
   ACCOUNT_PAYMENT_REVERSE
   ACCOUNT_PAYMENT_HISTORY_VIEW
   TICKET_REPRINT
+  USER_CREDIT_LIMIT_UPDATE
 }
 
 enum ExportFormat {
