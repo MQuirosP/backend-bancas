@@ -68,6 +68,7 @@ export const SocketEvents = {
   SORTEOS_UPDATED: 'sorteos:updated',
   DASHBOARD_UPDATED: 'dashboard:updated',
   BANCA_SWITCH: 'banca:switch',
+  VENDOR_CREDIT_STATUS_CHANGED: 'vendor:credit_status_changed',
 } as const;
 
 export const SocketRooms = {
@@ -75,6 +76,7 @@ export const SocketRooms = {
   banca: (bancaId: string) => `banca:${bancaId}`,
   bancaVendedores: (bancaId: string) => `banca:${bancaId}:vendedores`,
   bancaVentanas: (bancaId: string) => `banca:${bancaId}:ventanas`,
+  ventana: (ventanaId: string) => `ventana:${ventanaId}`,
 
   // Sala individual
   user: (userId: string) => `user:${userId}`,
@@ -111,6 +113,17 @@ export interface SorteosUpdatedPayload {
 export interface DashboardUpdatedPayload {
   bancaId?: string | null;
   date?: string;
+}
+
+export interface VendorCreditStatusPayload {
+  vendedorId: string;
+  ventanaId?: string | null;
+  bancaId?: string | null;
+  creditLimit: number | null;
+  effectiveBalance: number;
+  percentageUsed: number;
+  status: 'NORMAL' | 'WARNING' | 'BLOCKED' | 'EXCEEDED_ALERT_ONLY';
+  updatedAt: string;
 }
 
 export class SocketService {
@@ -269,10 +282,15 @@ export class SocketService {
         socket.join(SocketRooms.banca(user.bancaId));
       }
 
-      // Ventanas: se suscriben únicamente a las salas de su propia banca
-      if (user?.role === Role.VENTANA && user.bancaId) {
-        socket.join(SocketRooms.bancaVentanas(user.bancaId));
-        socket.join(SocketRooms.banca(user.bancaId));
+      // Ventanas: se suscriben a las salas de su propia banca y ventana
+      if (user?.role === Role.VENTANA) {
+        if (user.bancaId) {
+          socket.join(SocketRooms.bancaVentanas(user.bancaId));
+          socket.join(SocketRooms.banca(user.bancaId));
+        }
+        if (user.ventanaId) {
+          socket.join(SocketRooms.ventana(user.ventanaId));
+        }
       }
 
       // Administradores de plataforma o de banca
@@ -513,6 +531,34 @@ export class SocketService {
       layer: 'socket',
       action: 'DASHBOARD_UPDATED_BROADCAST',
       payload,
+    });
+  }
+
+  /**
+   * Notifica cambios de estado o advertencias de crédito del vendedor (WebSockets).
+   */
+  static notifyVendorCreditStatusChanged(payload: VendorCreditStatusPayload): void {
+    if (!this.io) return;
+
+    this.io.to(SocketRooms.user(payload.vendedorId)).emit(SocketEvents.VENDOR_CREDIT_STATUS_CHANGED, payload);
+
+    if (payload.ventanaId) {
+      this.io.to(SocketRooms.ventana(payload.ventanaId)).emit(SocketEvents.VENDOR_CREDIT_STATUS_CHANGED, payload);
+    }
+    if (payload.bancaId) {
+      this.io.to(SocketRooms.banca(payload.bancaId)).emit(SocketEvents.VENDOR_CREDIT_STATUS_CHANGED, payload);
+    }
+    this.io.to(SocketRooms.admins).emit(SocketEvents.VENDOR_CREDIT_STATUS_CHANGED, payload);
+
+    logger.info({
+      layer: 'socket',
+      action: 'VENDOR_CREDIT_STATUS_CHANGED_BROADCAST',
+      payload: {
+        vendedorId: payload.vendedorId,
+        status: payload.status,
+        percentageUsed: payload.percentageUsed,
+        effectiveBalance: payload.effectiveBalance,
+      },
     });
   }
 }
