@@ -28,6 +28,9 @@ export interface UpdateUserDTO {
   isActive?: boolean;  // ya estaba permitido
   maxSessionsPerVendedor?: number | null;
   settings?: Record<string, any> | null;  // Configuraciones (print, theme, etc.)
+  creditLimit?: number | null;
+  creditAlertThreshold?: number;
+  creditBlockMode?: boolean;
 }
 
 export interface ListUsersQuery {

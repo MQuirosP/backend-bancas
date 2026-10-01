@@ -11,6 +11,7 @@ import { commissionResolver } from '../../domain/commission/CommissionResolver';
 import { CommissionRule } from '../../domain/commission/types/CommissionTypes';
 import { CacheService } from '../../core/cache.service';
 import { logger } from '../../core/logger';
+import { BackgroundTaskQueue } from '../../utils/concurrency';
 
 /**
  * Deep merge de configuraciones (parcial)
@@ -311,6 +312,7 @@ export const UserService = {
           id: true, name: true, email: true, username: true, role: true,
           ventanaId: true, bancaId: true, isActive: true, code: true,
           createdAt: true, settings: true, platform: true, appVersion: true, maxSessionsPerVendedor: true,
+          creditLimit: true, creditAlertThreshold: true, creditBlockMode: true,
         },
       }),
       { context: 'UserService.getById' }
@@ -409,12 +411,31 @@ export const UserService = {
       () => prisma.user.findUnique({
         where: { id },
         select: {
-          id: true, username: true, email: true, role: true, ventanaId: true, code: true, bancaId: true,
+          id: true, username: true, email: true, role: true, ventanaId: true, code: true, bancaId: true, name: true,
+          creditLimit: true, creditAlertThreshold: true, creditBlockMode: true,
         },
       }),
       { context: 'UserService.update.fetchCurrent' }
     );
     if (!current) throw new AppError('User not found', 404);
+
+    const hasCreditFields =
+      dto.creditLimit !== undefined ||
+      dto.creditAlertThreshold !== undefined ||
+      dto.creditBlockMode !== undefined;
+
+    if (hasCreditFields) {
+      if (editingSelf) {
+        throw new AppError('No puedes modificar tu propia configuración de crédito', 403);
+      }
+      if (actingRole === Role.VENDEDOR) {
+        throw new AppError('No tienes permisos para modificar límites de crédito', 403);
+      }
+      const targetRole = dto.role ?? current.role;
+      if (targetRole !== Role.VENDEDOR) {
+        throw new AppError('Los topes de crédito solo aplican a usuarios con rol VENDEDOR', 400);
+      }
+    }
 
     if (actingRole === Role.VENTANA) {
       if (!actorId) throw new AppError('No autenticado', 401);
@@ -639,6 +660,28 @@ export const UserService = {
       }
     }
 
+    // Manejo de campos de límite de crédito
+    let hasCreditChanges = false;
+    if (hasCreditFields) {
+      if (dto.creditLimit !== undefined && dto.creditLimit !== current.creditLimit) {
+        toUpdate.creditLimit = dto.creditLimit;
+        hasCreditChanges = true;
+      }
+      if (dto.creditAlertThreshold !== undefined && dto.creditAlertThreshold !== current.creditAlertThreshold) {
+        toUpdate.creditAlertThreshold = dto.creditAlertThreshold;
+        hasCreditChanges = true;
+      }
+      if (dto.creditBlockMode !== undefined && dto.creditBlockMode !== current.creditBlockMode) {
+        toUpdate.creditBlockMode = dto.creditBlockMode;
+        hasCreditChanges = true;
+      }
+
+      if (hasCreditChanges) {
+        toUpdate.creditLimitUpdatedAt = new Date();
+        toUpdate.creditLimitUpdatedById = actorId ?? null;
+      }
+    }
+
     let updated;
     if (toUpdate.isActive === false) {
       updated = await prisma.$transaction(async (tx) => {
@@ -664,14 +707,33 @@ export const UserService = {
       }
     }
 
-    // Invalidar caché de sesión (L1/L2) si cambian datos críticos
+    // Invalidar caché de sesión (L1/L2) si cambian datos críticos o de crédito
     const criticalFields = ['role', 'ventanaId', 'bancaId', 'isActive', 'password'];
     const hasCriticalChanges = Object.keys(toUpdate).some(k => criticalFields.includes(k));
     
-    if (hasCriticalChanges) {
+    if (hasCriticalChanges || hasCreditChanges) {
       await CacheService.invalidateTag(`user:${id}`);
       await CacheService.invalidateTag(`user-bancas:${id}`);
       await CacheService.del(`auth:session:${id}`); // Fuerza invalidación directa de L1 y L2 para la sesión
+      if (hasCreditChanges) {
+        try {
+          const { VendorCreditService } = await import('../credit/vendorCredit.service');
+          await VendorCreditService.handleCreditConfigChanged(id, {
+            creditLimit: current.creditLimit,
+            creditAlertThreshold: current.creditAlertThreshold,
+            creditBlockMode: current.creditBlockMode,
+          });
+        } catch (creditErr: any) {
+          logger.error({
+            layer: 'user',
+            action: 'VENDOR_CREDIT_CONFIG_UPDATE_ERROR',
+            payload: {
+              vendedorId: id,
+              error: creditErr?.message || String(creditErr),
+            },
+          });
+        }
+      }
     }
 
     // Invalidar caché de listados de usuarios al modificar un usuario
@@ -701,6 +763,7 @@ export const UserService = {
           ventanaId: true, bancaId: true, isActive: true, code: true, 
           createdAt: true, settings: true,
           platform: true, appVersion: true, maxSessionsPerVendedor: true,
+          creditLimit: true, creditAlertThreshold: true, creditBlockMode: true,
         },
       }),
       { context: 'UserService.update.fetchResult' }
@@ -718,6 +781,34 @@ export const UserService = {
           changedFields: Object.keys(toUpdate),
           description: `Usuario actualizado: ${result.name} (@${result.username}). Campos modificados: ${Object.keys(toUpdate).join(', ')}`
         },
+      });
+    }
+
+    // Log de auditoría específico para actualización de límites de crédito (asíncrono vía BackgroundTaskQueue)
+    if (result && hasCreditChanges) {
+      BackgroundTaskQueue.enqueue('ActivityService.logUserCreditLimitUpdate', async () => {
+        await ActivityService.log({
+          userId: actorId ?? null,
+          bancaId: result.bancaId,
+          action: ActivityType.USER_CREDIT_LIMIT_UPDATE,
+          targetType: 'USER',
+          targetId: id,
+          details: {
+            actorId: actorId ?? null,
+            targetUserId: id,
+            previous: {
+              creditLimit: current.creditLimit,
+              creditAlertThreshold: current.creditAlertThreshold,
+              creditBlockMode: current.creditBlockMode,
+            },
+            new: {
+              creditLimit: result.creditLimit,
+              creditAlertThreshold: result.creditAlertThreshold,
+              creditBlockMode: result.creditBlockMode,
+            },
+            description: `Límite de crédito modificado para vendedor: ${result.name} (@${result.username}). Límite: ${current.creditLimit ?? 'Sin límite'} -> ${result.creditLimit ?? 'Sin límite'}, Umbral: ${current.creditAlertThreshold}% -> ${result.creditAlertThreshold}%, Modo: ${current.creditBlockMode ? 'BLOQUEAR' : 'ALERTA'} -> ${result.creditBlockMode ? 'BLOQUEAR' : 'ALERTA'}`,
+          },
+        });
       });
     }
 

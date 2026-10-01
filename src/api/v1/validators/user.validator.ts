@@ -102,6 +102,19 @@ export const updateUserSchema = z
     code: z.string().trim().min(2).max(32).nullable().optional(),
     maxSessionsPerVendedor: z.coerce.number().int().min(1, 'El mínimo es 1 sesión').max(20, 'El máximo es 20 sesiones').nullable().optional(),
     settings: UserSettingsSchema.nullable().optional(),
+    creditLimit: z
+      .number({ message: 'creditLimit debe ser un número' })
+      .min(0, 'El límite de crédito no puede ser negativo')
+      .nullable()
+      .optional()
+      .transform((val) => (val === 0 ? null : val)),
+    creditAlertThreshold: z.coerce
+      .number({ message: 'creditAlertThreshold debe ser un número' })
+      .int('El umbral de alerta debe ser un número entero')
+      .min(1, 'El umbral mínimo de alerta es 1%')
+      .max(100, 'El umbral máximo de alerta es 100%')
+      .optional(),
+    creditBlockMode: z.boolean().optional(),
   })
   .superRefine((val, ctx) => {
     // Si cambian role en update, validamos la coherencia con ventanaId
@@ -111,6 +124,17 @@ export const updateUserSchema = z
           code: z.ZodIssueCode.custom,
           path: ['ventanaId'],
           message: 'Selecciona un listero',
+        })
+      }
+    }
+
+    // Los topes de crédito solo aplican al rol VENDEDOR
+    if (val.role !== undefined && val.role !== Role.VENDEDOR) {
+      if (val.creditLimit !== undefined || val.creditAlertThreshold !== undefined || val.creditBlockMode !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['creditLimit'],
+          message: 'Los campos de límite de crédito solo aplican a usuarios con rol VENDEDOR',
         })
       }
     }

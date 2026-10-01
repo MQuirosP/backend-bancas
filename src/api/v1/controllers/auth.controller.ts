@@ -352,8 +352,8 @@ export const AuthController = {
       });
     }
 
-    // Restricciones: el usuario no puede cambiar su propio role, ventanaId, code, isActive
-    const restrictedFields = ['role', 'ventanaId', 'code', 'isActive'];
+    // Restricciones: el usuario no puede cambiar su propio role, ventanaId, code, isActive ni topes de crédito
+    const restrictedFields = ['role', 'ventanaId', 'code', 'isActive', 'creditLimit', 'creditAlertThreshold', 'creditBlockMode'];
     const body = { ...req.body };
     
     for (const field of restrictedFields) {

@@ -65,10 +65,7 @@ export const UserRepository = {
       { context: 'UserRepository.create' }
     ),
 
-  update: (id: string, data: Partial<{
-    name: string; email: string | null; username: string; password: string;
-    role: Role; ventanaId: string | null; bancaId: string | null; isActive: boolean; code: string | null; phone: string | null; settings: any;
-  }>) =>
+  update: (id: string, data: Prisma.UserUpdateInput) =>
     withConnectionRetry(
       () => prisma.user.update({ where: { id }, data }),
       { context: 'UserRepository.update' }
@@ -129,6 +126,7 @@ export const UserRepository = {
             ventanaId: true, bancaId: true, isActive: true, code: true,
             createdAt: true, updatedAt: true, settings: true,
             platform: true, appVersion: true, maxSessionsPerVendedor: true,
+            creditLimit: true, creditAlertThreshold: true, creditBlockMode: true,
             ventana: {
               select: {
                 id: true,
