@@ -27,6 +27,7 @@ import accountStatementSettlementRoutes from "./accountStatementSettlement.route
 import appRoutes from "./app.routes"
 import telemetryRoutes from "./telemetry.routes"
 import opsRoutes from "./ops.routes"
+import creditRoutes from "./credit.routes"
 
 import adminBackupRoutes from "./adminBackup.routes"
 
@@ -62,6 +63,7 @@ router.use("/listas-excluidas", listasExcluidasRoutes);
 router.use("/account-statements", accountStatementSettlementRoutes);
 router.use("/telemetry", telemetryRoutes);
 router.use("/ops", opsRoutes);
+router.use("/credit", creditRoutes);
 router.use("/", commissionRoutes); // Commission routes include their own path prefixes (políticas de comisión)
 
 export const apiV1Router = router;
