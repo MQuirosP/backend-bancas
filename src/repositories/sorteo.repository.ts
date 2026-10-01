@@ -421,6 +421,12 @@ const SorteoRepository = {
       extraMultiplierId = null,
     } = body
 
+    // Marcar sorteo como 'en evaluación' en Redis para cerrar el gap contable
+    try {
+      const { VendorCreditService } = await import("../domain/credit/vendorCredit.service");
+      await VendorCreditService.markSorteoEvaluating(id);
+    } catch {}
+
     let resultRaw: any[];
     try {
       resultRaw = await prisma.$queryRawUnsafe<any[]>(
@@ -432,6 +438,12 @@ const SorteoRepository = {
         null // p_user_id explícitamente null en este contexto
       );
     } catch (error: any) {
+      // Limpiar marcador si la evaluación falla en base de datos
+      try {
+        const { VendorCreditService } = await import("../domain/credit/vendorCredit.service");
+        await VendorCreditService.unmarkSorteoEvaluating(id).catch(() => {});
+      } catch {}
+
       if (error?.message?.includes("ya evaluado/cerrado") || error?.message?.includes("Sorteo ya evaluado")) {
         throw new AppError("El sorteo ya había sido evaluado o cerrado.", 409);
       }
@@ -440,6 +452,10 @@ const SorteoRepository = {
 
     const result = resultRaw[0]?.fn_evaluate_sorteo;
     if (!result) {
+      try {
+        const { VendorCreditService } = await import("../domain/credit/vendorCredit.service");
+        await VendorCreditService.unmarkSorteoEvaluating(id).catch(() => {});
+      } catch {}
       throw new AppError("Error al evaluar el sorteo en base de datos", 500);
     }
 

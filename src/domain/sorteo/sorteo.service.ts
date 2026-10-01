@@ -665,7 +665,7 @@ const SorteoService = {
       role
     );
 
-    // 3) Ejecutar la evaluación transaccional (ACID) en base de datos
+    // 3) Ejecutar la evaluación transaccional (ACID) en base de datos (marca automáticamente sorteos:evaluating)
     const evaluated = await SorteoRepository.evaluate(id, {
       winningNumber: body.winningNumber.trim(),
       extraOutcomeCode,
@@ -769,6 +769,9 @@ const SorteoService = {
       try {
         const { AccountStatementSyncService } = await import('../accounts/accounts.sync.service');
         await AccountStatementSyncService.syncSorteoStatements(id, existing.scheduledAt);
+
+        const { VendorCreditService } = await import('../credit/vendorCredit.service');
+        await VendorCreditService.onSorteoReverted(id).catch(() => {});
 
         // Invalidar cache de sorteos, dashboard y cierres
         const { clearSorteoCache } = require('../../utils/sorteoCache');

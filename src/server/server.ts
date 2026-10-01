@@ -46,6 +46,18 @@ server.listen(config.port, 511, async () => {
   try {
     await initRedisClient()
     initCacheSubscriber()
+
+    if (config.creditLimit.enabled) {
+      import('../domain/credit/vendorCredit.service')
+        .then(({ VendorCreditService }) => VendorCreditService.warmupCaches())
+        .catch((e) => {
+          logger.warn({
+            layer: 'server',
+            action: 'CREDIT_WARMUP_INIT_ERROR',
+            meta: { error: e?.message || String(e) },
+          });
+        });
+    }
   } catch (error: any) {
     logger.warn({
       layer: 'server',

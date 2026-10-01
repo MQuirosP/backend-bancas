@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ️ ESTÁNDAR CRÍTICO: ZONA HORARIA COSTA RICA
  * 
  * TODAS las fechas en este servicio se manejan en hora LOCAL de Costa Rica (UTC-6).
@@ -335,6 +335,19 @@ export class AccountStatementSyncService {
     await prisma.$transaction(async (tx) => {
       await writePhase(tx);
     }, { timeout: 10000 });
+
+    if (vendedorId) {
+      try {
+        const { VendorCreditService } = await import("../credit/vendorCredit.service");
+        await VendorCreditService.updateBaseBalance(vendedorId);
+      } catch (err: any) {
+        logger.error({
+          layer: "accounts_sync",
+          action: "VENDOR_CREDIT_UPDATE_BASE_ERROR",
+          payload: { vendedorId, error: err?.message || String(err) },
+        });
+      }
+    }
   }
 
   /**
@@ -452,6 +465,19 @@ export class AccountStatementSyncService {
           }
         }
       }, { timeout: 10000 });
+
+    if (vendedorId) {
+      try {
+        const { VendorCreditService } = await import("../credit/vendorCredit.service");
+        await VendorCreditService.updateBaseBalance(vendedorId);
+      } catch (err: any) {
+        logger.error({
+          layer: "accounts_sync",
+          action: "VENDOR_CREDIT_UPDATE_BASE_ERROR",
+          payload: { vendedorId, error: err?.message || String(err) },
+        });
+      }
+    }
   }
 
   /**

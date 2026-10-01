@@ -117,15 +117,28 @@ export class SorteoEvaluationCoordinator {
         id
       );
 
+      const syncOutput = syncResultRaw?.[0]?.fn_sync_sorteo_statements;
+      const syncDuration = Date.now() - syncStart;
+
+      // Reconciliar saldos y desmarcar sorteo de evaluación en el módulo de crédito INMEDIATAMENTE
+      // tras el commit contable de fn_sync_sorteo_statements y ANTES de fn_sync_sorteo_multipliers_summary
+      try {
+        const { VendorCreditService } = await import("../credit/vendorCredit.service");
+        await VendorCreditService.reconcileSorteo(id);
+      } catch (creditErr: any) {
+        logger.error({
+          layer: "coordinator",
+          action: "RECONCILE_CREDIT_ERROR",
+          payload: { sorteoId: id, error: creditErr?.message || String(creditErr) },
+        });
+      }
+
       // --- SINCRONIZACIÓN DE RESUMEN POR MULTIPLICADORES (O(1) para Warmup y Balances) ---
       await prisma.$queryRawUnsafe(
         `SELECT fn_sync_sorteo_multipliers_summary($1::uuid)`,
         id
       );
       // -----------------------------------------------------------------------------------
-
-      const syncOutput = syncResultRaw?.[0]?.fn_sync_sorteo_statements;
-      const syncDuration = Date.now() - syncStart;
 
       logger.info({
         layer: "coordinator",
@@ -153,10 +166,19 @@ export class SorteoEvaluationCoordinator {
       const dateStr = syncOutput?.businessDate || (existingSorteo.scheduledAt ? tz.toDateStr(existingSorteo.scheduledAt) : tz.toDateStr());
       await CierreRollupService.aggregateRange(dateStr, dateStr);
     } catch (syncErr: any) {
+      // NOTA CRÍTICA: NO limpiar el marcador sorteos:evaluating si el sync contable falla.
+      // Como el sorteo ya quedó en estado EVALUATED en PostgreSQL, si se eliminara el marcador
+      // sus ventas desaparecerían del saldo efectivo (subconteo riesgoso).
+      // Se conserva en el ZSET hasta que un sync posterior termine bien (reconcileSorteo) o expire su TTL.
       logger.error({
         layer: "coordinator",
         action: "ACCOUNT_STATEMENT_SYNC_BACKGROUND_ERROR",
-        payload: { sorteoId: id, error: syncErr?.message || String(syncErr) },
+        payload: {
+          sorteoId: id,
+          error: syncErr?.message || String(syncErr),
+          creditMarkerRetained: true,
+          note: "Marcador sorteos:evaluating retenido en Redis para evitar subconteo hasta reconciliación exitosa o expiración de TTL",
+        },
       });
     }
 
