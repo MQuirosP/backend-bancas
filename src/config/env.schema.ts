@@ -61,4 +61,12 @@ export const EnvSchema = z.object({
 
   // TELEMETRIA
   TELEMETRY_ENABLED: parseBooleanWithDefault(false),
+
+  // TOPES Y CONTROL DE CRÉDITO
+  CREDIT_LIMIT_ENABLED: parseBooleanWithDefault(false),
+  CREDIT_HYDRATION_TIMEOUT_MS: z.coerce.number().int().default(1000),
+  CREDIT_OPEN_SALES_DAYS_WINDOW: z.coerce.number().int().default(2),
+  CREDIT_EVALUATING_SORTEO_TTL_SECONDS: z.coerce.number().int().default(900),
+  CREDIT_DEGRADED_TTL_MS: z.coerce.number().int().default(3000),
+  CREDIT_DEGRADED_DB_TIMEOUT_MS: z.coerce.number().int().default(1000),
 });

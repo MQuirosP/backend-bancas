@@ -77,4 +77,12 @@ export const config = {
     redisCbResetMs: parsed.data.REDIS_CB_RESET_MS,
   },
   telemetryEnabled: parsed.data.TELEMETRY_ENABLED,
+  creditLimit: {
+    enabled: parsed.data.CREDIT_LIMIT_ENABLED,
+    hydrationTimeoutMs: parsed.data.CREDIT_HYDRATION_TIMEOUT_MS,
+    openSalesDaysWindow: parsed.data.CREDIT_OPEN_SALES_DAYS_WINDOW,
+    evaluatingSorteoTtlSeconds: parsed.data.CREDIT_EVALUATING_SORTEO_TTL_SECONDS,
+    degradedTtlMs: parsed.data.CREDIT_DEGRADED_TTL_MS,
+    degradedDbTimeoutMs: parsed.data.CREDIT_DEGRADED_DB_TIMEOUT_MS,
+  },
 }
