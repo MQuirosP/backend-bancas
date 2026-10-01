@@ -31,6 +31,8 @@ import { TicketPersistenceService } from "../domain/ticket/pipeline/TicketPersis
 import { TicketRedisAccumulator } from "../domain/ticket/pipeline/TicketRedisAccumulator";
 import { TicketTimeoutCalculator } from "../domain/ticket/pipeline/TicketTimeoutCalculator";
 import { TicketResponseBuilder } from "../domain/ticket/pipeline/TicketResponseBuilder";
+import { config } from "../config";
+import { VendorCreditService } from "../domain/credit/vendorCredit.service";
 
 export type { CreateTicketInput, CreateTicketOptions, TicketWarning };
 
@@ -405,7 +407,17 @@ export const TicketRepository = {
     data: Omit<CreateTicketInput, 'totalAmount'>,
     userId: string,
     options?: CreateTicketOptions
-  ): Promise<{ ticket: any; warnings: TicketWarning[] }> {
+  ): Promise<{
+    ticket: any;
+    warnings: TicketWarning[];
+    creditInfo?: {
+      limit: number | null;
+      effectiveBalance: number;
+      percentageUsed: number;
+      status: string;
+      degraded?: boolean;
+    } | null;
+  }> {
     const dynamicTimeout = TicketTimeoutCalculator.calculate(data.jugadas.length);
     const t_lock_start = performance.now();
     const lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
@@ -489,75 +501,226 @@ export const TicketRepository = {
         }
       } catch {}
 
-      // 3. [IN-TX] Transacción interactiva mínima: solo validación atómica de estado, topes e inserción
-      if (options?.timingCollector) {
-        options.timingCollector.t_prefetch = Math.round(
-          (performance.now() - options.timingCollector.startTime) * 100
-        ) / 100;
+      // 2.6. [PRE-TX] Validación de Límite de Crédito del Vendedor en Redis (Atomic Lua)
+      let creditReservedAmount = 0;
+      let creditCheckPerformed = false;
+      let creditWarningInfo: { status: string; projected: number; percentage: number } | null = null;
+      let creditInfo: {
+        limit: number | null;
+        effectiveBalance: number;
+        percentageUsed: number;
+        status: string;
+        degraded?: boolean;
+      } | null = null;
+
+      // El tope debe aplicarse según el vendedorId efectivo del ticket y NO según el rol de quien lo crea
+      const effectiveVendedorId = userId;
+      const effectiveVendedor = preTxMeta.user;
+      const vendorHasCreditLimit =
+        effectiveVendedor?.creditLimit === undefined
+          ? true
+          : (effectiveVendedor.creditLimit !== null && effectiveVendedor.creditLimit > 0);
+
+      if (config.creditLimit.enabled && vendorHasCreditLimit) {
+        const t_credit_start = performance.now();
+        const multList = preFetchedMultipliers || options?.preFetched?.multipliers || [];
+        const multMap = new Map<string, number>();
+        for (const m of multList) {
+          if (m?.id && typeof m.valueX === "number") {
+            multMap.set(m.id, m.valueX);
+          }
+        }
+        const preflightJugadas = data.jugadas.map((j: any) => ({
+          ...j,
+          type: j.type ?? BetType.NUMERO,
+          finalMultiplierX:
+            j.type === BetType.REVENTADO
+              ? 0
+              : (j.multiplierId ? (multMap.get(j.multiplierId) ?? j.finalMultiplierX ?? 0) : (j.finalMultiplierX ?? 0)),
+        }));
+
+        const preflightCommissions = TicketCommissionCalculator.calculate({
+          data,
+          meta: preTxMeta,
+          preparedJugadas: preflightJugadas,
+          options,
+        });
+        const totalAmountEstimate = data.jugadas.reduce((s, j) => s + (j.amount || 0), 0);
+        const userCommissionEstimate = preflightCommissions.totalVendorCommission ?? 0;
+        // Se reserva el monto NETO (bruto − comisión del vendedor): la comisión es
+        // ganancia del vendedor y no representa deuda con la ventana.
+        // La compensación al anular usa ticket.totalCommission (valor exacto persistido)
+        // para garantizar simetría sin depender de estimaciones.
+        const netAmountToReserve = Math.round(Math.max(0, totalAmountEstimate - userCommissionEstimate) * 100) / 100;
+
+        let creditResult = await VendorCreditService.validateAndReserve(
+          effectiveVendedorId,
+          data.sorteoId,
+          netAmountToReserve
+        );
+
+        if (creditResult.code === "BLOCKED") {
+          // BLOCKED refleja el intento de venta rechazado por superar el tope disponible
+          throw new AppError(
+            "Venta bloqueada: alcanzó su límite de caja. Coordine un depósito con su listero.",
+            409,
+            "CREDIT_LIMIT_EXCEEDED"
+          );
+        }
+
+        if (creditResult.code !== "OK") {
+          logger.error({
+            layer: "credit",
+            action: "UNEXPECTED_CREDIT_RESULT_CODE",
+            payload: { code: (creditResult as any).code, effectiveVendedorId, creditResult },
+          });
+          creditResult = await VendorCreditService.resolveDegradedFallback(
+            effectiveVendedorId,
+            data.sorteoId,
+            netAmountToReserve,
+            `Unexpected creditResult code: ${(creditResult as any).code}`
+          );
+          if (creditResult.code === "BLOCKED") {
+            throw new AppError(
+              "Venta bloqueada: alcanzó su límite de caja. Coordine un depósito con su listero.",
+              409,
+              "CREDIT_LIMIT_EXCEEDED"
+            );
+          }
+        }
+
+        creditReservedAmount = netAmountToReserve;
+        creditCheckPerformed = true;
+
+        creditInfo = {
+          limit: creditResult.limit ?? null,
+          effectiveBalance: creditResult.projected,
+          percentageUsed: creditResult.percentage,
+          status: creditResult.status,
+          ...(creditResult.degraded ? { degraded: true } : {}),
+        };
+
+        if (creditResult.status === "WARNING" || creditResult.status === "EXCEEDED_ALERT_ONLY") {
+          creditWarningInfo = {
+            status: creditResult.status,
+            projected: creditResult.projected,
+            percentage: creditResult.percentage,
+          };
+        }
+
+        try {
+          if (options?.timingCollector?.prefetch_breakdown) {
+            (options.timingCollector.prefetch_breakdown as any).t_credit =
+              Math.round((performance.now() - t_credit_start) * 100) / 100;
+          }
+        } catch {}
       }
 
-      const txResult = await withTransactionRetry(
-        async (tx) => {
-          // Race-check atómico dentro de la TX para evitar ventas sobre sorteos recién cerrados
-          await TicketPrefetchService.resolveInTxSorteoStatus(tx, data.sorteoId);
-
-          const { ticketNumber, seqForLog } = await TicketNumberGenerator.generate(
-            tx,
-            preTxMeta.businessDateInfo.businessDateISO
-          );
-
-          const { warnings, preparedJugadas, totalAmountTx } = await TicketRiskValidator.validate(tx, {
-            data,
-            meta: preTxMeta,
-            userId,
-            options,
-            prefecthedRules,
-            prefetchedCache,
-            prefetchedDynamicLimits,
-          });
-
-          const commissions = TicketCommissionCalculator.calculate({
-            data,
-            meta: preTxMeta,
-            preparedJugadas,
-            options,
-          });
-
-          const saveResult = await TicketPersistenceService.save(tx, {
-            data,
-            meta: preTxMeta,
-            ticketNumber,
-            seqForLog,
-            totalAmountTx,
-            commissions,
-            warnings,
-            userId,
-            options,
-          });
-
-          return {
-            ...saveResult,
-            businessDateInfo: preTxMeta.businessDateInfo,
-            sorteoScheduledAt: preTxMeta.sorteo?.scheduledAt,
-          };
-        },
-        {
-          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
-          maxRetries: 3,
-          backoffMinMs: 150,
-          backoffMaxMs: 2_000,
-          maxWaitMs: 5_000,
-          timeoutMs: dynamicTimeout,
-          client: salesPrisma,
-          onMetrics: (metrics) => {
-            if (options?.timingCollector) {
-              options.timingCollector.t_pool_wait = metrics.poolWaitMs;
-              options.timingCollector.t_tx = metrics.txMs;
-              options.timingCollector.tx_attempts = metrics.attempts;
-            }
-          },
+      let txResult;
+      try {
+        // 3. [IN-TX] Transacción interactiva mínima: solo validación atómica de estado, topes e inserción
+        if (options?.timingCollector) {
+          options.timingCollector.t_prefetch = Math.round(
+            (performance.now() - options.timingCollector.startTime) * 100
+          ) / 100;
         }
-      );
+
+        txResult = await withTransactionRetry(
+          async (tx) => {
+            // Race-check atómico dentro de la TX para evitar ventas sobre sorteos recién cerrados
+            await TicketPrefetchService.resolveInTxSorteoStatus(tx, data.sorteoId);
+
+            const { ticketNumber, seqForLog } = await TicketNumberGenerator.generate(
+              tx,
+              preTxMeta.businessDateInfo.businessDateISO
+            );
+
+            const { warnings, preparedJugadas, totalAmountTx } = await TicketRiskValidator.validate(tx, {
+              data,
+              meta: preTxMeta,
+              userId,
+              options,
+              prefecthedRules,
+              prefetchedCache,
+              prefetchedDynamicLimits,
+            });
+
+            const commissions = TicketCommissionCalculator.calculate({
+              data,
+              meta: preTxMeta,
+              preparedJugadas,
+              options,
+            });
+
+            const saveResult = await TicketPersistenceService.save(tx, {
+              data,
+              meta: preTxMeta,
+              ticketNumber,
+              seqForLog,
+              totalAmountTx,
+              commissions,
+              warnings,
+              userId,
+              options,
+            });
+
+            return {
+              ...saveResult,
+              businessDateInfo: preTxMeta.businessDateInfo,
+              sorteoScheduledAt: preTxMeta.sorteo?.scheduledAt,
+            };
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+            maxRetries: 3,
+            backoffMinMs: 150,
+            backoffMaxMs: 2_000,
+            maxWaitMs: 5_000,
+            timeoutMs: dynamicTimeout,
+            client: salesPrisma,
+            onMetrics: (metrics) => {
+              if (options?.timingCollector) {
+                options.timingCollector.t_pool_wait = metrics.poolWaitMs;
+                options.timingCollector.t_tx = metrics.txMs;
+                options.timingCollector.tx_attempts = metrics.attempts;
+              }
+            },
+          }
+        );
+      } catch (txError) {
+        if (creditCheckPerformed && creditReservedAmount > 0) {
+          VendorCreditService.compensateReservation(
+            effectiveVendedorId,
+            data.sorteoId,
+            creditReservedAmount
+          ).catch((compErr) => {
+            logger.error({
+              layer: "repository",
+              action: "TICKET_CREATION_COMPENSATION_FAILED",
+              payload: {
+                vendedorId: effectiveVendedorId,
+                sorteoId: data.sorteoId,
+                amount: creditReservedAmount,
+                error: compErr?.message || String(compErr),
+              },
+            });
+          });
+        }
+        throw txError;
+      }
+
+      if (creditWarningInfo && txResult?.warnings) {
+        txResult.warnings.push({
+          code: "CREDIT_LIMIT_WARNING",
+          message:
+            creditWarningInfo.status === "EXCEEDED_ALERT_ONLY"
+              ? `Límite de crédito excedido (${creditWarningInfo.percentage}% del límite). Venta permitida por modo alerta.`
+              : `Alcanzado el ${creditWarningInfo.percentage}% del límite de crédito.`,
+          status: creditWarningInfo.status,
+          projected: creditWarningInfo.projected,
+          percentage: creditWarningInfo.percentage,
+        });
+      }
 
       if (options?.timingCollector) {
         options.timingCollector.tx_end_time = performance.now();
@@ -571,7 +734,7 @@ export const TicketRepository = {
         DailyNumberSalesService.incrementFromTicket(txResult.createdTicketId)
       );
 
-      return { ticket, warnings: txResult.warnings };
+      return { ticket, warnings: txResult.warnings, creditInfo };
     } finally {
       if (lock) {
         await TicketConcurrencyManager.release(lock);
@@ -1076,6 +1239,31 @@ export const TicketRepository = {
           });
         }
       }
+    }
+
+    // Decrementar reserva de crédito del vendedor en Redis tras anulación.
+    // Se usa ticket.totalCommission (valor exacto en BD) para calcular el neto,
+    // garantizando simetría con lo reservado al crear el ticket.
+    if (ticket.vendedorId && config.creditLimit.enabled) {
+      const ticketNet = Math.round(
+        Math.max(0, Number(ticket.totalAmount) - Number(ticket.totalCommission ?? 0)) * 100
+      ) / 100;
+      VendorCreditService.compensateReservation(
+        ticket.vendedorId,
+        ticket.sorteoId,
+        ticketNet
+      ).catch((compErr) => {
+        logger.error({
+          layer: "repository",
+          action: "TICKET_CANCEL_COMPENSATION_FAILED",
+          payload: {
+            vendedorId: ticket.vendedorId,
+            sorteoId: ticket.sorteoId,
+            amount: ticketNet,
+            error: compErr?.message || String(compErr),
+          },
+        });
+      });
     }
 
     return ticket;

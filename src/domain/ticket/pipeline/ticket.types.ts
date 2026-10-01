@@ -19,17 +19,27 @@ export type CreateTicketInput = {
   }>;
 };
 
-export type TicketWarning = {
-  code: "LOTTERY_MULTIPLIER_RESTRICTED";
-  restrictedButAllowed: boolean;
-  ruleId: string;
-  scope: ReportDimension;
-  loteriaId: string;
-  loteriaName?: string | null;
-  multiplierId: string;
-  multiplierName?: string | null;
+export type CreditLimitWarning = {
+  code: "CREDIT_LIMIT_WARNING";
   message: string;
+  status: string;
+  projected: number;
+  percentage: number;
 };
+
+export type TicketWarning =
+  | {
+      code: "LOTTERY_MULTIPLIER_RESTRICTED";
+      restrictedButAllowed: boolean;
+      ruleId: string;
+      scope: ReportDimension;
+      loteriaId: string;
+      loteriaName?: string | null;
+      multiplierId: string;
+      multiplierName?: string | null;
+      message: string;
+    }
+  | CreditLimitWarning;
 
 export type TicketTimingCollector = {
   startTime: number;
@@ -107,6 +117,7 @@ export type PreparedCommissions = {
   commissionsDetails: any[];
   totalCommission: number;
   totalListeroCommission: number;
+  totalVendorCommission: number;
 };
 
 export type TransactionSaveResult = {

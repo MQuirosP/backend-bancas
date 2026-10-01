@@ -142,7 +142,14 @@ export class TicketPrefetchService {
           ? Promise.resolve(options.preFetched.vendedor)
           : salesPrisma.user.findUnique({
               where: { id: userId },
-              select: { id: true, commissionPolicyJson: true },
+              select: {
+                id: true,
+                role: true,
+                creditLimit: true,
+                creditAlertThreshold: true,
+                creditBlockMode: true,
+                commissionPolicyJson: true,
+              },
             }),
         preFetchedBancaId
           ? resolveBaseMultiplierX(salesPrisma as any, {

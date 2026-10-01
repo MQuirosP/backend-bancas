@@ -188,12 +188,17 @@ export class TicketCommissionCalculator {
       (sum, j) => sum + (j.listeroCommissionAmount || 0),
       0
     );
+    const totalVendorCommission = jugadasWithCommissions.reduce(
+      (sum, j) => sum + (j.commissionOrigin === 'USER' ? (j.commissionAmount || 0) : 0),
+      0
+    );
 
     return {
       jugadasWithCommissions,
       commissionsDetails,
       totalCommission,
       totalListeroCommission,
+      totalVendorCommission,
     };
   }
 }

@@ -221,6 +221,9 @@ export const TicketService = {
                     code: true,
                     phone: true,
                     settings: true,
+                    creditLimit: true,
+                    creditAlertThreshold: true,
+                    creditBlockMode: true,
                   },
                 }),
               { context: "TicketService.create.actor" },
@@ -451,7 +454,7 @@ export const TicketService = {
       }
 
       // 4. Crear ticket (Persistencia delegada a TicketPersistenceService)
-      const { ticket, warnings } =
+      const { ticket, warnings, creditInfo } =
         await TicketPersistenceService.createTicketOptimized(
           {
             loteriaId,
@@ -552,6 +555,10 @@ export const TicketService = {
           payload: { warnings },
         });
         (response as any).warnings = warnings;
+      }
+
+      if (creditInfo) {
+        (response as any).creditInfo = creditInfo;
       }
 
       // 6. Instrumentación y desglose de tiempos (POST /tickets)
@@ -3371,6 +3378,9 @@ async function resolveEffectiveActor(
                 code: true,
                 phone: true,
                 settings: true,
+                creditLimit: true,
+                creditAlertThreshold: true,
+                creditBlockMode: true,
               },
             }),
           { context: "TicketService.create.targetVendedor" },

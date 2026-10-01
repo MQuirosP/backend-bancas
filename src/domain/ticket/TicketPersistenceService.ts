@@ -20,7 +20,7 @@ export const TicketPersistenceService = {
     requestId?: string
   ) {
     try {
-      const { ticket, warnings } = await TicketRepository.createOptimized(
+      const { ticket, warnings, creditInfo } = await TicketRepository.createOptimized(
         params,
         effectiveVendedorId,
         options
@@ -29,7 +29,7 @@ export const TicketPersistenceService = {
       // Invalidar datos y acumulados de ventas del vendedor sin desalojar su perfil autenticado (tag user:*)
       await CacheService.invalidateTag(`user-sales:${effectiveVendedorId}`).catch(() => {});
       
-      return { ticket, warnings };
+      return { ticket, warnings, creditInfo };
     } catch (err: any) {
       if (
         err?.code === 'P2002' &&
