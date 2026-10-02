@@ -187,12 +187,13 @@ export class SocketService {
           logger.info({ layer: 'socket', action: 'REDIS_ADAPTER_SUB_CONNECTED' });
         });
 
-        this.io.adapter(createAdapter(this.pubClient, this.subClient));
+        const adapterPrefix = process.env.REDIS_PREFIX ?? (process.env.NODE_ENV === 'production' ? 'prod:' : 'local:');
+        this.io.adapter(createAdapter(this.pubClient, this.subClient, { key: `${adapterPrefix}socket.io` }));
 
         logger.info({
           layer: 'socket',
           action: 'REDIS_ADAPTER_ATTACHED',
-          payload: { message: 'Socket.io Redis adapter inyectado exitosamente para balanceo horizontal' },
+          payload: { message: `Socket.io Redis adapter inyectado con prefijo "${adapterPrefix}socket.io" para balanceo horizontal` },
         });
       } catch (err: any) {
         logger.error({
