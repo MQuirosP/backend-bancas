@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.23",
-  "versionCode": 29,
-  "buildNumber": 29,
-  "minSupportedVersion": "1.0.23",
+  "versionName": "1.0.24",
+  "versionCode": 30,
+  "buildNumber": 30,
+  "minSupportedVersion": "1.0.24",
   "forceUpdate": true,
-  "changelog": "Sincronización de estado en comunicación bidireccional.",
-  "releasedAt": "2026-09-23T21:30:00Z",
+  "changelog": "Mejoras de estabilidad y corrección de errores",
+  "releasedAt": "2026-10-02T00:17:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "460954ec42556e11eba6ea845a3e0c951eebbb1f02ce072a26a05f7202a8d5c0"
+      "sha256": "934564c93f8a6cbba4c5ff8417240fbdd591ccff0b6e8c8e075f4d631629b32e"
     },
     "arm64-v8a": {
-      "sha256": "460954ec42556e11eba6ea845a3e0c951eebbb1f02ce072a26a05f7202a8d5c0"
+      "sha256": "934564c93f8a6cbba4c5ff8417240fbdd591ccff0b6e8c8e075f4d631629b32e"
     }
   }
 }
