@@ -715,6 +715,18 @@ export const UserService = {
       await CacheService.invalidateTag(`user:${id}`);
       await CacheService.invalidateTag(`user-bancas:${id}`);
       await CacheService.del(`auth:session:${id}`); // Fuerza invalidación directa de L1 y L2 para la sesión
+      if (toUpdate.isActive === false) {
+        try {
+          const { VendorCreditService } = await import('../credit/vendorCredit.service');
+          await VendorCreditService.invalidateKeys(id);
+        } catch (creditErr: any) {
+          logger.warn({
+            layer: 'user',
+            action: 'VENDOR_CREDIT_INVALIDATE_KEYS_ON_DEACTIVATE_WARN',
+            payload: { vendedorId: id, error: creditErr?.message || String(creditErr) },
+          });
+        }
+      }
       if (hasCreditChanges) {
         try {
           const { VendorCreditService } = await import('../credit/vendorCredit.service');
@@ -857,6 +869,10 @@ export const UserService = {
       logger.warn({ layer: 'service', action: 'CACHE_INVALIDATE_FAIL', userId: id, meta: { error: err.message } })
     );
     await CacheService.invalidateTag('users').catch(() => {});
+    try {
+      const { VendorCreditService } = await import('../credit/vendorCredit.service');
+      await VendorCreditService.invalidateKeys(id);
+    } catch {}
 
     // Log de auditoría
     if (actorId) {

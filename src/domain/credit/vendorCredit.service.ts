@@ -27,6 +27,8 @@ export interface HydratedCreditState {
   status: CreditStatus;
   bancaId: string | null;
   ventanaId: string | null;
+  isActive?: boolean;
+  updatedAt?: string;
 }
 
 export interface CreditStatusItem {
@@ -1025,6 +1027,8 @@ export class VendorCreditService {
             settings: true,
             ventanaId: true,
             bancaId: true,
+            isActive: true,
+            updatedAt: true,
             ventana: { select: { bancaId: true } },
           },
         });
@@ -1037,6 +1041,7 @@ export class VendorCreditService {
         const limit = vendor.creditLimit ?? null;
         const threshold = vendor.creditAlertThreshold ?? 80;
         const blockMode = vendor.creditBlockMode ?? true;
+        const vendorUpdatedAt = vendor.updatedAt ? vendor.updatedAt.toISOString() : new Date().toISOString();
 
         // 2. Obtener saldo base desde el último AccountStatement con date <= hoy
         const todayCRStr = tz.toDateStr();
@@ -1097,6 +1102,8 @@ export class VendorCreditService {
               status,
               bancaId: effectiveBancaId || "",
               ventanaId: vendor.ventanaId || "",
+              isActive: vendor.isActive ? "1" : "0",
+              updatedAt: vendorUpdatedAt,
             });
             pipeline.expire(cfg, DEFAULT_TTL_SECONDS);
 
@@ -1124,6 +1131,8 @@ export class VendorCreditService {
           status,
           bancaId: effectiveBancaId,
           ventanaId: vendor.ventanaId,
+          isActive: vendor.isActive,
+          updatedAt: vendorUpdatedAt,
         };
       } finally {
         this.hydrationLocks.delete(vendedorId);
@@ -1434,7 +1443,8 @@ export class VendorCreditService {
 
   /**
    * Maneja el cambio de configuración de crédito de un vendedor (tope, umbral, modo de bloqueo).
-   * Invalida claves, rehidrata y emite vendor:credit_status_changed si el estado cambió.
+   * Actualiza 'cfg' en caliente mediante hset y recalcula el status sin purgar 'open_by_sorteo'.
+   * Emite el evento WebSocket vendor:credit_status_changed al usuario correspondiente.
    */
   static async handleCreditConfigChanged(
     vendedorId: string,
@@ -1446,46 +1456,97 @@ export class VendorCreditService {
   ): Promise<void> {
     if (!config.creditLimit.enabled) return;
 
-    let oldStatus: CreditStatus | null = null;
-    let oldEffective = 0;
+    // 1. Obtener la nueva configuración del vendedor desde BD
+    const vendor = await prisma.user.findUnique({
+      where: { id: vendedorId },
+      select: {
+        id: true,
+        creditLimit: true,
+        creditAlertThreshold: true,
+        creditBlockMode: true,
+        isActive: true,
+        updatedAt: true,
+        ventanaId: true,
+        bancaId: true,
+        ventana: { select: { bancaId: true } },
+      },
+    });
 
-    // 1. Obtener saldo efectivo actual previo para comparar el estado anterior
+    if (!vendor) return;
+
+    // Si el usuario ya no está activo, invalidar claves y salir
+    if (!vendor.isActive) {
+      await this.invalidateKeys(vendedorId);
+      this.listScopeCache.clear();
+      return;
+    }
+
+    const { cfg, base, open } = this.getKeys(vendedorId);
     const redis = getRedisClient();
+    const effectiveBancaId = vendor.bancaId || vendor.ventana?.bancaId || null;
+    const limit = vendor.creditLimit ?? null;
+    const threshold = vendor.creditAlertThreshold ?? 80;
+    const blockMode = vendor.creditBlockMode ?? true;
+    const vendorUpdatedAt = vendor.updatedAt ? vendor.updatedAt.toISOString() : new Date().toISOString();
+
+    let newEffective = 0;
+    let newPercentage = 0;
+    let newStatus: CreditStatus = "NORMAL";
+
     if (redis && isRedisAvailable()) {
       try {
-        const { base, open } = this.getKeys(vendedorId);
         const [baseVal, openSalesMap] = await Promise.all([
           redis.get(base),
           redis.hgetall(open),
         ]);
-        if (baseVal !== null || (openSalesMap && Object.keys(openSalesMap).length > 0)) {
+
+        if (baseVal !== null) {
+          // Redis está caliente: actualizar cfg en caliente conservando open_by_sorteo
           const b = parseFloat(baseVal || "0") || 0;
           const openSum = Object.values(openSalesMap || {}).reduce(
             (acc, v) => acc + (parseFloat(v as string) || 0),
             0
           );
-          oldEffective = b + openSum;
-          oldStatus = this.computeCreditStatus(
-            oldEffective,
-            oldConfig.creditLimit,
-            oldConfig.creditAlertThreshold ?? 80,
-            oldConfig.creditBlockMode ?? true
+          newEffective = Math.round((b + openSum) * 100) / 100;
+          newPercentage = limit && limit > 0
+            ? Math.round(((newEffective / limit) * 100) * 100) / 100
+            : 0;
+          newStatus = this.computeCreditStatus(newEffective, limit, threshold, blockMode);
+
+          await redis.hset(cfg, {
+            limit: limit !== null ? limit.toString() : "-1",
+            threshold: threshold.toString(),
+            blockMode: blockMode ? "1" : "0",
+            status: newStatus,
+            bancaId: effectiveBancaId || "",
+            ventanaId: vendor.ventanaId || "",
+            isActive: "1",
+            updatedAt: vendorUpdatedAt,
+          });
+          await redis.expire(cfg, DEFAULT_TTL_SECONDS);
+
+          this.listScopeCache.clear();
+
+          await this.emitCreditStatusChanged(
+            vendedorId,
+            newEffective,
+            newPercentage,
+            newStatus,
+            { limit, bancaId: effectiveBancaId, ventanaId: vendor.ventanaId }
           );
+          return;
         }
       } catch (err: any) {
         logger.warn({
           layer: "credit",
-          action: "GET_PREVIOUS_CREDIT_STATUS_BEFORE_UPDATE_WARN",
+          action: "UPDATE_CFG_HOT_WARN_FALLING_BACK_TO_HYDRATE",
           payload: { vendedorId, error: err?.message || String(err) },
         });
       }
     }
 
-    // 2. Invalidar claves en Redis y limpiar caché de listados
-    await this.invalidateKeys(vendedorId);
+    // Fallback: si baseVal era null o Redis falló, rehidratar normalmente
     this.listScopeCache.clear();
-
-    // 3. Rehidratar con la nueva configuración desde BD
     let newState: HydratedCreditState;
     try {
       newState = await this.hydrate(vendedorId);
@@ -1498,33 +1559,21 @@ export class VendorCreditService {
       return;
     }
 
-    const newEffective =
+    newEffective =
       newState.baseBalance +
       Object.values(newState.openBySorteo).reduce((acc, v) => acc + v, 0);
-    const newPercentage =
+    newPercentage =
       newState.limit && newState.limit > 0
         ? Math.round(((newEffective / newState.limit) * 100) * 100) / 100
         : 0;
-    const newStatus = newState.status;
+    newStatus = newState.status;
 
-    // Si no teníamos oldStatus de Redis, lo calculamos con el saldo efectivo hidratado y la config previa
-    if (oldStatus === null) {
-      oldStatus = this.computeCreditStatus(
-        newEffective,
-        oldConfig.creditLimit,
-        oldConfig.creditAlertThreshold ?? 80,
-        oldConfig.creditBlockMode ?? true
-      );
-    }
-
-    // 4. Emitir siempre tras cambio de configuración.
-    // Aunque el status no cambie (ej: OK→OK con nuevo tope), el porcentaje
-    // y el cupo restante sí cambian y el cliente necesita actualizarse.
     await this.emitCreditStatusChanged(
       vendedorId,
       newEffective,
       newPercentage,
-      newStatus
+      newStatus,
+      { limit: newState.limit, bancaId: newState.bancaId, ventanaId: newState.ventanaId }
     );
   }
 
@@ -1542,6 +1591,99 @@ export class VendorCreditService {
 
     const { activeBancaId, requestedVendedorIds } = options;
     const isSpecificList = Array.isArray(requestedVendedorIds) && requestedVendedorIds.length > 0;
+
+    // OPTIMIZACIÓN REDIS-FIRST (Caso mono-ID, ej: /api/v1/credit/status/me)
+    if (isSpecificList && requestedVendedorIds.length === 1) {
+      const targetId = requestedVendedorIds[0];
+
+      // Validación preliminar RBAC para VENDEDOR (solo puede consultar su propio ID)
+      if (actor.role === Role.VENDEDOR && targetId !== actor.id) {
+        return { enabled: true, items: [] };
+      }
+
+      const redis = getRedisClient();
+      if (redis && isRedisAvailable()) {
+        try {
+          const { cfg, base, open } = this.getKeys(targetId);
+          const pipeline = redis.pipeline();
+          pipeline.hgetall(cfg);
+          pipeline.get(base);
+          pipeline.hgetall(open);
+          const results = await pipeline.exec();
+
+          const cfgMap = (results?.[0]?.[1] as Record<string, string>) || {};
+          const baseVal = results?.[1]?.[1] as string | null | undefined;
+          const openMap = (results?.[2]?.[1] as Record<string, string>) || {};
+
+          // Si el hash cfg y el base existen en Redis (cache hit)
+          if (
+            cfgMap &&
+            Object.keys(cfgMap).length > 0 &&
+            cfgMap.limit !== undefined &&
+            baseVal !== null &&
+            baseVal !== undefined
+          ) {
+            // Si el vendedor fue marcado inactivo en Redis, retornar vacío
+            if (cfgMap.isActive === "0") {
+              return { enabled: true, items: [] };
+            }
+
+            // Validar RBAC según relaciones en cfgMap
+            if (actor.role === Role.VENTANA && cfgMap.ventanaId && cfgMap.ventanaId !== actor.ventanaId) {
+              return { enabled: true, items: [] };
+            }
+            if (actor.role === Role.ADMIN && activeBancaId && cfgMap.bancaId && cfgMap.bancaId !== activeBancaId) {
+              return { enabled: true, items: [] };
+            }
+
+            const canServeBanca =
+              actor.role !== Role.BANCA ||
+              (actor.bancaId && cfgMap.bancaId === actor.bancaId);
+
+            if (canServeBanca) {
+              const rawLimit = parseFloat(cfgMap.limit);
+              const limit = !isNaN(rawLimit) && rawLimit > 0 ? rawLimit : null;
+              const threshold = parseFloat(cfgMap.threshold) || 80;
+              const blockMode = cfgMap.blockMode !== "0";
+
+              const baseNum = parseFloat(baseVal || "0") || 0;
+              const openTotal = Object.values(openMap || {}).reduce(
+                (acc: number, val: any) => acc + (parseFloat(val) || 0),
+                0
+              );
+              const effectiveBalance = Math.round((baseNum + openTotal) * 100) / 100;
+              const percentageUsed =
+                limit && limit > 0
+                  ? Math.round(((effectiveBalance / limit) * 100) * 100) / 100
+                  : 0;
+
+              const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
+              const updatedAt = cfgMap.updatedAt || new Date().toISOString();
+
+              return {
+                enabled: true,
+                items: [
+                  {
+                    vendedorId: targetId,
+                    creditLimit: limit,
+                    effectiveBalance,
+                    percentageUsed,
+                    status,
+                    updatedAt,
+                  },
+                ],
+              };
+            }
+          }
+        } catch (err: any) {
+          logger.warn({
+            layer: "credit",
+            action: "GET_VENDOR_CREDIT_STATUS_REDIS_FIRST_WARN",
+            payload: { targetId, error: err?.message || String(err) },
+          });
+        }
+      }
+    }
 
     // Si es consulta general por alcance (sin IDs específicos), verificar caché en memoria (2.5s)
     let cacheKey = "";
