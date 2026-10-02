@@ -1038,55 +1038,64 @@ export class VendorCreditService {
         }
 
         const effectiveBancaId = vendor.bancaId || vendor.ventana?.bancaId || null;
-        const limit = vendor.creditLimit ?? null;
+        const limit = vendor.creditLimit !== null && vendor.creditLimit !== undefined && vendor.creditLimit > 0
+          ? vendor.creditLimit
+          : null;
         const threshold = vendor.creditAlertThreshold ?? 80;
         const blockMode = vendor.creditBlockMode ?? true;
         const vendorUpdatedAt = vendor.updatedAt ? vendor.updatedAt.toISOString() : new Date().toISOString();
-
-        // 2. Obtener saldo base desde el último AccountStatement con date <= hoy
-        const todayCRStr = tz.toDateStr();
-        const todayDateUTC = tz.parse(todayCRStr);
-
-        const lastStatement = await prisma.accountStatement.findFirst({
-          where: {
-            vendedorId,
-            date: { lte: todayDateUTC },
-          },
-          orderBy: { date: "desc" },
-          select: { accumulatedBalance: true, date: true },
-        });
+        const hasLimit = limit !== null && limit > 0;
 
         let baseBalance = 0;
-        if (lastStatement) {
-          baseBalance = lastStatement.accumulatedBalance ?? 0;
-
-          // Respetar reset de balance si fue configurado en settings
-          const resetAt = (vendor.settings as any)?.balanceResetAt;
-          if (resetAt && new Date(lastStatement.date).getTime() < new Date(resetAt).getTime()) {
-            baseBalance = 0;
-          }
-        }
-
-        // 3. Ventana acotada de días para ventas abiertas (businessDate >= hoy - N días en zona Costa Rica)
-        const daysWindow = config.creditLimit.openSalesDaysWindow || 2;
-        const windowDateUTC = new Date(todayDateUTC.getTime() - daysWindow * 24 * 60 * 60 * 1000);
-        const windowDateStr = tz.toDateStr(windowDateUTC);
-
-        // 4. Obtener ventas netas abiertas sin correlated subquery por ticket
-        const openSales = await this.fetchOpenSales(vendedorId, windowDateStr);
-
         const openBySorteo: Record<string, number> = {};
         let totalOpen = 0;
-        for (const row of openSales) {
-          const val = parseFloat(String(row.netAmount)) || 0;
-          if (val > 0) {
-            openBySorteo[row.sorteoId] = val;
-            totalOpen += val;
+        let projected = 0;
+
+        // Vendedores con tope configurado (>0): cargar balances y ventas abiertas reales desde BD
+        if (hasLimit) {
+          // 2. Obtener saldo base desde el último AccountStatement con date <= hoy
+          const todayCRStr = tz.toDateStr();
+          const todayDateUTC = tz.parse(todayCRStr);
+
+          const lastStatement = await prisma.accountStatement.findFirst({
+            where: {
+              vendedorId,
+              date: { lte: todayDateUTC },
+            },
+            orderBy: { date: "desc" },
+            select: { accumulatedBalance: true, date: true },
+          });
+
+          if (lastStatement) {
+            baseBalance = lastStatement.accumulatedBalance ?? 0;
+
+            // Respetar reset de balance si fue configurado en settings
+            const resetAt = (vendor.settings as any)?.balanceResetAt;
+            if (resetAt && new Date(lastStatement.date).getTime() < new Date(resetAt).getTime()) {
+              baseBalance = 0;
+            }
           }
+
+          // 3. Ventana acotada de días para ventas abiertas (businessDate >= hoy - N días en zona Costa Rica)
+          const daysWindow = config.creditLimit.openSalesDaysWindow || 2;
+          const windowDateUTC = new Date(todayDateUTC.getTime() - daysWindow * 24 * 60 * 60 * 1000);
+          const windowDateStr = tz.toDateStr(windowDateUTC);
+
+          // 4. Obtener ventas netas abiertas sin correlated subquery por ticket
+          const openSales = await this.fetchOpenSales(vendedorId, windowDateStr);
+
+          for (const row of openSales) {
+            const val = parseFloat(String(row.netAmount)) || 0;
+            if (val > 0) {
+              openBySorteo[row.sorteoId] = val;
+              totalOpen += val;
+            }
+          }
+
+          projected = Math.round((baseBalance + totalOpen) * 100) / 100;
         }
 
-        const projected = Math.round((baseBalance + totalOpen) * 100) / 100;
-        const status = this.computeCreditStatus(projected, limit, threshold, blockMode);
+        const status = hasLimit ? this.computeCreditStatus(projected, limit, threshold, blockMode) : "NORMAL";
 
         // 5. Guardar en Redis mediante pipeline
         if (isRedisAvailable()) {
@@ -1171,6 +1180,18 @@ export class VendorCreditService {
         return;
       }
 
+      // Verificación rápida en Redis: si el vendedor ya está marcado con limit == -1 o <= 0, abortar inmediatamente
+      try {
+        const lStr = await redis.hget(cfg, "limit");
+        if (lStr === "-1") {
+          return;
+        }
+        if (lStr) {
+          const parsed = parseFloat(lStr);
+          if (!isNaN(parsed) && parsed <= 0) return;
+        }
+      } catch {}
+
       // 1. Obtener configuración del vendedor
       const vendor = await prisma.user.findUnique({
         where: { id: vendedorId },
@@ -1183,9 +1204,11 @@ export class VendorCreditService {
         },
       });
 
-      if (!vendor) return;
+      if (!vendor || vendor.creditLimit === null || vendor.creditLimit === undefined || vendor.creditLimit <= 0) {
+        return;
+      }
 
-      const limit = vendor.creditLimit ?? -1;
+      const limit = vendor.creditLimit;
       const threshold = vendor.creditAlertThreshold ?? 80;
       const blockMode = vendor.creditBlockMode ?? true;
 
@@ -1500,8 +1523,11 @@ export class VendorCreditService {
           redis.hgetall(open),
         ]);
 
-        if (baseVal !== null) {
-          // Redis está caliente: actualizar cfg en caliente conservando open_by_sorteo
+        const previouslyHadLimit = oldConfig.creditLimit !== null && oldConfig.creditLimit !== undefined && oldConfig.creditLimit > 0;
+        const currentlyHasLimit = limit !== null && limit > 0;
+
+        if (baseVal !== null && previouslyHadLimit && currentlyHasLimit) {
+          // Redis está caliente y ambos límites son positivos: actualizar cfg en caliente conservando open_by_sorteo
           const b = parseFloat(baseVal || "0") || 0;
           const openSum = Object.values(openSalesMap || {}).reduce(
             (acc, v) => acc + (parseFloat(v as string) || 0),
