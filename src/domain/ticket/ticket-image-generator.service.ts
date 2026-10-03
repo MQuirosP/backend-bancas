@@ -569,21 +569,5 @@ function calculateTicketHeight(
   return Math.ceil(height);
 }
 
-/**
- * Convierte ancho de papel en mm a píxeles (a 96 DPI)
- */
-export function mmToPixels(widthMm: number | null): number {
-  if (!widthMm) {
-    return 220; // Default: 58mm (220px)
-  }
-
-  if (widthMm === 58) {
-    return 220;
-  } else if (widthMm === 88) {
-    return 340;
-  }
-
-  // Fallback: calcular proporcionalmente
-  return Math.round(widthMm * 3.779527559);
-}
+export { mmToPixels } from '../../utils/printDimensions';
 

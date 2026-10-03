@@ -1360,11 +1360,29 @@ export const TicketRepository = {
         data: {
           printCount: { increment: 1 }
         },
-        include: {
-          sorteo: true,
-          loteria: true,
-          vendedor: true,
-          ventana: true
+        select: {
+          id: true,
+          ticketNumber: true,
+          printCount: true,
+          totalAmount: true,
+          clienteNombre: true,
+          status: true,
+          bancaId: true,
+          sorteoId: true,
+          vendedorId: true,
+          ventanaId: true,
+          createdAt: true,
+          updatedAt: true,
+          isActive: true,
+          sorteo: {
+            select: { id: true, name: true, scheduledAt: true }
+          },
+          vendedor: {
+            select: { id: true, name: true, code: true }
+          },
+          ventana: {
+            select: { id: true, name: true, code: true }
+          }
         }
       }),
       { context: 'TicketRepository.incrementPrintCount' }

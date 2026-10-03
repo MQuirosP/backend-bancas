@@ -556,6 +556,45 @@ export class CacheService {
     }
 
     /**
+     * Obtiene un Buffer binario directamente desde Redis (sin parseo JSON).
+     */
+    static async getBuffer(key: string): Promise<Buffer | null> {
+        if (!isRedisAvailable()) return null;
+        try {
+            const redis = getRedisClient();
+            if (!redis) return null;
+            return await (redis as any).getBuffer(key);
+        } catch (error: any) {
+            logger.warn({
+                layer: 'cache',
+                action: 'GET_BUFFER_ERROR',
+                payload: { key, error: error?.message }
+            });
+            return null;
+        }
+    }
+
+    /**
+     * Almacena un Buffer binario en Redis con TTL en segundos.
+     */
+    static async setBuffer(key: string, value: Buffer, ttlSeconds: number = 86400): Promise<boolean> {
+        if (!isRedisAvailable()) return false;
+        try {
+            const redis = getRedisClient();
+            if (!redis) return false;
+            await redis.set(key, value, 'EX', ttlSeconds);
+            return true;
+        } catch (error: any) {
+            logger.warn({
+                layer: 'cache',
+                action: 'SET_BUFFER_ERROR',
+                payload: { key, error: error?.message }
+            });
+            return false;
+        }
+    }
+
+    /**
      * Purga manualmente toda la memoria L1 y sus índices de etiquetas.
      */
     static clearL1(reason: string = 'MANUAL'): void {

@@ -40,6 +40,7 @@ import { WorkerService } from "../../api/v1/services/worker.service";
 import { TicketValidationService } from "./TicketValidationService";
 import { TicketPrintService } from "./TicketPrintService";
 import { TicketPersistenceService } from "./TicketPersistenceService";
+import { mmToPixels } from "../../utils/printDimensions";
 
 const CUTOFF_GRACE_MS = 1000;
 // Updated: Added clienteNombre field support
@@ -954,20 +955,22 @@ export const TicketService = {
   async incrementPrintCount(id: string, userId: string, requestId?: string) {
     const ticket = await TicketRepository.incrementPrintCount(id);
 
-    await ActivityService.log({
-      userId,
-      bancaId: ticket.bancaId,
-      action: ActivityType.TICKET_REPRINT,
-      targetType: "TICKET",
-      targetId: id,
-      details: {
-        ticketNumber: ticket.ticketNumber,
-        printCount: ticket.printCount,
-        description: `Ticket #${ticket.ticketNumber} impreso (Conteo acumulado: ${ticket.printCount})`,
-      },
-      requestId,
-      layer: "service",
-    });
+    BackgroundTaskQueue.enqueue("ActivityService.logTicketReprint", () =>
+      ActivityService.log({
+        userId,
+        bancaId: ticket.bancaId,
+        action: ActivityType.TICKET_REPRINT,
+        targetType: "TICKET",
+        targetId: id,
+        details: {
+          ticketNumber: ticket.ticketNumber,
+          printCount: ticket.printCount,
+          description: `Ticket #${ticket.ticketNumber} impreso (Conteo acumulado: ${ticket.printCount})`,
+        },
+        requestId,
+        layer: "service",
+      })
+    );
 
     return ticket;
   },
@@ -3362,9 +3365,28 @@ export const TicketService = {
         ),
       };
 
-      // Determinar ancho
-      const { mmToPixels } =
-        await import("./ticket-image-generator.service");
+      // 1. Verificar si la imagen ya existe en la caché determinista de Redis (<5ms)
+      const printCount = ticket.printCount ?? 0;
+      const activeFlag = ticket.isActive ? 1 : 0;
+      const cacheKey = `ticket:img:${ticket.id}:${printCount}:${activeFlag}`;
+
+      const cachedBuffer = await CacheService.getBuffer(cacheKey);
+      if (cachedBuffer) {
+        logger.info({
+          layer: "service",
+          action: "TICKET_IMAGE_CACHE_HIT",
+          userId,
+          requestId,
+          payload: {
+            ticketId: ticket.id,
+            cacheKey,
+            imageSize: cachedBuffer.length,
+          },
+        });
+        return cachedBuffer;
+      }
+
+      // Determinar ancho usando la utilidad pura sin dependencias de Canvas
       const printWidthMm =
         vendedorConfig.printWidth || ventanaConfig.printWidth || 58;
       const printWidthPx = mmToPixels(printWidthMm);
@@ -3406,8 +3428,17 @@ export const TicketService = {
           scale: 2,
         },
       );
-      // Registro de éxito
 
+      // Guardar en Redis de forma asíncrona con TTL de 24 horas (86,400s)
+      CacheService.setBuffer(cacheKey, imageBuffer, 86400).catch((err) => {
+        logger.warn({
+          layer: "service",
+          action: "TICKET_IMAGE_CACHE_SET_ERROR",
+          payload: { cacheKey, error: err.message },
+        });
+      });
+
+      // Registro de éxito
       logger.info({
         layer: "service",
         action: "TICKET_IMAGE_GENERATED",

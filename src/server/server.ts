@@ -14,6 +14,7 @@ import { activeOperationsService } from '../core/activeOperations.service'
 import { warmupConnection } from '../core/connectionWarmup'
 import { SocketService } from '../core/socket.service'
 import { resourceMonitorService } from '../core/resourceMonitor.service'
+import { WorkerService } from '../api/v1/services/worker.service'
 
 const server = http.createServer(app)
 
@@ -138,6 +139,16 @@ server.listen(config.port, 511, async () => {
       meta: { error: error instanceof Error ? error.message : String(error) },
     })
   }
+
+  // Precalentar workers de renderizado térmico en segundo plano
+  WorkerService.warmupWorkers().catch((error: unknown) => {
+    logger.warn({
+      layer: 'server',
+      action: 'WORKER_WARMUP_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  });
 })
 
 // Graceful shutdown
