@@ -27,7 +27,11 @@ import { TicketPrefetchService } from "../domain/ticket/pipeline/TicketPrefetchS
 import { TicketNumberGenerator } from "../domain/ticket/pipeline/TicketNumberGenerator";
 import { TicketRiskValidator } from "../domain/ticket/pipeline/TicketRiskValidator";
 import { TicketCommissionCalculator } from "../domain/ticket/pipeline/TicketCommissionCalculator";
-import { TicketPersistenceService } from "../domain/ticket/pipeline/TicketPersistenceService";
+import {
+  TicketPersistenceService,
+  sanitizeJugadasForRpc,
+  executeAtomicTicketCreationRpc,
+} from "../domain/ticket/pipeline/TicketPersistenceService";
 import { TicketRedisAccumulator } from "../domain/ticket/pipeline/TicketRedisAccumulator";
 import { TicketTimeoutCalculator } from "../domain/ticket/pipeline/TicketTimeoutCalculator";
 import { TicketResponseBuilder } from "../domain/ticket/pipeline/TicketResponseBuilder";
@@ -625,68 +629,147 @@ export const TicketRepository = {
           ) / 100;
         }
 
-        txResult = await withTransactionRetry(
-          async (tx) => {
-            // Race-check atómico dentro de la TX para evitar ventas sobre sorteos recién cerrados
-            await TicketPrefetchService.resolveInTxSorteoStatus(tx, data.sorteoId);
+        if (config.enableAtomicTicketRpc) {
+          // 3. [RPC] Emisión atómica en 1 solo Round-Trip Time (RTT) vía fn_crear_ticket_venta
+          const t_rpc_start = performance.now();
 
-            const { ticketNumber, seqForLog } = await TicketNumberGenerator.generate(
-              tx,
-              preTxMeta.businessDateInfo.businessDateISO
-            );
+          const { warnings, preparedJugadas, totalAmountTx } = await TicketRiskValidator.validate(salesPrisma as any, {
+            data,
+            meta: preTxMeta,
+            userId,
+            options,
+            prefecthedRules,
+            prefetchedCache,
+            prefetchedDynamicLimits,
+          });
 
-            const { warnings, preparedJugadas, totalAmountTx } = await TicketRiskValidator.validate(tx, {
-              data,
-              meta: preTxMeta,
-              userId,
-              options,
-              prefecthedRules,
-              prefetchedCache,
-              prefetchedDynamicLimits,
-            });
+          const commissions = TicketCommissionCalculator.calculate({
+            data,
+            meta: preTxMeta,
+            preparedJugadas,
+            options,
+          });
 
-            const commissions = TicketCommissionCalculator.calculate({
-              data,
-              meta: preTxMeta,
-              preparedJugadas,
-              options,
-            });
+          const jugadasJson = sanitizeJugadasForRpc(commissions.jugadasWithCommissions);
 
-            const saveResult = await TicketPersistenceService.save(tx, {
-              data,
-              meta: preTxMeta,
-              ticketNumber,
-              seqForLog,
-              totalAmountTx,
-              commissions,
-              warnings,
-              userId,
-              options,
-            });
+          const rpcResult = await executeAtomicTicketCreationRpc({
+            loteriaId: data.loteriaId,
+            sorteoId: data.sorteoId,
+            ventanaId: data.ventanaId,
+            bancaId: preTxMeta.bancaId,
+            vendedorId: userId,
+            businessDateISO: preTxMeta.businessDateInfo.businessDateISO,
+            totalAmount: totalAmountTx,
+            totalCommission: commissions.totalCommission,
+            totalListeroCommission: commissions.totalListeroCommission,
+            clienteNombre: data.clienteNombre,
+            createdBy: options?.createdBy ?? null,
+            createdByRole: options?.createdByRole ?? null,
+            idempotencyKey: options?.idempotencyKey ?? null,
+            jugadasJson,
+          });
 
-            return {
-              ...saveResult,
-              businessDateInfo: preTxMeta.businessDateInfo,
-              sorteoScheduledAt: preTxMeta.sorteo?.scheduledAt,
-            };
-          },
-          {
-            isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
-            maxRetries: 3,
-            backoffMinMs: 150,
-            backoffMaxMs: 2_000,
-            maxWaitMs: 5_000,
-            timeoutMs: dynamicTimeout,
-            client: salesPrisma,
-            onMetrics: (metrics) => {
-              if (options?.timingCollector) {
-                options.timingCollector.t_pool_wait = metrics.poolWaitMs;
-                options.timingCollector.t_tx = metrics.txMs;
-                options.timingCollector.tx_attempts = metrics.attempts;
-              }
+          const seqStr = rpcResult.ticketNumber ? rpcResult.ticketNumber.split("-")[1] : null;
+          const seqForLog = seqStr ? parseInt(seqStr, 10) || null : null;
+
+          logger.info({
+            layer: "repository",
+            action: "TICKET_FOLIO_DIAG",
+            payload: {
+              createdAtUTC: new Date().toISOString(),
+              scheduledAt: preTxMeta.sorteo?.scheduledAt
+                ? new Date(preTxMeta.sorteo.scheduledAt).toISOString()
+                : null,
+              businessDateISO: preTxMeta.businessDateInfo.businessDateISO,
+              prefixYYMMDD: preTxMeta.businessDateInfo.prefixYYMMDD,
+              counter: seqForLog,
+              ticketNumber: rpcResult.ticketNumber,
+              optimized: true,
+              rpc: true,
             },
+          });
+
+          txResult = {
+            createdTicketId: rpcResult.id,
+            jugadasWithCommissions: commissions.jugadasWithCommissions,
+            commissionsDetails: commissions.commissionsDetails,
+            ticketNumber: rpcResult.ticketNumber,
+            warnings,
+            seqForLog,
+            businessDateInfo: preTxMeta.businessDateInfo,
+            sorteoScheduledAt: preTxMeta.sorteo?.scheduledAt,
+          };
+
+          if (options?.timingCollector) {
+            options.timingCollector.t_pool_wait = 0;
+            options.timingCollector.t_tx = Math.round((performance.now() - t_rpc_start) * 100) / 100;
+            options.timingCollector.tx_attempts = 1;
           }
-        );
+        } else {
+          // 3. [IN-TX] Flujo interactivo clásico: validación atómica de estado, folio e inserción
+          txResult = await withTransactionRetry(
+            async (tx) => {
+              // Race-check atómico dentro de la TX para evitar ventas sobre sorteos recién cerrados
+              await TicketPrefetchService.resolveInTxSorteoStatus(tx, data.sorteoId);
+
+              const { ticketNumber, seqForLog } = await TicketNumberGenerator.generate(
+                tx,
+                preTxMeta.businessDateInfo.businessDateISO
+              );
+
+              const { warnings, preparedJugadas, totalAmountTx } = await TicketRiskValidator.validate(tx, {
+                data,
+                meta: preTxMeta,
+                userId,
+                options,
+                prefecthedRules,
+                prefetchedCache,
+                prefetchedDynamicLimits,
+              });
+
+              const commissions = TicketCommissionCalculator.calculate({
+                data,
+                meta: preTxMeta,
+                preparedJugadas,
+                options,
+              });
+
+              const saveResult = await TicketPersistenceService.save(tx, {
+                data,
+                meta: preTxMeta,
+                ticketNumber,
+                seqForLog,
+                totalAmountTx,
+                commissions,
+                warnings,
+                userId,
+                options,
+              });
+
+              return {
+                ...saveResult,
+                businessDateInfo: preTxMeta.businessDateInfo,
+                sorteoScheduledAt: preTxMeta.sorteo?.scheduledAt,
+              };
+            },
+            {
+              isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+              maxRetries: 3,
+              backoffMinMs: 150,
+              backoffMaxMs: 2_000,
+              maxWaitMs: 5_000,
+              timeoutMs: dynamicTimeout,
+              client: salesPrisma,
+              onMetrics: (metrics) => {
+                if (options?.timingCollector) {
+                  options.timingCollector.t_pool_wait = metrics.poolWaitMs;
+                  options.timingCollector.t_tx = metrics.txMs;
+                  options.timingCollector.tx_attempts = metrics.attempts;
+                }
+              },
+            }
+          );
+        }
       } catch (txError) {
         if (creditCheckPerformed && creditReservedAmount > 0) {
           VendorCreditService.compensateReservation(

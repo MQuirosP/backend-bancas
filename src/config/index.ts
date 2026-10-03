@@ -85,4 +85,5 @@ export const config = {
     degradedTtlMs: parsed.data.CREDIT_DEGRADED_TTL_MS,
     degradedDbTimeoutMs: parsed.data.CREDIT_DEGRADED_DB_TIMEOUT_MS,
   },
+  enableAtomicTicketRpc: parsed.data.ENABLE_ATOMIC_TICKET_RPC ?? false,
 }

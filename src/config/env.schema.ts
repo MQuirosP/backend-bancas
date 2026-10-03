@@ -69,4 +69,7 @@ export const EnvSchema = z.object({
   CREDIT_EVALUATING_SORTEO_TTL_SECONDS: z.coerce.number().int().default(900),
   CREDIT_DEGRADED_TTL_MS: z.coerce.number().int().default(3000),
   CREDIT_DEGRADED_DB_TIMEOUT_MS: z.coerce.number().int().default(1000),
+
+  // ATOMIC TICKET RPC (Feature Flag)
+  ENABLE_ATOMIC_TICKET_RPC: parseBooleanWithDefault(false),
 });
