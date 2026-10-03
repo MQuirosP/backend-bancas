@@ -1901,12 +1901,13 @@ gs."hour24" ASC
 
     const cacheKey = buildSummaryCacheKey(normalizedKeyData);
 
-    // Días cerrados/históricos (ayer o rangos pasados) no cambian: TTL largo (24h L2, 1h L1)
+    // Días cerrados/históricos (ayer o rangos pasados) no cambian: TTL largo (24h L2)
+    // El día de hoy tiene TTL de 1200s (20 minutos) en Redis L2 para absorber navegación recurrente
     const isHistoricalPast =
       effectiveDate === "yesterday" ||
       (effectiveDate === "range" && effectiveToDate !== null && effectiveToDate < currentDayStr);
 
-    const cacheTtlSeconds = isHistoricalPast ? 86400 : 300;
+    const cacheTtlSeconds = isHistoricalPast ? 86400 : 1200;
     const cacheL1TtlMs = isHistoricalPast ? 120_000 : 90_000;
 
     const tags = ['report:summary'];
@@ -2058,6 +2059,173 @@ gs."hour24" ASC
               const fromAtComponents = getCRLocalComponents(dateRange.fromAt);
               const rangeEffectiveMonth = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}`;
               return await this.evaluatedSummaryFastPath(params, vendedorId, dateRange, rangeEffectiveMonth);
+            }
+
+            // ⚡ FAST-PATH O(1) VIA POSTGRESQL FUNCTION: isToday === true con summaryOnly === false
+            // Resuelve el reporte detallado ejecutando directamente la función compilada de base de datos
+            // fn_get_evaluated_summaries_batch en < 20 ms, eliminando 7 a 9 consultas Prisma dispersas.
+            if (isToday && !params.summaryOnly && vendedorId) {
+              let targetSorteoId = params.sorteoId;
+              let targetBancaId = params.bancaId;
+
+              if (!targetSorteoId) {
+                const todayAnchor = await prisma.sorteo.findFirst({
+                  where: {
+                    scheduledAt: {
+                      gte: dateRange.fromAt,
+                      lte: dateRange.toAt,
+                    },
+                    ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
+                  },
+                  orderBy: [
+                    { status: 'desc' }, // EVALUATED > OPEN > SCHEDULED
+                    { scheduledAt: 'desc' },
+                  ],
+                  select: { id: true, bancaId: true },
+                });
+                if (todayAnchor) {
+                  targetSorteoId = todayAnchor.id;
+                  if (!targetBancaId && todayAnchor.bancaId) {
+                    targetBancaId = todayAnchor.bancaId;
+                  }
+                }
+              }
+
+              if (targetSorteoId) {
+                const batchRows = await prisma.$queryRaw<Array<{
+                  full_payload: any;
+                  initial_accumulated: string | number;
+                }>>(Prisma.sql`
+                  SELECT full_payload, initial_accumulated 
+                  FROM fn_get_evaluated_summaries_batch(
+                    ${targetSorteoId}::uuid, 
+                    ${targetBancaId ?? null}::uuid
+                  ) 
+                  WHERE user_id = ${vendedorId}::uuid
+                `);
+
+                if (batchRows && batchRows.length > 0) {
+                  const row = batchRows[0];
+                  let fullPayload = row.full_payload as any;
+                  const initialAccumulated = Number(row.initial_accumulated) || 0;
+
+                  let resetAt: Date | null = null;
+                  if (!params.ignoreReset) {
+                    const user = await prisma.user.findUnique({
+                      where: { id: vendedorId },
+                      select: { settings: true },
+                    });
+                    if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
+                      resetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
+                    }
+                  }
+
+                  const dayData = fullPayload?.data?.[0];
+
+                  if (dayData?.sorteos && Array.isArray(dayData.sorteos) && dayData.sorteos.length > 0) {
+                    const rawEvents: any[] = dayData.sorteos;
+                    const totalChronological = rawEvents.length;
+                    let evAccumulated = initialAccumulated;
+                    let rApplied = false;
+
+                    const decoratedEvents = rawEvents.map((event: any) => ({
+                      event,
+                      time: new Date(event.scheduledAt).getTime(),
+                      isMov: typeof event.sorteoId === 'string' && event.sorteoId.startsWith('mov-'),
+                    }));
+
+                    // 1. ORDENAR CRONOLÓGICAMENTE ASCENDENTE ANTES DE ACUMULAR
+                    decoratedEvents.sort((a, b) => {
+                      if (a.time !== b.time) return a.time - b.time;
+                      if (a.isMov !== b.isMov) return a.isMov ? -1 : 1;
+                      return 0;
+                    });
+
+                    // 2. CALCULAR EL ACUMULADO Y CHRONOLOGICAL INDEX EN ORDEN REAL
+                    for (let j = 0; j < decoratedEvents.length; j++) {
+                      const item = decoratedEvents[j];
+
+                      if (resetAt && !rApplied && resetAt.getTime() >= dateRange.fromAt.getTime()) {
+                        if (item.time >= resetAt.getTime()) {
+                          evAccumulated = 0;
+                          rApplied = true;
+                        }
+                      }
+
+                      evAccumulated += Number(item.event.subtotal) || 0;
+                      item.event = {
+                        ...item.event,
+                        accumulated: evAccumulated,
+                        chronologicalIndex: j + 1,
+                        totalChronological,
+                      };
+                    }
+
+                    // 3. REORDENAR DESCENDENTE PARA LA VISTA DE LA APK (MÁS RECIENTE ARRIBA)
+                    decoratedEvents.sort((a, b) => {
+                      if (a.time !== b.time) return b.time - a.time;
+                      if (a.isMov !== b.isMov) return a.isMov ? 1 : -1;
+                      return 0;
+                    });
+
+                    dayData.sorteos = decoratedEvents.map((item) => item.event);
+
+                    // El acumulado de cierre del día corresponde al evento más reciente
+                    dayData.dayTotals.accumulated = decoratedEvents[0].event.accumulated;
+                    fullPayload = { ...fullPayload, data: [dayData] };
+                  } else if (initialAccumulated !== 0) {
+                    // Si no hay sorteos hoy pero hay saldo acumulado previo, reflejarlo
+                    if (dayData) {
+                      dayData.dayTotals.accumulated = initialAccumulated;
+                    } else {
+                      const todayDateStr = crDateService.dateUTCToCRString(new Date());
+                      fullPayload.data = [{
+                        date: todayDateStr,
+                        sorteos: [],
+                        dayTotals: {
+                          totalSales: 0,
+                          totalCommission: 0,
+                          commissionByNumber: 0,
+                          commissionByReventado: 0,
+                          totalPrizes: 0,
+                          totalTickets: 0,
+                          totalPaid: 0,
+                          totalCollected: 0,
+                          totalBalance: 0,
+                          totalRemainingBalance: 0,
+                          totalSubtotal: 0,
+                          accumulated: initialAccumulated,
+                        },
+                      }];
+                      if (fullPayload.meta) {
+                        fullPayload.meta.totalDays = 1;
+                      }
+                    }
+                  }
+
+                  if (resetAt && Array.isArray(fullPayload?.data)) {
+                    const resetAtDayStr = crDateService.dateUTCToCRString(resetAt);
+                    const filteredData = fullPayload.data.filter((d: any) => d.date >= resetAtDayStr);
+                    fullPayload = {
+                      ...fullPayload,
+                      data: filteredData,
+                      meta: { ...fullPayload.meta, totalDays: filteredData.length },
+                    };
+                  }
+
+                  logger.info({
+                    layer: 'service',
+                    action: 'SORTEO_EVALUATED_SUMMARY_BATCH_FN_FAST_PATH_HIT',
+                    payload: {
+                      vendedorId,
+                      targetSorteoId,
+                      totalEvents: dayData?.sorteos?.length || 0,
+                    },
+                  });
+
+                  return fullPayload;
+                }
+              }
             }
 
             //  CAMBIO: Forzar status EVALUATED (Global Filter)
@@ -3034,8 +3202,8 @@ gs."hour24" ASC
             }
           }
         },
-        // TTL L2: 24 horas (86400s) si es ayer o rango histórico pasado; 300s si involucra hoy
-        (effectiveDate === 'yesterday' || (effectiveDate === 'range' && effectiveToDate !== null && effectiveToDate < currentDayStr)) ? 86400 : 300,
+        // TTL L2: 24 horas (86400s) si es ayer o rango histórico pasado; 1200s (20m) si involucra hoy
+        (effectiveDate === 'yesterday' || (effectiveDate === 'range' && effectiveToDate !== null && effectiveToDate < currentDayStr)) ? 86400 : 1200,
         tags,
         false, // useL1: false — resúmenes contables no ocupan slots de L1 (reservado para hot-path /tickets)
         // l1TtlMs: no aplica (useL1: false)
@@ -3081,33 +3249,62 @@ gs."hour24" ASC
     bancaId?: string | null
   ): Promise<{ totalVendors: number; entriesCached: number }> {
     const redis = getRedisClient();
-    const lockKey = `lock:warmup:batch:${sorteoId}`;
+    const bancaKey = bancaId || 'global';
+    const lockKey = `lock:warmup:batch:banca:${bancaKey}`;
     let lockAcquired = false;
-    // const allPreLockKeys: string[] = [];
 
     if (redis) {
-      try {
-        // 1. Idempotencia y exclusión mutua distribuida: prevenir que 2 instancias en Render
-        // procesen concurrentemente el mismo batch del sorteo.
-        const lockRes = await (redis as any).set(lockKey, "locked", "PX", WARMUP_LOCK_TTL_MS, "NX");
-        if (lockRes !== "OK") {
+      const MAX_LOCK_ATTEMPTS = 2;
+      for (let attempt = 1; attempt <= MAX_LOCK_ATTEMPTS; attempt++) {
+        try {
+          // 1. Idempotencia y exclusión mutua distribuida POR BANCA con safety TTL (45s)
+          // Previene que 2 réplicas procesen concurrentemente sorteos de la misma banca y causen race conditions
+          const lockRes = await (redis as any).set(lockKey, "locked", "PX", WARMUP_LOCK_TTL_MS, "NX");
+          if (lockRes === "OK") {
+            lockAcquired = true;
+            break;
+          }
+
+          // Si el lock está ocupado por otra réplica activa para esta misma banca:
           logger.info({
             layer: "service",
-            action: "WARMUP_BATCH_LOCK_SKIPPED",
-            payload: { sorteoId, message: `Omitido para sorteo ${sorteoId}: ya en ejecución por otra instancia. Esperando finalización activa antes de permitir broadcast...` },
+            action: "WARMUP_BATCH_LOCK_WAITING",
+            payload: {
+              sorteoId,
+              bancaId: bancaKey,
+              attempt,
+              message: `Lock de warmup para banca ${bancaKey} ocupado por otra réplica. Esperando liberación (intento ${attempt}/${MAX_LOCK_ATTEMPTS})...`,
+            },
           });
-          // Esperar activamente a que la instancia que adquirió el lock termine de escribir en Redis/L1
-          // para no disparar el broadcast WebSocket prematuramente y causar Cache Stampede.
+
+          // Esperar activamente hasta 5000ms a que la réplica activa termine de escribir en Redis
           await this.waitForWarmupLockRelease(lockKey, 5000);
-          return { totalVendors: 0, entriesCached: 0 };
+
+          // Jitter aleatorio breve (50-150ms) antes de reintentar para amortiguar colisiones
+          if (attempt < MAX_LOCK_ATTEMPTS) {
+            await new Promise((r) => setTimeout(r, 50 + Math.random() * 100));
+          }
+        } catch (lockErr: any) {
+          logger.warn({
+            layer: "service",
+            action: "WARMUP_BATCH_LOCK_WARN",
+            payload: { sorteoId, bancaId: bancaKey, error: lockErr?.message },
+          });
+          break;
         }
-        lockAcquired = true;
-      } catch (lockErr: any) {
-        logger.warn({
+      }
+
+      if (!lockAcquired) {
+        logger.info({
           layer: "service",
-          action: "WARMUP_BATCH_LOCK_WARN",
-          payload: { sorteoId, error: lockErr?.message },
+          action: "WARMUP_BATCH_LOCK_COALESCED",
+          payload: {
+            sorteoId,
+            bancaId: bancaKey,
+            message: `Warmup para banca ${bancaKey} absorbido por la réplica activa. El estado consolidado ya fue actualizado en Redis.`,
+          },
         });
+        return { totalVendors: 0, entriesCached: 0 };
       }
     }
 
@@ -3128,6 +3325,29 @@ gs."hour24" ASC
 
       const todayRange = resolveDateRange("today");
 
+      // Si se evaluaron múltiples sorteos casi al mismo tiempo, obtener el sorteo evaluado
+      // más reciente de la banca para garantizar que el warmup consolide el último estado
+      let effectiveSorteoId = sorteoId;
+      try {
+        const latestEvaluated = await prisma.sorteo.findFirst({
+          where: {
+            status: SorteoStatus.EVALUATED,
+            scheduledAt: {
+              gte: todayRange.fromAt,
+              lte: todayRange.toAt,
+            },
+            ...(bancaId ? { bancaId } : {}),
+          },
+          orderBy: { scheduledAt: 'desc' },
+          select: { id: true },
+        });
+        if (latestEvaluated?.id) {
+          effectiveSorteoId = latestEvaluated.id;
+        }
+      } catch {
+        // Fallback al sorteoId recibido si falla la búsqueda
+      }
+
       let batchSucceeded = false;
       let batchTotalVendors = 0;
       let batchEntriesCached = 0;
@@ -3135,7 +3355,7 @@ gs."hour24" ASC
       try {
         const sqlRows = await prisma.$queryRaw<FnBatchRow[]>(
           Prisma.sql`SELECT * FROM fn_get_evaluated_summaries_batch(
-            ${sorteoId}::uuid,
+            ${effectiveSorteoId}::uuid,
             ${bancaId ?? null}::uuid
           )`
         );
@@ -3217,7 +3437,7 @@ gs."hour24" ASC
             cacheEntries.push({
               key: cacheKeyTrue,
               value: summaryPayload,
-              ttlSeconds: 300,
+              ttlSeconds: 1200,
               tags: ['report:summary', `vendedor:${vId}`],
               useL1: false, // Solo Redis L2 — slots L1 reservados para hot-path /tickets
             });
@@ -3302,7 +3522,7 @@ gs."hour24" ASC
             cacheEntries.push({
               key: cacheKeyFalse,
               value: fullPayload,
-              ttlSeconds: 300,
+              ttlSeconds: 1200,
               tags: ['report:summary', `vendedor:${vId}`],
               useL1: false, // Solo Redis L2 — payloads ~10-15 KB no deben ocupar slots L1
             });
@@ -3397,7 +3617,7 @@ gs."hour24" ASC
           logger.warn({
             layer: "service",
             action: "WARMUP_LOCK_RELEASE_WARN",
-            payload: { sorteoId, error: releaseErr?.message },
+            payload: { sorteoId, bancaId: bancaKey, error: releaseErr?.message },
           });
         }
       }

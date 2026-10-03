@@ -70,17 +70,18 @@ day_stmt AS (
 
 -- 4. Saldo del dia anterior para postproceso de accumulated
 prev_day_stmt AS (
-  SELECT
+  SELECT DISTINCT ON (ast."vendedorId")
     ast."vendedorId",
     COALESCE(
       NULLIF(ast."remainingBalance", 0),
       ast."accumulatedBalance",
       0
     ) AS prev_accumulated
-  FROM "AccountStatement" ast
+  FROM vendors v
   CROSS JOIN sorteo_date sd
-  WHERE ast."vendedorId" IN (SELECT id FROM vendors)
-    AND ast.date = sd.biz_date - INTERVAL '1 day'
+  JOIN "AccountStatement" ast ON ast."vendedorId" = v.id
+  WHERE ast.date < sd.biz_date
+  ORDER BY ast."vendedorId", ast.date DESC
 ),
 
 -- 5. Comisiones por tipo + rcd_tickets + total_sorteos del dia
@@ -174,7 +175,7 @@ day_sorteos AS (
   JOIN "Loteria" l ON s."loteriaId"  = l.id
   CROSS JOIN sorteo_date sd
   WHERE s.status = 'EVALUATED'::"SorteoStatus"
-    AND (s."scheduledAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Costa_Rica')::date = sd.biz_date
+    AND ((s."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica')::date = sd.biz_date
     AND rcd."vendedorId" IN (SELECT id FROM vendors)
   GROUP BY
     rcd."vendedorId", s.id, s.name, s."scheduledAt",
@@ -251,29 +252,29 @@ by_mult AS (
 sorteo_items AS (
   SELECT
     ds."vendedorId",
-    ds."scheduledAt",
+    ((ds."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica') AS cr_timestamp,
     jsonb_build_object(
-      'sorteoId',    ds.sorteo_id::text,
-      'sorteoName',  ds.sorteo_name,
-      'scheduledAt', to_char(ds."scheduledAt" AT TIME ZONE 'America/Costa_Rica',
-                             'YYYY-MM-DD"T"HH24:MI:SS'),
-      'date',        to_char(ds."scheduledAt" AT TIME ZONE 'America/Costa_Rica',
-                             'YYYY-MM-DD'),
+      'sorteoId',     ds.sorteo_id::text,
+      'sorteoName',   ds.sorteo_name,
+      'scheduledAt',  to_char(((ds."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'),
+                              'YYYY-MM-DD"T"HH24:MI:SS'),
+      'date',         to_char(((ds."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'),
+                              'YYYY-MM-DD'),
       'time', (
         CASE
-          WHEN EXTRACT(HOUR FROM (ds."scheduledAt" AT TIME ZONE 'America/Costa_Rica'))::int = 0
+          WHEN EXTRACT(HOUR FROM ((ds."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'))::int = 0
             THEN '12'
-          WHEN EXTRACT(HOUR FROM (ds."scheduledAt" AT TIME ZONE 'America/Costa_Rica'))::int > 12
-            THEN ((EXTRACT(HOUR FROM (ds."scheduledAt" AT TIME ZONE 'America/Costa_Rica'))::int) - 12)::text
-          ELSE (EXTRACT(HOUR FROM (ds."scheduledAt" AT TIME ZONE 'America/Costa_Rica'))::int)::text
+          WHEN EXTRACT(HOUR FROM ((ds."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'))::int > 12
+            THEN ((EXTRACT(HOUR FROM ((ds."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'))::int) - 12)::text
+          ELSE (EXTRACT(HOUR FROM ((ds."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'))::int)::text
         END
         || ':'
         || LPAD(
-             (EXTRACT(MINUTE FROM (ds."scheduledAt" AT TIME ZONE 'America/Costa_Rica'))::int)::text,
+             (EXTRACT(MINUTE FROM ((ds."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'))::int)::text,
              2, '0'
            )
         || CASE
-             WHEN (EXTRACT(HOUR FROM (ds."scheduledAt" AT TIME ZONE 'America/Costa_Rica'))::int) >= 12
+             WHEN (EXTRACT(HOUR FROM ((ds."scheduledAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'))::int) >= 12
                THEN 'PM '
              ELSE 'AM '
            END
@@ -311,7 +312,7 @@ sorteo_items AS (
 vendor_sorteos AS (
   SELECT
     "vendedorId",
-    jsonb_agg(sorteo_json ORDER BY "scheduledAt" ASC) AS sorteos_array
+    jsonb_agg(sorteo_json ORDER BY cr_timestamp ASC) AS sorteos_array
   FROM sorteo_items
   GROUP BY "vendedorId"
 ),
@@ -326,7 +327,7 @@ day_payments AS (
         'sorteoName',            CASE WHEN ap.type = 'payment'
                                       THEN 'Pago recibido'
                                       ELSE 'Cobro realizado' END,
-        'scheduledAt',           to_char(ap."createdAt" AT TIME ZONE 'UTC',
+        'scheduledAt',           to_char(((ap."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'),
                                          'YYYY-MM-DD"T"HH24:MI:SS'),
         'date',                  to_char(ap.date, 'YYYY-MM-DD'),
         'time',                  COALESCE(ap.time, ''),
