@@ -151,14 +151,16 @@ export class TicketPrefetchService {
                 commissionPolicyJson: true,
               },
             }),
-        preFetchedBancaId
-          ? resolveBaseMultiplierX(salesPrisma as any, {
-              bancaId: preFetchedBancaId,
-              loteriaId,
-              userId,
-              ventanaId,
-            })
-          : Promise.resolve(null),
+        options?.preFetched?.baseMultiplier
+          ? Promise.resolve(options.preFetched.baseMultiplier)
+          : preFetchedBancaId
+            ? resolveBaseMultiplierX(salesPrisma as any, {
+                bancaId: preFetchedBancaId,
+                loteriaId,
+                userId,
+                ventanaId,
+              })
+            : Promise.resolve(null),
       ]);
 
     if (!user)
@@ -198,12 +200,14 @@ export class TicketPrefetchService {
 
     const effectiveBaseMultiplier = preResolvedMultiplier
       ? preResolvedMultiplier
-      : await resolveBaseMultiplierX(salesPrisma as any, {
-          bancaId: ventana.bancaId,
-          loteriaId,
-          userId,
-          ventanaId,
-        });
+      : options?.preFetched?.baseMultiplier
+        ? options.preFetched.baseMultiplier
+        : await resolveBaseMultiplierX(salesPrisma as any, {
+            bancaId: ventana.bancaId,
+            loteriaId,
+            userId,
+            ventanaId,
+          });
 
     return {
       loteria,

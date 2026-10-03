@@ -730,8 +730,8 @@ export const RestrictionRuleRepository = {
 
     const at = new Date();
     const { hour, year, month, day } = getCRLocalComponents(at);
-    // Llave contextualizada por hora CR para respetar restricciones temporales
-    const cacheKey = `cutoff:resolved:${bancaId}:${ventanaId || 'null'}:${userId || 'null'}:h${hour}`;
+    // Llave estable de caché por banca, ventana y usuario (se invalida por mutación vía tag 'cutoff')
+    const cacheKey = `cutoff:resolved:${bancaId}:${ventanaId || 'null'}:${userId || 'null'}`;
     const tags = ['cutoff', `cutoff:${bancaId}`];
     if (ventanaId) tags.push(`cutoff:ventana:${ventanaId}`);
     if (userId) tags.push(`cutoff:user:${userId}`);

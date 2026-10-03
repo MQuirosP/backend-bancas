@@ -13,6 +13,9 @@ import { AppError } from "../../core/errors";
 import prisma, { salesPrisma, salesPool, generalPool } from "../../core/prismaClient";
 import { config } from "../../config";
 import { RestrictionRuleRepository } from "../../repositories/restrictionRule.repository";
+import { TicketRiskValidator } from "./pipeline/TicketRiskValidator";
+import { TicketPrefetchService } from "./pipeline/TicketPrefetchService";
+import { resolveBaseMultiplierX } from "../../repositories/ticket.repository";
 import { TicketTimingCollector } from "./pipeline/ticket.types";
 import { commissionService } from "../../domain/commission/CommissionService";
 import { CommissionContext } from "../../domain/commission/types/CommissionContext";
@@ -201,132 +204,225 @@ export const TicketService = {
       const clientIdempotencyKey: string | undefined =
         data.idempotencyKey ?? data.requestId;
 
-      // 1. Fetch paralelo inicial de entidades independientes: Actor autenticado y Sorteo
-      const t_act_start = performance.now();
-      const [actor, sorteo] = await Promise.all([
-        CacheService.wrap(
-          `user:${userId}`,
-          () =>
-            withConnectionRetry(
-              () =>
-                salesPrisma.user.findUnique({
-                  where: { id: userId },
-                  select: {
-                    id: true,
-                    role: true,
-                    ventanaId: true,
-                    isActive: true,
-                    commissionPolicyJson: true,
-                    name: true,
-                    code: true,
-                    phone: true,
-                    settings: true,
-                    creditLimit: true,
-                    creditAlertThreshold: true,
-                    creditBlockMode: true,
-                  },
-                }),
-              { context: "TicketService.create.actor" },
-            ),
-          3600, // 1 hour TTL
-          [`user:${userId}`],
-        ),
-        CacheService.wrap(
-          `sorteo:${sorteoId}`,
-          () =>
-            withConnectionRetry(
-              () =>
-                salesPrisma.sorteo.findUnique({
-                  where: { id: sorteoId },
-                  select: {
-                    id: true,
-                    name: true,
-                    scheduledAt: true,
-                    status: true,
-                    loteriaId: true,
-                    bancaId: true,
-                    loteria: {
-                      select: { id: true, name: true, rulesJson: true },
+      const initialVentanaId = data.ventanaId;
+      const requestedVendedorId = data.vendedorId;
+
+      // 1. Master Promise.all (Fase 1): Carga paralela de todas las entidades independientes
+      const t_core_start = performance.now();
+      const [actor, sorteo, ventanaWithBanca, listeroUser, targetVendedor] =
+        await Promise.all([
+          CacheService.wrap(
+            `user:${userId}`,
+            () =>
+              withConnectionRetry(
+                () =>
+                  salesPrisma.user.findUnique({
+                    where: { id: userId },
+                    select: {
+                      id: true,
+                      role: true,
+                      ventanaId: true,
+                      isActive: true,
+                      commissionPolicyJson: true,
+                      name: true,
+                      code: true,
+                      phone: true,
+                      settings: true,
+                      creditLimit: true,
+                      creditAlertThreshold: true,
+                      creditBlockMode: true,
                     },
-                  },
-                }),
-              { context: "TicketService.create.sorteo" },
-            ),
-          300, // 5 minutes TTL
-          [`sorteo:${sorteoId}`],
-        ),
-      ]);
+                  }),
+                { context: "TicketService.create.actor" },
+              ),
+            3600, // 1 hour TTL
+            [`user:${userId}`],
+          ),
+          CacheService.wrap(
+            `sorteo:${sorteoId}`,
+            () =>
+              withConnectionRetry(
+                () =>
+                  salesPrisma.sorteo.findUnique({
+                    where: { id: sorteoId },
+                    select: {
+                      id: true,
+                      name: true,
+                      scheduledAt: true,
+                      status: true,
+                      loteriaId: true,
+                      bancaId: true,
+                      loteria: {
+                        select: { id: true, name: true, rulesJson: true },
+                      },
+                    },
+                  }),
+                { context: "TicketService.create.sorteo" },
+              ),
+            300, // 5 minutes TTL
+            [`sorteo:${sorteoId}`],
+          ),
+          initialVentanaId
+            ? CacheService.wrap(
+                `ventana:${initialVentanaId}`,
+                () =>
+                  withConnectionRetry(
+                    () =>
+                      salesPrisma.ventana.findUnique({
+                        where: { id: initialVentanaId },
+                        select: {
+                          id: true,
+                          bancaId: true,
+                          isActive: true,
+                          commissionPolicyJson: true,
+                          name: true,
+                          code: true,
+                          phone: true,
+                          settings: true,
+                          banca: {
+                            select: { id: true, commissionPolicyJson: true },
+                          },
+                        },
+                      }),
+                    { context: "TicketService.create.ventana" },
+                  ),
+                3600,
+                [`ventana:${initialVentanaId}`, `banca:${initialVentanaId}`],
+              )
+            : Promise.resolve(null),
+          initialVentanaId
+            ? CacheService.wrap(
+                `listero:${initialVentanaId}`,
+                () =>
+                  withConnectionRetry(
+                    () =>
+                      salesPrisma.user.findFirst({
+                        where: {
+                          role: Role.VENTANA,
+                          ventanaId: initialVentanaId,
+                          isActive: true,
+                          deletedAt: null,
+                        },
+                        select: { id: true, commissionPolicyJson: true },
+                        orderBy: { updatedAt: "desc" },
+                      }),
+                    { context: "TicketService.create.listero" },
+                  ),
+                3600,
+                [`ventana:${initialVentanaId}`],
+              )
+            : Promise.resolve(null),
+          requestedVendedorId && requestedVendedorId !== userId
+            ? CacheService.wrap(
+                `user:${requestedVendedorId}`,
+                () =>
+                  withConnectionRetry(
+                    () =>
+                      salesPrisma.user.findUnique({
+                        where: { id: requestedVendedorId },
+                        select: {
+                          id: true,
+                          role: true,
+                          ventanaId: true,
+                          isActive: true,
+                          commissionPolicyJson: true,
+                          name: true,
+                          code: true,
+                          phone: true,
+                          settings: true,
+                          creditLimit: true,
+                          creditAlertThreshold: true,
+                          creditBlockMode: true,
+                        },
+                      }),
+                    { context: "TicketService.create.targetVendedor" },
+                  ),
+                3600,
+                [`user:${requestedVendedorId}`],
+              )
+            : Promise.resolve(null),
+        ]);
+
       try {
         if (timingCollector.prefetch_breakdown) {
-          timingCollector.prefetch_breakdown.t_actor = Math.round((performance.now() - t_act_start) * 100) / 100;
+          timingCollector.prefetch_breakdown.t_actor =
+            Math.round((performance.now() - t_core_start) * 100) / 100;
+          timingCollector.prefetch_breakdown.t_core_entities = 0.01;
         }
       } catch {}
+
       if (!actor) throw new AppError("Authenticated user not found", 401);
       if (!sorteo) throw new AppError("Sorteo no encontrado", 404);
 
-      // 2. Resolver Vendedor y Ventana
+      // 2. Resolver Vendedor y Ventana (sincrónico si targetVendedor ya vino en Fase 1)
       const t_eff_start = performance.now();
       const { effectiveVendedorId, ventanaId, vendedorToPass } =
-        await resolveEffectiveActor(actor, data?.vendedorId);
+        await resolveEffectiveActor(actor, requestedVendedorId, targetVendedor);
       try {
         if (timingCollector.prefetch_breakdown) {
-          timingCollector.prefetch_breakdown.t_effective_actor = Math.round((performance.now() - t_eff_start) * 100) / 100;
+          timingCollector.prefetch_breakdown.t_effective_actor =
+            Math.round((performance.now() - t_eff_start) * 100) / 100;
         }
       } catch {}
 
-      // 3. Fetch Masivo Consolidado de Ventana y Listero (dependientes de ventanaId resuelta)
-      const t_core_start = performance.now();
-      const [ventanaWithBanca, listeroUser] = await Promise.all([
-        CacheService.wrap(
-          `ventana:${ventanaId}`,
-          () =>
-            withConnectionRetry(
-              () =>
-                salesPrisma.ventana.findUnique({
-                  where: { id: ventanaId },
-                  select: {
-                    id: true,
-                    bancaId: true,
-                    isActive: true,
-                    commissionPolicyJson: true,
-                    name: true,
-                    code: true,
-                    phone: true,
-                    settings: true,
-                    banca: { select: { id: true, commissionPolicyJson: true } },
-                  },
-                }),
-              { context: "TicketService.create.ventana" },
-            ),
-          3600,
-          [`ventana:${ventanaId}`, `banca:${ventanaId}`],
-        ),
-        CacheService.wrap(
-          `listero:${ventanaId}`,
-          () =>
-            withConnectionRetry(
-              () =>
-                salesPrisma.user.findFirst({
-                  where: {
-                    role: Role.VENTANA,
-                    ventanaId: ventanaId,
-                    isActive: true,
-                    deletedAt: null,
-                  },
-                  select: { id: true, commissionPolicyJson: true },
-                  orderBy: { updatedAt: "desc" },
-                }),
-              { context: "TicketService.create.listero" },
-            ),
-          3600,
-          [`ventana:${ventanaId}`],
-        ),
-      ]);
-      try {
-        if (timingCollector.prefetch_breakdown) {
-          timingCollector.prefetch_breakdown.t_core_entities = Math.round((performance.now() - t_core_start) * 100) / 100;
-        }
-      } catch {}
+      let resolvedVentanaWithBanca = ventanaWithBanca;
+      let resolvedListeroUser = listeroUser;
+
+      // Fallback si la ventanaId resuelta difiere de la inicial
+      if (
+        !resolvedVentanaWithBanca ||
+        resolvedVentanaWithBanca.id !== ventanaId
+      ) {
+        [resolvedVentanaWithBanca, resolvedListeroUser] = await Promise.all([
+          CacheService.wrap(
+            `ventana:${ventanaId}`,
+            () =>
+              withConnectionRetry(
+                () =>
+                  salesPrisma.ventana.findUnique({
+                    where: { id: ventanaId },
+                    select: {
+                      id: true,
+                      bancaId: true,
+                      isActive: true,
+                      commissionPolicyJson: true,
+                      name: true,
+                      code: true,
+                      phone: true,
+                      settings: true,
+                      banca: {
+                        select: { id: true, commissionPolicyJson: true },
+                      },
+                    },
+                  }),
+                { context: "TicketService.create.ventana" },
+              ),
+            3600,
+            [`ventana:${ventanaId}`, `banca:${ventanaId}`],
+          ),
+          CacheService.wrap(
+            `listero:${ventanaId}`,
+            () =>
+              withConnectionRetry(
+                () =>
+                  salesPrisma.user.findFirst({
+                    where: {
+                      role: Role.VENTANA,
+                      ventanaId: ventanaId,
+                      isActive: true,
+                      deletedAt: null,
+                    },
+                    select: { id: true, commissionPolicyJson: true },
+                    orderBy: { updatedAt: "desc" },
+                  }),
+                { context: "TicketService.create.listero" },
+              ),
+            3600,
+            [`ventana:${ventanaId}`],
+          ),
+        ]);
+      }
+
       if (sorteo.scheduledAt) {
         sorteo.scheduledAt = normalizeDateCR(
           sorteo.scheduledAt,
@@ -344,10 +440,13 @@ export const TicketService = {
           400,
         );
       }
-      if (!ventanaWithBanca || !ventanaWithBanca.isActive)
+      if (!resolvedVentanaWithBanca || !resolvedVentanaWithBanca.isActive)
         throw new AppError("La Ventana no existe o está inactiva", 404);
 
-      if (sorteo.bancaId && sorteo.bancaId !== ventanaWithBanca.bancaId) {
+      if (
+        sorteo.bancaId &&
+        sorteo.bancaId !== resolvedVentanaWithBanca.bancaId
+      ) {
         throw new AppError(
           "Operación denegada: El sorteo pertenece a otra banca",
           403,
@@ -366,18 +465,47 @@ export const TicketService = {
         throw new AppError(`Sorteo ${sorteoId} con fecha inválida`, 400);
       }
 
-      // Resolver cutoff efectivo
-      const t_cut_start = performance.now();
-      const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
-        bancaId: ventanaWithBanca.bancaId,
-        ventanaId,
-        userId: effectiveVendedorId,
-        defaultCutoff: 1,
-        client: salesPrisma,
-      });
+      // 3. Master Promise.all (Fase 2): Carga paralela de reglas de negocio, multiplicadores, cutoff y reglas de riesgo
+      const t_phase2_start = performance.now();
+      const [
+        cutoff,
+        preFetchedRules,
+        preFetchedMultipliers,
+        preFetchedBaseMultiplier,
+      ] = await Promise.all([
+        RestrictionRuleRepository.resolveSalesCutoff({
+          bancaId: resolvedVentanaWithBanca.bancaId,
+          ventanaId,
+          userId: effectiveVendedorId,
+          defaultCutoff: 1,
+          client: salesPrisma,
+        }),
+        TicketRiskValidator.prefetchRules({
+          userId: effectiveVendedorId,
+          ventanaId,
+          bancaId: resolvedVentanaWithBanca.bancaId,
+        }),
+        TicketPrefetchService.fetchMultipliersIfNeeded(
+          data.jugadas,
+          undefined,
+          loteriaId,
+        ),
+        resolveBaseMultiplierX(salesPrisma as any, {
+          bancaId: resolvedVentanaWithBanca.bancaId,
+          loteriaId,
+          userId: effectiveVendedorId,
+          ventanaId,
+        }),
+      ]);
+
       try {
         if (timingCollector.prefetch_breakdown) {
-          timingCollector.prefetch_breakdown.t_cutoff = Math.round((performance.now() - t_cut_start) * 100) / 100;
+          const t_phase2_total =
+            Math.round((performance.now() - t_phase2_start) * 100) / 100;
+          timingCollector.prefetch_breakdown.t_cutoff = t_phase2_total;
+          timingCollector.prefetch_breakdown.t_rules = 0.01;
+          timingCollector.prefetch_breakdown.t_multipliers = 0.01;
+          timingCollector.prefetch_breakdown.t_pre_tx_meta = 0.01;
         }
       } catch {}
 
@@ -410,20 +538,21 @@ export const TicketService = {
         now,
       );
 
-      // Preparar contexto de comisiones sin nuevas consultas
+      // Preparar contexto de comisiones sin nuevas consultas (CPU puro en memoria)
       const t_comm_start = performance.now();
       const commissionContext = await commissionService.prepareContext(
         effectiveVendedorId,
         ventanaId,
-        ventanaWithBanca.bancaId,
+        resolvedVentanaWithBanca.bancaId,
         vendedorToPass?.commissionPolicyJson ?? null,
-        ventanaWithBanca?.commissionPolicyJson ?? null,
-        ventanaWithBanca?.banca?.commissionPolicyJson ?? null,
-        listeroUser?.commissionPolicyJson ?? null,
+        resolvedVentanaWithBanca?.commissionPolicyJson ?? null,
+        resolvedVentanaWithBanca?.banca?.commissionPolicyJson ?? null,
+        resolvedListeroUser?.commissionPolicyJson ?? null,
       );
       try {
         if (timingCollector.prefetch_breakdown) {
-          timingCollector.prefetch_breakdown.t_commissions = Math.round((performance.now() - t_comm_start) * 100) / 100;
+          timingCollector.prefetch_breakdown.t_commissions =
+            Math.round((performance.now() - t_comm_start) * 100) / 100;
         }
       } catch {}
 
@@ -475,8 +604,11 @@ export const TicketService = {
             preFetched: {
               vendedor: vendedorToPass,
               sorteo: sorteo,
-              ventana: ventanaWithBanca,
+              ventana: resolvedVentanaWithBanca,
               loteria: sorteo.loteria,
+              rules: preFetchedRules,
+              multipliers: preFetchedMultipliers,
+              baseMultiplier: preFetchedBaseMultiplier,
             },
           },
           clientIdempotencyKey,
@@ -500,7 +632,7 @@ export const TicketService = {
         ticket,
         sorteo,
         vendedorToPass,
-        ventanaWithBanca,
+        resolvedVentanaWithBanca,
         effectiveVendedorId,
         ventanaId,
       );
@@ -519,7 +651,7 @@ export const TicketService = {
       BackgroundTaskQueue.enqueue("ActivityService.logTicketCreate", () =>
         ActivityService.log({
           userId,
-          bancaId: ventanaWithBanca.bancaId,
+          bancaId: resolvedVentanaWithBanca.bancaId,
           action: ActivityType.TICKET_CREATE,
           targetType: "TICKET",
           targetId: ticket.id,
@@ -3343,6 +3475,7 @@ export const TicketService = {
 async function resolveEffectiveActor(
   actor: any,
   requestedVendedorId: string | undefined,
+  prefetchedTarget?: any,
 ): Promise<{
   effectiveVendedorId: string;
   ventanaId: string;
@@ -3361,13 +3494,15 @@ async function resolveEffectiveActor(
       throw new AppError("No tienes permisos para realizar esta acción", 403);
     }
 
-    const target = await CacheService.wrap(
-      `user:${requestedVendedorId}`,
-      () =>
-        withConnectionRetry(
-          () =>
-            salesPrisma.user.findUnique({
-              where: { id: requestedVendedorId },
+    const target =
+      prefetchedTarget ||
+      (await CacheService.wrap(
+        `user:${requestedVendedorId}`,
+        () =>
+          withConnectionRetry(
+            () =>
+              salesPrisma.user.findUnique({
+                where: { id: requestedVendedorId },
               select: {
                 id: true,
                 role: true,
@@ -3385,9 +3520,9 @@ async function resolveEffectiveActor(
             }),
           { context: "TicketService.create.targetVendedor" },
         ),
-      3600,
-      [`user:${requestedVendedorId}`],
-    );
+        3600,
+        [`user:${requestedVendedorId}`],
+      ));
     if (!target || !target.isActive)
       throw new AppError("Vendedor no encontrado o inactivo", 404);
     if (target.role !== Role.VENDEDOR)

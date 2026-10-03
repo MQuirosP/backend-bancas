@@ -423,36 +423,27 @@ export const TicketRepository = {
     } | null;
   }> {
     const dynamicTimeout = TicketTimeoutCalculator.calculate(data.jugadas.length);
-    const t_lock_start = performance.now();
-    const lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
-    try {
-      if (options?.timingCollector?.prefetch_breakdown) {
-        options.timingCollector.prefetch_breakdown.t_lock_acquire = Math.round((performance.now() - t_lock_start) * 100) / 100;
-      }
-    } catch {}
-
+    let lock: any = null;
     try {
       // 1. [PRE-TX] Pre-cargar multiplicadores requeridos si no venían
       const t_mult_start = performance.now();
-      const preFetchedMultipliers = await TicketPrefetchService.fetchMultipliersIfNeeded(
-        data.jugadas,
-        options,
-        data.loteriaId
-      );
+      const preFetchedMultipliers =
+        options?.preFetched?.multipliers && options.preFetched.multipliers.length >= 0
+          ? options.preFetched.multipliers
+          : await TicketPrefetchService.fetchMultipliersIfNeeded(
+              data.jugadas,
+              options,
+              data.loteriaId
+            );
       try {
         if (options?.timingCollector?.prefetch_breakdown) {
           options.timingCollector.prefetch_breakdown.t_multipliers = Math.round((performance.now() - t_mult_start) * 100) / 100;
         }
       } catch {}
 
-      if (preFetchedMultipliers && preFetchedMultipliers.length > 0) {
-        options = {
-          ...options,
-          preFetched: {
-            ...options?.preFetched,
-            multipliers: preFetchedMultipliers,
-          },
-        };
+      if (options) {
+        if (!options.preFetched) options.preFetched = {};
+        options.preFetched.multipliers = preFetchedMultipliers;
       }
 
       // 2. [PRE-TX] Resolver entidades estáticas y reglas FUERA de la transacción interactiva
@@ -480,6 +471,16 @@ export const TicketRepository = {
       try {
         if (options?.timingCollector?.prefetch_breakdown) {
           options.timingCollector.prefetch_breakdown.t_rules = Math.round((performance.now() - t_rules_start) * 100) / 100;
+        }
+      } catch {}
+
+      // 2.3. [LOCK] Adquirir el Lock Distribuido ÚNICAMENTE tras resolver metadatos y reglas estáticas
+      // Esto minimiza el hold-time del lock en Redis y elimina colas de espera concurrentes
+      const t_lock_start = performance.now();
+      lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
+      try {
+        if (options?.timingCollector?.prefetch_breakdown) {
+          options.timingCollector.prefetch_breakdown.t_lock_acquire = Math.round((performance.now() - t_lock_start) * 100) / 100;
         }
       } catch {}
 

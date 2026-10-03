@@ -83,6 +83,7 @@ export type CreateTicketOptions = {
     loteria?: any;
     multipliers?: any[];
     rules?: any[];
+    baseMultiplier?: any;
     cache?: ScopeCache;
     dynamicLimits?: Map<string, number>;
   };
