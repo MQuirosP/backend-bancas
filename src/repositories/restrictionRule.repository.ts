@@ -7,27 +7,17 @@ import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
 import { restrictionCacheV2 } from "../utils/restrictionCacheV2";
 import { invalidateRestrictionRulesCache } from "./ticket.repository";
+import { CacheService } from "../core/cache.service";
 
-interface L1CutoffEntry {
-  result: EffectiveSalesCutoffDetailed;
-  expiresAt: number;
-}
+const L1_CUTOFF_TTL_MS = 30_000; // 30 segundos de TTL en memoria local para prevenir split-brain bajo autoscaling
+const CUTOFF_CACHE_TTL_SECONDS = 300; // 5 minutos en Redis L2
 
-// Caché L1 en memoria RAM de acceso O(1) para comprobaciones de corte ultra-rápidas
-const l1CutoffCache = new Map<string, L1CutoffEntry>();
-// Deduplicación en vuelo (Single-Flight) para evitar estampidas en cold-cache
-const inFlightCutoffPromises = new Map<string, Promise<EffectiveSalesCutoffDetailed>>();
-const L1_CUTOFF_TTL_MS = 600_000; // 10 minutos de TTL en memoria local
-
-export function clearL1CutoffCache(bancaId?: string): void {
-  if (!bancaId) {
-    l1CutoffCache.clear();
-    return;
-  }
-  for (const key of l1CutoffCache.keys()) {
-    if (key.startsWith(`${bancaId}:`)) {
-      l1CutoffCache.delete(key);
-    }
+export async function clearL1CutoffCache(bancaId?: string): Promise<void> {
+  const tag = bancaId ? `cutoff:${bancaId}` : 'cutoff';
+  await CacheService.invalidateTag(tag).catch(() => {});
+  if (bancaId) {
+    // También invalidar el tag genérico de cutoff
+    await CacheService.invalidateTag('cutoff').catch(() => {});
   }
 }
 
@@ -176,7 +166,7 @@ export const RestrictionRuleRepository = {
       userId: rule.userId || undefined,
     });
     // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
-    clearL1CutoffCache(rule.bancaId || undefined);
+    await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
 
     return rule;
@@ -224,7 +214,7 @@ export const RestrictionRuleRepository = {
       userId: rule.userId || undefined,
     });
     // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
-    clearL1CutoffCache(rule.bancaId || undefined);
+    await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
 
     return rule;
@@ -250,7 +240,7 @@ export const RestrictionRuleRepository = {
       userId: rule.userId || undefined,
     });
     // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
-    clearL1CutoffCache(rule.bancaId || undefined);
+    await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
 
     return rule;
@@ -274,7 +264,7 @@ export const RestrictionRuleRepository = {
       userId: rule.userId || undefined,
     });
     // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
-    clearL1CutoffCache(rule.bancaId || undefined);
+    await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
 
     return rule;
@@ -741,142 +731,124 @@ export const RestrictionRuleRepository = {
     const at = new Date();
     const { hour, year, month, day } = getCRLocalComponents(at);
     // Llave contextualizada por hora CR para respetar restricciones temporales
-    const cacheKey = `${bancaId}:${ventanaId || 'null'}:${userId || 'null'}:h${hour}`;
+    const cacheKey = `cutoff:resolved:${bancaId}:${ventanaId || 'null'}:${userId || 'null'}:h${hour}`;
+    const tags = ['cutoff', `cutoff:${bancaId}`];
+    if (ventanaId) tags.push(`cutoff:ventana:${ventanaId}`);
+    if (userId) tags.push(`cutoff:user:${userId}`);
 
-    // 1. FAST-PATH: L1 RAM Cache O(1) en memoria (0 I/O, 0 conexiones DB, 0 Redis)
-    const l1Hit = l1CutoffCache.get(cacheKey);
-    const now = Date.now();
-    if (l1Hit && l1Hit.expiresAt > now) {
-      return l1Hit.result;
-    }
+    return await CacheService.wrap<EffectiveSalesCutoffDetailed>(
+      cacheKey,
+      async () => {
+        // Fallback a PostgreSQL (usando prisma general por defecto o el cliente inyectado)
+        const targetDb = client || prisma;
+        const dateOnly = new Date(Date.UTC(year, month - 1, day));
 
-    // 2. Deduplicación en vuelo (Single Flight) para evitar estampidas en cold-cache
-    const existingInFlight = inFlightCutoffPromises.get(cacheKey);
-    if (existingInFlight) {
-      return existingInFlight;
-    }
+        const timeFilters = [
+          { OR: [{ appliesToDate: null }, { appliesToDate: dateOnly }] },
+          { OR: [{ appliesToHour: null }, { appliesToHour: hour }] },
+        ];
 
-    const fetchPromise = (async () => {
-      // 3. L2 Cache (Redis / restrictionCacheV2)
-      const cached = await restrictionCacheV2.getCachedCutoff({ bancaId, ventanaId, userId });
-      if (cached && typeof cached.minutes === 'number' && !isNaN(cached.minutes) && cached.minutes >= 0) {
-        l1CutoffCache.set(cacheKey, { result: cached, expiresAt: Date.now() + L1_CUTOFF_TTL_MS });
-        return cached;
-      }
+        // Round 1: ventana IDs de la banca + valor de tabla Banca (en paralelo)
+        const [bancaVentanas, bancaTable] = await Promise.all([
+          targetDb.ventana.findMany({
+            where: { bancaId },
+            select: { id: true },
+          }),
+          targetDb.banca.findUnique({
+            where: { id: bancaId, isActive: true },
+            select: { salesCutoffMinutes: true },
+          }),
+        ]);
 
-      // 4. Fallback a PostgreSQL (usando prisma general por defecto o el cliente inyectado)
-      const targetDb = client || prisma;
-      const dateOnly = new Date(Date.UTC(year, month - 1, day));
+        const allVentanaIds = bancaVentanas.map(v => v.id);
 
-      const timeFilters = [
-        { OR: [{ appliesToDate: null }, { appliesToDate: dateOnly }] },
-        { OR: [{ appliesToHour: null }, { appliesToHour: hour }] },
-      ];
+        // Round 2: query consolidada de candidatos
+        const orConditions: any[] = [{ bancaId }];
+        if (allVentanaIds.length > 0) {
+          orConditions.push({ ventanaId: { in: allVentanaIds } });
+        }
+        if (userId) orConditions.push({ userId });
 
-      // Round 1: ventana IDs de la banca + valor de tabla Banca (en paralelo)
-      const [bancaVentanas, bancaTable] = await Promise.all([
-        targetDb.ventana.findMany({
-          where: { bancaId },
-          select: { id: true },
-        }),
-        targetDb.banca.findUnique({
-          where: { id: bancaId, isActive: true },
-          select: { salesCutoffMinutes: true },
-        }),
-      ]);
-
-      const allVentanaIds = bancaVentanas.map(v => v.id);
-
-      // Round 2: query consolidada de candidatos
-      const orConditions: any[] = [{ bancaId }];
-      if (allVentanaIds.length > 0) {
-        orConditions.push({ ventanaId: { in: allVentanaIds } });
-      }
-      if (userId) orConditions.push({ userId });
-
-      const candidates = await targetDb.restrictionRule.findMany({
-        where: {
-          isActive: true,
-          salesCutoffMinutes: { not: null },
-          number: null,
-          OR: orConditions,
-          AND: timeFilters,
-        },
-        select: {
-          salesCutoffMinutes: true,
-          userId: true,
-          ventanaId: true,
-          bancaId: true,
-        },
-        orderBy: { updatedAt: 'desc' },
-      });
-
-      // Scoring por especificidad
-      const scored = candidates
-        .map(r => {
-          if (r.userId) {
-            if (r.userId === userId) return { r, score: 100, source: 'USER' as CutoffSource };
-            return null; // regla de otro usuario, ignorar
-          }
-          if (r.ventanaId) {
-            if (r.ventanaId === ventanaId) return { r, score: 10, source: 'VENTANA' as CutoffSource };
-            // ventana de la misma banca → fallback nivel BANCA
-            return { r, score: 1, source: 'BANCA' as CutoffSource };
-          }
-          if (r.bancaId) {
-            return { r, score: 5, source: 'BANCA' as CutoffSource };
-          }
-          return null;
-        })
-        .filter((x): x is NonNullable<typeof x> => x !== null)
-        .sort((a, b) => b.score - a.score);
-
-      // Jerarquía: scored rules → bancaTable → default (SOPORTE NEGATIVE CACHING)
-      let result: EffectiveSalesCutoffDetailed;
-
-      if (scored.length > 0) {
-        const winner = scored[0];
-        result = { minutes: winner.r.salesCutoffMinutes!, source: winner.source };
-      } else if (bancaTable?.salesCutoffMinutes != null) {
-        result = { minutes: bancaTable.salesCutoffMinutes, source: 'BANCA' };
-      } else {
-        const safeDefault = (typeof defaultCutoff === 'number' && !isNaN(defaultCutoff)) ? defaultCutoff : 1;
-        result = { minutes: Math.max(0, safeDefault), source: 'DEFAULT' };
-      }
-
-      logger.info({
-        layer: 'repository',
-        action: 'CUTOFF_RESOLVED',
-        payload: {
-          bancaId,
-          ventanaId,
-          userId,
-          result,
-          hierarchy: {
-            rules: scored.map(({ r, score, source }) => ({
-              salesCutoffMinutes: r.salesCutoffMinutes,
-              source,
-              score,
-            })),
-            bancaTable: bancaTable?.salesCutoffMinutes,
-            default: defaultCutoff,
+        const candidates = await targetDb.restrictionRule.findMany({
+          where: {
+            isActive: true,
+            salesCutoffMinutes: { not: null },
+            number: null,
+            OR: orConditions,
+            AND: timeFilters,
           },
-          message: `Resolved cutoff: ${result.minutes} min from ${result.source}`,
-        },
-      });
+          select: {
+            salesCutoffMinutes: true,
+            userId: true,
+            ventanaId: true,
+            bancaId: true,
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
 
-      // Guardar en L1 RAM y L2 Redis (incluyendo defaults / negative caching)
-      l1CutoffCache.set(cacheKey, { result, expiresAt: Date.now() + L1_CUTOFF_TTL_MS });
-      await restrictionCacheV2.setCachedCutoff({ bancaId, ventanaId, userId }, result);
+        // Scoring por especificidad
+        const scored = candidates
+          .map(r => {
+            if (r.userId) {
+              if (r.userId === userId) return { r, score: 100, source: 'USER' as CutoffSource };
+              return null; // regla de otro usuario, ignorar
+            }
+            if (r.ventanaId) {
+              if (r.ventanaId === ventanaId) return { r, score: 10, source: 'VENTANA' as CutoffSource };
+              // ventana de la misma banca → fallback nivel BANCA
+              return { r, score: 1, source: 'BANCA' as CutoffSource };
+            }
+            if (r.bancaId) {
+              return { r, score: 5, source: 'BANCA' as CutoffSource };
+            }
+            return null;
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null)
+          .sort((a, b) => b.score - a.score);
 
-      return result;
-    })();
+        // Jerarquía: scored rules → bancaTable → default (SOPORTE NEGATIVE CACHING)
+        let result: EffectiveSalesCutoffDetailed;
 
-    inFlightCutoffPromises.set(cacheKey, fetchPromise);
-    try {
-      return await fetchPromise;
-    } finally {
-      inFlightCutoffPromises.delete(cacheKey);
-    }
+        if (scored.length > 0) {
+          const winner = scored[0];
+          result = { minutes: winner.r.salesCutoffMinutes!, source: winner.source };
+        } else if (bancaTable?.salesCutoffMinutes != null) {
+          result = { minutes: bancaTable.salesCutoffMinutes, source: 'BANCA' };
+        } else {
+          const safeDefault = (typeof defaultCutoff === 'number' && !isNaN(defaultCutoff)) ? defaultCutoff : 1;
+          result = { minutes: Math.max(0, safeDefault), source: 'DEFAULT' };
+        }
+
+        logger.info({
+          layer: 'repository',
+          action: 'CUTOFF_RESOLVED',
+          payload: {
+            bancaId,
+            ventanaId,
+            userId,
+            result,
+            hierarchy: {
+              rules: scored.map(({ r, score, source }) => ({
+                salesCutoffMinutes: r.salesCutoffMinutes,
+                source,
+                score,
+              })),
+              bancaTable: bancaTable?.salesCutoffMinutes,
+              default: defaultCutoff,
+            },
+            message: `Resolved cutoff: ${result.minutes} min from ${result.source}`,
+          },
+        });
+
+        // Mantener compatibilidad con restrictionCacheV2 si otros consumidores lo leen
+        await restrictionCacheV2.setCachedCutoff({ bancaId, ventanaId, userId }, result).catch(() => {});
+
+        return result;
+      },
+      CUTOFF_CACHE_TTL_SECONDS, // 300s en Redis L2
+      tags,
+      true, // useL1 = true (RAM local)
+      L1_CUTOFF_TTL_MS // 30_000 ms (30s) en L1 para autoscaling consistency
+    );
   },
 };

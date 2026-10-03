@@ -38,7 +38,7 @@ export type { CreateTicketInput, CreateTicketOptions, TicketWarning };
 
 
 const RULES_CACHE_TTL_SECONDS = 300; // 5 minutos en Redis
-const RULES_L1_TTL_MS = 300_000; // 5 minutos en memoria local L1 (RAM O(1))
+const RULES_L1_TTL_MS = 30_000; // 30 segundos en memoria local L1 (RAM O(1)) para prevenir split-brain bajo autoscaling
 
 export function buildRulesCacheKey(params: {
   userId: string;

@@ -7,6 +7,17 @@ import { EventEmitter } from 'events';
 export const CacheEvents = new EventEmitter();
 let isSubscribed = false;
 
+export function clearL1Memory(reason: string = 'MANUAL'): void {
+    const sizeBefore = l1Cache.size;
+    l1Cache.clear();
+    l1TagMap.clear();
+    logger.info({
+        layer: 'cache',
+        action: 'L1_CACHE_PURGED',
+        payload: { reason, evictedEntries: sizeBefore }
+    });
+}
+
 export function initCacheSubscriber() {
     if (!redisSubscriber || isSubscribed) return;
     isSubscribed = true;
@@ -22,6 +33,14 @@ export function initCacheSubscriber() {
                 deleteL1Entry(message);
                 CacheEvents.emit('invalidate', message);
             }
+        });
+
+        // Auto-Purga L1 ante reconexión del Bus de Eventos para evitar split-brain por mensajes perdidos
+        redisSubscriber.on('ready', () => {
+            clearL1Memory('REDIS_SUBSCRIBER_READY');
+        });
+        redisSubscriber.on('reconnecting', (ms: number) => {
+            clearL1Memory(`REDIS_SUBSCRIBER_RECONNECTING_${ms}MS`);
         });
     } catch (err: any) {
         logger.warn({ layer: 'cache', action: 'INIT_SUBSCRIBER_WARN', payload: { error: err?.message || String(err) } });
@@ -535,4 +554,13 @@ export class CacheService {
             logger.debug({ layer: 'cache', action: 'TOUCH_WARN', payload: { key, error: error?.message } });
         }
     }
+
+    /**
+     * Purga manualmente toda la memoria L1 y sus índices de etiquetas.
+     */
+    static clearL1(reason: string = 'MANUAL'): void {
+        clearL1Memory(reason);
+    }
 }
+
+
