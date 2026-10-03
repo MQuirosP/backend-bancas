@@ -12,11 +12,11 @@ import https from 'https';
 async function runQuery(sql: string): Promise<any[]> {
   return new Promise((resolve, reject) => {
     const options = {
-      hostname: 'eu-fsn-3-connect.betterstackdata.com',
+      hostname: 'us-west-2a-connect.betterstackdata.com',
       port: 443,
       path: '/',
       method: 'POST',
-      auth: 'uU1EYcbZhqwNJFteumO55IPD5B02j2dSP:blu9rYvWzd63lsK3ZGUYxDkdyxW2jyjrbUbIxty2iQbW5nEk2vyZ5Cz4g5yulNUC',
+      auth: 'uqHhQJrvjCfVU0paJIQ41zP050BGhRLoB:Nc9qKY14GvKP5rZnU2ovVY3yPeFrwUGTP1ODp1aedbiGrRZl8UJdNzsY4eLXKoCa',
       headers: {
         'Content-Type': 'text/plain',
         'Content-Length': Buffer.byteLength(sql),
@@ -74,7 +74,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
   // 1. Ciclo de Vida de Evaluaciones de Sorteos
   const sorteosSql = `
     SELECT dt, raw 
-    FROM remote(t563335_backend_bancas_logs) 
+    FROM remote(t604487_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND (
         raw ILIKE '%SORTEO_EVALUATE_DB%' 
@@ -88,7 +88,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
   // 2. Pre-calentamiento (Warmup) e Invalidación de Caché
   const cacheSql = `
     SELECT dt, raw 
-    FROM remote(t563335_backend_bancas_logs) 
+    FROM remote(t604487_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND (
         raw ILIKE '%WARMUP_EVALUATED_SUMMARY%' 
@@ -114,7 +114,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
       quantile(0.50)(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as p50_ms,
       quantile(0.95)(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as p95_ms,
       max(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as max_latency_ms
-    FROM remote(t563335_backend_bancas_logs) 
+    FROM remote(t604487_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND raw ILIKE '%evaluated-summary%'
       AND raw ILIKE '%http-request%'
@@ -129,7 +129,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
       min(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as min_ms,
       round(avg(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))), 1) as avg_ms,
       max(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as max_ms
-    FROM remote(t563335_backend_bancas_logs) 
+    FROM remote(t604487_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND raw ILIKE '%evaluated-summary%'
       AND raw ILIKE '%http-request%'
@@ -142,7 +142,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
   // 5. Errores Críticos / 503 / Timeouts
   const errorsSql = `
     SELECT dt, raw 
-    FROM remote(t563335_backend_bancas_logs) 
+    FROM remote(t604487_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND (
         raw ILIKE '%UNHANDLED_REJECTION%' 
@@ -154,13 +154,69 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
     ORDER BY dt DESC LIMIT 10 FORMAT JSONEachRow
   `;
 
+  // 6. Métricas de Workers Segregados (Tickets vs PDFs)
+  const workersSql = `
+    SELECT 
+      if(JSONExtractString(raw, 'message', 'payload', 'workerName') != '', JSONExtractString(raw, 'message', 'payload', 'workerName'), 'legacy-shared') as worker,
+      JSONExtractString(raw, 'message', 'payload', 'type') as type,
+      count() as total_tasks,
+      round(avg(toInt32OrZero(JSONExtractString(raw, 'message', 'payload', 'durationMs'))), 1) as avg_duration_ms,
+      quantile(0.50)(toInt32OrZero(JSONExtractString(raw, 'message', 'payload', 'durationMs'))) as p50_ms,
+      quantile(0.95)(toInt32OrZero(JSONExtractString(raw, 'message', 'payload', 'durationMs'))) as p95_ms,
+      max(toInt32OrZero(JSONExtractString(raw, 'message', 'payload', 'durationMs'))) as max_duration_ms,
+      max(toInt32OrZero(JSONExtractString(raw, 'message', 'payload', 'queueRemaining'))) as max_queue
+    FROM remote(t604487_backend_bancas_logs)
+    WHERE dt >= now() - INTERVAL ${minutes} MINUTE
+      AND JSONExtractString(raw, 'message', 'action') = 'WORKER_TASK_SUCCESS'
+    GROUP BY worker, type
+    ORDER BY total_tasks DESC
+    FORMAT JSONEachRow
+  `;
+
+  // 7. Desglose de Caché de Imágenes Térmicas (/image)
+  const imageRenderCacheSql = `
+    SELECT 
+      JSONExtractString(raw, 'message', 'action') as action,
+      count() as count
+    FROM remote(t604487_backend_bancas_logs)
+    WHERE dt >= now() - INTERVAL ${minutes} MINUTE
+      AND JSONExtractString(raw, 'message', 'action') IN ('TICKET_IMAGE_CACHE_HIT', 'TICKET_IMAGE_GENERATED')
+    GROUP BY action
+    FORMAT JSONEachRow
+  `;
+
+  // 8. Eventos de Ciclo de Vida y Warmup de Workers
+  const workerLifecycleSql = `
+    SELECT 
+      dt,
+      JSONExtractString(raw, 'message', 'action') as action,
+      JSONExtractString(raw, 'message', 'payload', 'workerName') as worker,
+      JSONExtractString(raw, 'message', 'payload', 'durationMs') as durationMs,
+      raw
+    FROM remote(t604487_backend_bancas_logs)
+    WHERE dt >= now() - INTERVAL ${minutes} MINUTE
+      AND (
+        raw ILIKE '%WORKER_WARMUP%' 
+        OR raw ILIKE '%WORKER_INIT_PERSISTENT%' 
+        OR raw ILIKE '%WORKER_FATAL_ERROR%' 
+        OR raw ILIKE '%IMAGE_CONVERSION_WORKER_ERROR%'
+        OR raw ILIKE '%WORKER_EXITED_UNEXPECTEDLY%'
+      )
+    ORDER BY dt DESC
+    LIMIT 10
+    FORMAT JSONEachRow
+  `;
+
   try {
-    const [sorteos, cacheEvents, httpMetrics, terminals, errors] = await Promise.all([
+    const [sorteos, cacheEvents, httpMetrics, terminals, errors, workers, imageCache, workerLifecycle] = await Promise.all([
       runQuery(sorteosSql),
       runQuery(cacheSql),
       runQuery(httpGlobalSql),
       runQuery(httpByIpSql),
       runQuery(errorsSql),
+      runQuery(workersSql),
+      runQuery(imageRenderCacheSql),
+      runQuery(workerLifecycleSql),
     ]);
 
     // 1. SORTEOS
@@ -308,6 +364,60 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
       for (const e of realErrors.slice(0, 5)) {
         const timeCR = formatCRTime(e.dt);
         console.log(`   - [${timeCR}] ${e.raw.slice(0, 200)}...`);
+      }
+    }
+
+    // 6. WORKERS DE RENDERIZADO Y TÉRMICO (Segregación y Rendimiento)
+    console.log(`\n🖨️ 6. WORKERS DE RENDERIZADO TÉRMICO Y PROCESAMIENTO GRÁFICO:`);
+    
+    // A. Desglose de Caché de Imágenes de Tickets
+    const hitRow = imageCache.find((c: any) => c.action === 'TICKET_IMAGE_CACHE_HIT');
+    const genRow = imageCache.find((c: any) => c.action === 'TICKET_IMAGE_GENERATED');
+    const hits = hitRow ? Number(hitRow.count) : 0;
+    const generated = genRow ? Number(genRow.count) : 0;
+    const totalImageRequests = hits + generated;
+    const hitRate = totalImageRequests > 0 ? Math.round((hits / totalImageRequests) * 100) : 0;
+
+    console.log(`   📦 Caché Determinista de Imágenes (/image):`);
+    console.log(`      - Solicitudes Totales:        ${totalImageRequests}`);
+    console.log(`      - Cache Hits en Redis (<5ms): ${hits} (${hitRate}%) ${hitRate >= 50 ? '🟢 ÓPTIMO' : '🔵 EN CRECIMIENTO'}`);
+    console.log(`      - Generados por Worker:       ${generated}`);
+
+    // B. Rendimiento por Worker Runner
+    console.log(`\n   🧵 Desempeño por Worker Runner (Segregado):`);
+    if (workers.length === 0) {
+      console.log('      (Sin tareas de workers ejecutadas en este intervalo)');
+    } else {
+      console.log(`      WORKER RUNNER     TAREA            TOTAL   AVG (ms)   P50 (ms)   P95 (ms)   MAX (ms)   MAX COLA`);
+      console.log(`      -----------------------------------------------------------------------------------------------`);
+      for (const w of workers) {
+        const workerName = String(w.worker || 'shared').padEnd(17);
+        const taskType = String(w.type || 'TASK').padEnd(16);
+        const totalTasks = String(w.total_tasks).padStart(5);
+        const avgMs = String(w.avg_duration_ms).padStart(10);
+        const p50Ms = String(w.p50_ms || 0).padStart(10);
+        const p95Ms = String(w.p95_ms || 0).padStart(10);
+        const maxMs = String(w.max_duration_ms).padStart(10);
+        const maxQueue = String(w.max_queue).padStart(10);
+        console.log(`      ${workerName} ${taskType} ${totalTasks} ${avgMs} ${p50Ms} ${p95Ms} ${maxMs} ${maxQueue}`);
+      }
+    }
+
+    // C. Ciclo de Vida y Warmup
+    const warmups = workerLifecycle.filter((l: any) => l.action.includes('WARMUP'));
+    const workerErrors = workerLifecycle.filter((l: any) => l.action.includes('ERROR') || l.action.includes('EXITED'));
+    if (warmups.length > 0) {
+      console.log(`\n   🔥 Eventos de Precalentamiento (Warmup):`);
+      for (const wu of warmups) {
+        const timeCR = formatCRTime(wu.dt);
+        console.log(`      - [${timeCR}] ${wu.action} (duración: ${wu.durationMs || 'N/A'} ms)`);
+      }
+    }
+    if (workerErrors.length > 0) {
+      console.log(`\n   ⚠️ Eventos Inusuales en Workers:`);
+      for (const we of workerErrors) {
+        const timeCR = formatCRTime(we.dt);
+        console.log(`      - [${timeCR}] ${we.action} en [${we.worker || 'desconocido'}]: ${we.raw.slice(0, 150)}...`);
       }
     }
 
