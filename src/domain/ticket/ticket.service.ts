@@ -3429,14 +3429,8 @@ export const TicketService = {
         },
       );
 
-      // Guardar en Redis de forma asíncrona con TTL de 24 horas (86,400s)
-      CacheService.setBuffer(cacheKey, imageBuffer, 86400).catch((err) => {
-        logger.warn({
-          layer: "service",
-          action: "TICKET_IMAGE_CACHE_SET_ERROR",
-          payload: { cacheKey, error: err.message },
-        });
-      });
+      // Guardar en Redis con ventana efímera de 20 segundos
+      await CacheService.setBuffer(cacheKey, imageBuffer, 20);
 
       // Registro de éxito
       logger.info({
