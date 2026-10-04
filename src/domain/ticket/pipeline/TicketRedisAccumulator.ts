@@ -4,6 +4,7 @@ import { salesPrisma } from "../../../core/prismaClient";
 import logger from "../../../core/logger";
 import { getRedisClient, isRedisAvailable, markRedisError } from "../../../core/redisClient";
 import { CreateTicketOptions } from "./ticket.types";
+import { appendSalesCounterOps } from "../../../utils/sorteoSalesCounters";
 
 export class TicketRedisAccumulator {
   /**
@@ -85,6 +86,15 @@ export class TicketRedisAccumulator {
         for (const key of keysToExpire) {
           pipeline.expire(key, ttlSeconds);
         }
+
+        // Contadores de tickets por sorteo (hasSales/ticketCount) consumidos por GET /sorteos
+        appendSalesCounterOps(pipeline, {
+          sorteoId: ticket.sorteoId,
+          vendedorId: ticket.vendedorId,
+          ventanaId: ticket.ventanaId,
+          delta: 1,
+          ttlSeconds,
+        });
 
         await pipeline.exec();
 

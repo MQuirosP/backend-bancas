@@ -6,6 +6,7 @@ import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";
 import { restrictionCacheV2 } from "../../utils/restrictionCacheV2";
 import { getRedisClient, isRedisAvailable, markRedisError } from "../../core/redisClient";
+import { rehydrateSorteoSalesCounters } from "../../utils/sorteoSalesCounters";
 import prisma from "../../core/prismaClient";
 
 /**
@@ -1602,6 +1603,15 @@ export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.Tr
     pipeline.set(hydratedKey, "true", "EX", ttlSeconds);
 
     await pipeline.exec();
+
+    // Rehidratar también los contadores de tickets (hasSales / ticketCount) en Redis L2
+    await rehydrateSorteoSalesCounters(sorteoId, client).catch((err) => {
+      logger.warn({
+        layer: "redis-rehydrate",
+        action: "REHYDRATE_SALES_COUNTERS_WARN",
+        payload: { sorteoId, error: err?.message },
+      });
+    });
 
     logger.info({
       layer: "redis-rehydrate",

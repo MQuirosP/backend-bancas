@@ -7,9 +7,9 @@ import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
 import { restrictionCacheV2 } from "../utils/restrictionCacheV2";
 import { invalidateRestrictionRulesCache } from "./ticket.repository";
+import { bumpRestrictionsVersion } from "../utils/restrictionCompiledCache";
 import { CacheService } from "../core/cache.service";
 
-const L1_CUTOFF_TTL_MS = 30_000; // 30 segundos de TTL en memoria local para prevenir split-brain bajo autoscaling
 const CUTOFF_CACHE_TTL_SECONDS = 300; // 5 minutos en Redis L2
 
 export async function clearL1CutoffCache(bancaId?: string): Promise<void> {
@@ -168,6 +168,7 @@ export const RestrictionRuleRepository = {
     // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
     await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
+    await bumpRestrictionsVersion(rule.bancaId || null);
 
     return rule;
   },
@@ -216,6 +217,10 @@ export const RestrictionRuleRepository = {
     // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
     await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
+    await bumpRestrictionsVersion(rule.bancaId || null);
+    if (existingRule?.bancaId && existingRule.bancaId !== rule.bancaId) {
+      await bumpRestrictionsVersion(existingRule.bancaId);
+    }
 
     return rule;
   },
@@ -242,6 +247,7 @@ export const RestrictionRuleRepository = {
     // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
     await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
+    await bumpRestrictionsVersion(rule.bancaId || null);
 
     return rule;
   },
@@ -266,6 +272,7 @@ export const RestrictionRuleRepository = {
     // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
     await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
+    await bumpRestrictionsVersion(rule.bancaId || null);
 
     return rule;
   },
@@ -847,8 +854,7 @@ export const RestrictionRuleRepository = {
       },
       CUTOFF_CACHE_TTL_SECONDS, // 300s en Redis L2
       tags,
-      true, // useL1 = true (RAM local)
-      L1_CUTOFF_TTL_MS // 30_000 ms (30s) en L1 para autoscaling consistency
+      false // useL1 = false (Zero-L1: el cutoff compartido vive solo en Redis L2)
     );
   },
 };

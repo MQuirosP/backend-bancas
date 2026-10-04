@@ -36,13 +36,14 @@ import { TicketRedisAccumulator } from "../domain/ticket/pipeline/TicketRedisAcc
 import { TicketTimeoutCalculator } from "../domain/ticket/pipeline/TicketTimeoutCalculator";
 import { TicketResponseBuilder } from "../domain/ticket/pipeline/TicketResponseBuilder";
 import { config } from "../config";
+import { bumpRestrictionsVersion } from "../utils/restrictionCompiledCache";
+import { appendSalesCounterOps } from "../utils/sorteoSalesCounters";
 import { VendorCreditService } from "../domain/credit/vendorCredit.service";
 
 export type { CreateTicketInput, CreateTicketOptions, TicketWarning };
 
 
-const RULES_CACHE_TTL_SECONDS = 300; // 5 minutos en Redis
-const RULES_L1_TTL_MS = 30_000; // 30 segundos en memoria local L1 (RAM O(1)) para prevenir split-brain bajo autoscaling
+const RULES_CACHE_TTL_SECONDS = 300; // 5 minutos en Redis L2 (Zero-L1: sin memoria local por proceso)
 
 export function buildRulesCacheKey(params: {
   userId: string;
@@ -53,16 +54,18 @@ export function buildRulesCacheKey(params: {
 }
 
 export async function getCachedRestrictionRules<T = unknown>(key: string): Promise<T[] | null> {
-  return CacheService.get<T[]>(key, true, RULES_L1_TTL_MS);
+  return CacheService.get<T[]>(key, false);
 }
 
 export async function setCachedRestrictionRules<T = unknown>(key: string, rules: T[]): Promise<void> {
-  await CacheService.set(key, rules, RULES_CACHE_TTL_SECONDS, ['rules'], true, RULES_L1_TTL_MS).catch(() => {});
+  await CacheService.set(key, rules, RULES_CACHE_TTL_SECONDS, ['rules'], false).catch(() => {});
 }
 
 /** Llamar desde el controller/repository de RestrictionRule en mutaciones (create/update/delete) */
 export async function invalidateRestrictionRulesCache(): Promise<void> {
   await CacheService.invalidateTag('rules').catch(() => {});
+  // Invalida las reglas compiladas de /restrictions/me por versión (INCR, sin DEL con comodines)
+  await bumpRestrictionsVersion().catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -396,8 +399,7 @@ export async function resolveBaseMultiplierX(
       `banca-setting:${bancaId}`,
       `loteria:${loteriaId}`
     ],
-    true, // useL1 = true (sub-milisegundo en RAM local)
-    300_000 // 5 minutos TTL en memoria local L1
+    false // useL1 = false (Zero-L1: multiplicadores/comisiones compartidos entre réplicas solo en Redis L2)
   );
 }
 
@@ -1300,6 +1302,9 @@ export const TicketRepository = {
             for (const key of keysToExpire) {
               pipeline.expire(key, 43200);
             }
+
+            // Contadores de tickets (hasSales/ticketCount) del catálogo de sorteos
+            appendSalesCounterOps(pipeline, { sorteoId, vendedorId, ventanaId, delta: -1, ttlSeconds: 43200 });
 
             await pipeline.exec();
 

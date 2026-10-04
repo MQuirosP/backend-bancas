@@ -824,35 +824,51 @@ const SorteoService = {
   },
 
   /**
-   *  Helper: Obtener multiplicadores activos tipo NUMERO de una lotería
+   *  Helper: Obtener multiplicadores activos tipo NUMERO de una lotería (Redis L2, Zero-L1)
    */
   async getActiveMultipliers(loteriaId: string): Promise<Array<{ id: string; valueX: number }>> {
-    const multipliers = await prisma.loteriaMultiplier.findMany({
-      where: {
-        loteriaId,
-        kind: BetType.NUMERO,
-        isActive: true,
+    return CacheService.wrap<Array<{ id: string; valueX: number }>>(
+      `loteria:${loteriaId}:active_multipliers`,
+      async () => {
+        const multipliers = await prisma.loteriaMultiplier.findMany({
+          where: {
+            loteriaId,
+            kind: BetType.NUMERO,
+            isActive: true,
+          },
+          select: {
+            id: true,
+            valueX: true,
+          },
+        });
+        return multipliers;
       },
-      select: {
-        id: true,
-        valueX: true,
-      },
-    });
-    return multipliers;
+      3600, // 1 hora en Redis
+      [`loteria:${loteriaId}`],
+      false // Zero-L1
+    );
   },
 
   /**
-   * Helper: Obtener política de comisiones del VENDEDOR (solo nivel USER).
+   * Helper: Obtener política de comisiones del VENDEDOR (solo nivel USER) (Redis L2, Zero-L1).
    * La política de VENTANA NO se usa como fallback para filtrado de sorteos/multiplicadores.
    * La política de VENTANA solo se usa para registrar la comisión de la ventana en ticket/jugadas.
    */
   async getCommissionPolicy(userId: string, ventanaId: string | null | undefined): Promise<CommissionPolicy | null> {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { commissionPolicyJson: true },
-    });
+    const policyJson = await CacheService.wrap<any>(
+      `user:comm_policy:${userId}`,
+      async () => {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { commissionPolicyJson: true },
+        });
+        return user?.commissionPolicyJson ?? null;
+      },
+      300, // 5 min en Redis
+      [`user:${userId}`],
+      false // Zero-L1
+    );
 
-    const policyJson = user?.commissionPolicyJson ?? null;
     if (!policyJson) {
       return null;
     }

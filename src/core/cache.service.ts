@@ -169,7 +169,7 @@ export class CacheService {
                 }
 
                 return parsed;
-            });
+            }, useL1 ? 3 : 0); // ttl 0 => sin memoización local oculta (Zero-L1)
             return result ?? null;
         } catch {
             logger.warn({
@@ -288,7 +288,7 @@ export class CacheService {
         if (!isRedisAvailable()) return;
 
         try {
-            await ResilienceService.runRedis(key, async () => {
+            await ResilienceService.runRedis(`set:${key}`, async () => {
                 const redis = getRedisClient();
                 if (!redis) return;
 
@@ -303,7 +303,7 @@ export class CacheService {
                 }
 
                 await pipeline.exec();
-            });
+            }, 0);
         } catch (error) {
             // Ya logueado por el breaker
         }
@@ -327,7 +327,7 @@ export class CacheService {
 
         // 1. Guardar en L1
         for (const entry of entries) {
-            if (entry.useL1 !== false) {
+            if (entry.useL1 === true) {
                 setL1Entry(entry.key, entry.value, entry.l1TtlMs ?? 15_000, entry.tags ?? []);
             }
         }
@@ -452,7 +452,7 @@ export class CacheService {
         fetcher: () => Promise<T>,
         ttlSeconds: number = config.redis.ttlCutoff,
         tags: string[] = [],
-        useL1: boolean = true,
+        useL1: boolean = false,
         l1TtlMs?: number,
         forceRefresh: boolean = false
     ): Promise<T> {

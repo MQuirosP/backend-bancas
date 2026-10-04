@@ -21,6 +21,7 @@ import { invalidateExclusionListCache } from "../../core/exclusionListCache";
 import { exclusionCacheService } from "../../domain/ticket/exclusionCache.service";
 import { formatIsoLocal } from "../../utils/datetime";
 import { CacheService } from "../../core/cache.service";
+import { invalidateSorteoSalesCounts } from "../../utils/sorteoSalesCounters";
 
 interface SorteoListasRawResult {
     ventanaId: string;
@@ -836,6 +837,9 @@ export const SorteoListasService = {
             }
         });
 
+        // Invalida los contadores de tickets en Redis L2 para que se rehidraten con el nuevo estado
+        await invalidateSorteoSalesCounts(sorteoId).catch(() => {});
+
         return {
             id: exclusionRecord.id, // Usar el ID real de la tabla
             sorteoId,
@@ -1114,6 +1118,9 @@ export const SorteoListasService = {
                 message: `${jugadaResult.count} jugadas incluidas, ${ticketResult.count} tickets restaurados`
             }
         });
+
+        // Invalida los contadores de tickets en Redis L2 para que se rehidraten con el nuevo estado
+        await invalidateSorteoSalesCounts(sorteoId).catch(() => {});
 
         return {
             success: true,

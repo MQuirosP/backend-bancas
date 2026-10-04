@@ -51,8 +51,7 @@ export class TicketPrefetchService {
           }),
         86400, // 24 horas TTL en Redis
         [`loteria:${loteriaId}`, `multipliers:${loteriaId}`],
-        true, // useL1: true (RAM local)
-        86400_000 // 24 horas TTL L1
+        false // useL1: false (Zero-L1: solo Redis L2)
       );
 
       if (allMultipliers && allMultipliers.length > 0) {

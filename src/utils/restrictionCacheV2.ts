@@ -556,7 +556,7 @@ class RestrictionCacheV2 {
     userId?: string | null;
   }): Promise<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" } | null> {
     const key = this.getCutoffKey(params);
-    return this.get(key, true, 600_000);
+    return this.get(key, false);
   }
 
   /**
@@ -568,7 +568,7 @@ class RestrictionCacheV2 {
     dependencies: string[] = []
   ): Promise<void> {
     const key = this.getCutoffKey(params);
-    await this.set(key, value, undefined, dependencies, true, 600_000);
+    await this.set(key, value, undefined, dependencies, false);
   }
 
   /**
@@ -581,7 +581,7 @@ class RestrictionCacheV2 {
     number?: string | null;
   }): Promise<any | null> {
     const key = this.getRestrictionsKey(params);
-    return this.get(key, true, 300_000);
+    return this.get(key, false);
   }
 
   /**
@@ -593,7 +593,7 @@ class RestrictionCacheV2 {
     dependencies: string[] = []
   ): Promise<void> {
     const key = this.getRestrictionsKey(params);
-    await this.set(key, value, undefined, dependencies, true, 300_000);
+    await this.set(key, value, undefined, dependencies, false);
   }
 
   /**

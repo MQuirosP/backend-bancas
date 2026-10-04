@@ -5,6 +5,7 @@ import { AppError } from "../core/errors";
 import { Prisma, SorteoStatus, TicketStatus } from "../generated/prisma/client";
 import { CreateSorteoDTO, UpdateSorteoDTO } from "../api/v1/dto/sorteo.dto";
 import { formatIsoLocal, parseCostaRicaDateTime } from "../utils/datetime";
+import { resolveSalesField, getSorteoTicketCounts, rehydrateSorteoSalesCounters } from "../utils/sorteoSalesCounters";
 
 // ️ helper para validar y obtener X del multiplier extra
 async function resolveExtraMultiplierX(
@@ -630,7 +631,7 @@ const SorteoRepository = {
 
     const rbacCountsWhere = Prisma.join(rbacCountsConditions, " AND ");
 
-    // Query SQL optimizada con subconsultas para hasSales y ticketCount
+    // Query SQL rápida sin subconsultas correlacionadas a la tabla Ticket
     const dataQuery = Prisma.sql`
       SELECT 
         s.id,
@@ -654,15 +655,6 @@ const SorteoRepository = {
         s."deletedByCascade",
         s."deletedByCascadeFrom",
         s."deletedByCascadeId",
-        --  NUEVO: Campos de ventas (filtrados por RBAC)
-        EXISTS(
-          SELECT 1 FROM "Ticket" t
-          WHERE ${rbacCountsWhere}
-        ) as "hasSales",
-        (
-          SELECT COUNT(*)::int FROM "Ticket" t
-          WHERE ${rbacCountsWhere}
-        ) as "ticketCount",
         EXISTS(
           SELECT 1 FROM "sorteo_lista_exclusion" e
           WHERE e.sorteo_id = s.id
@@ -720,8 +712,6 @@ const SorteoRepository = {
         deletedByCascade: boolean;
         deletedByCascadeFrom: string | null;
         deletedByCascadeId: string | null;
-        hasSales: boolean;
-        ticketCount: number;
         hasExclusions: boolean;
         loteria: { id: string; name: string; rulesJson: any };
         extraMultiplier: { id: string; name: string; valueX: number } | null;
@@ -730,6 +720,46 @@ const SorteoRepository = {
     ]);
 
     const total = countRows[0]?.total || 0;
+    const sorteoIds = dataRows.map((r) => r.id);
+
+    // Resolver hasSales y ticketCount desde Redis L2 (sub-1ms)
+    const salesField = resolveSalesField(role, userId, ventanaId);
+    let countsMap: Map<string, number> | null = null;
+    if (sorteoIds.length > 0) {
+      countsMap = await getSorteoTicketCounts(sorteoIds, salesField, (sId) =>
+        rehydrateSorteoSalesCounters(sId)
+      );
+
+      // Fallback a PostgreSQL si Redis no estuvo disponible
+      if (!countsMap) {
+        try {
+          const fallbackConditions: Prisma.Sql[] = [
+            Prisma.sql`t."sorteoId" IN (${Prisma.join(sorteoIds.map((id) => Prisma.sql`${id}::uuid`))})`,
+            Prisma.sql`t."status" NOT IN ('CANCELLED', 'EXCLUDED')`,
+            Prisma.sql`t."deletedAt" IS NULL`,
+          ];
+          if (role === "VENDEDOR" && userId) {
+            fallbackConditions.push(Prisma.sql`t."vendedorId" = CAST(${userId} AS uuid)`);
+          } else if (role === "VENTANA" && ventanaId) {
+            fallbackConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
+          }
+          const fallbackRows = await prisma.$queryRaw<Array<{ sorteoId: string; count: number }>>(
+            Prisma.sql`
+              SELECT t."sorteoId"::text as "sorteoId", COUNT(*)::int as count
+              FROM "Ticket" t
+              WHERE ${Prisma.join(fallbackConditions, " AND ")}
+              GROUP BY t."sorteoId"
+            `
+          );
+          countsMap = new Map();
+          for (const fr of fallbackRows) {
+            countsMap.set(fr.sorteoId, Number(fr.count) || 0);
+          }
+        } catch {
+          countsMap = new Map();
+        }
+      }
+    }
 
     // Mapear resultados a formato esperado por Prisma
     const data = dataRows.map((row) => ({
@@ -754,9 +784,9 @@ const SorteoRepository = {
       deletedByCascade: row.deletedByCascade,
       deletedByCascadeFrom: row.deletedByCascadeFrom,
       deletedByCascadeId: row.deletedByCascadeId,
-      //  NUEVO: Campos de ventas
-      hasSales: row.hasSales,
-      ticketCount: row.ticketCount,
+      //  NUEVO: Campos de ventas (resueltos desde Redis L2 en sub-1ms)
+      hasSales: Boolean((countsMap?.get(row.id) ?? 0) > 0),
+      ticketCount: countsMap?.get(row.id) ?? 0,
       hasExclusions: row.hasExclusions,
       loteria: row.loteria,
       extraMultiplier: row.extraMultiplier,

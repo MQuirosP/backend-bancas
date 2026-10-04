@@ -13,6 +13,12 @@ interface RedisL1CacheEntry {
     expiry: number;
 }
 
+/**
+ * Timeout de fallo de Redis. Redis corre en la red privada de Render (latencia típica < 1ms),
+ * por lo que 60ms es margen más que suficiente; superado ese tiempo se degrada a PostgreSQL.
+ */
+export const REDIS_BREAKER_TIMEOUT_MS = Number(process.env.REDIS_BREAKER_TIMEOUT_MS) || 60;
+
 export class ResilienceService {
     private static prismaBreaker: CircuitBreaker;
     private static redisBreaker: CircuitBreaker;
@@ -81,7 +87,7 @@ export class ResilienceService {
 
         // Circuit Breaker para Redis
         this.redisBreaker = new CircuitBreaker(async (action: any) => action(), {
-            timeout: 2000,
+            timeout: REDIS_BREAKER_TIMEOUT_MS,
             errorThresholdPercentage: 5,
             resetTimeout: config.hardening.redisCbResetMs,
             rollingCountTimeout: 10000,
@@ -128,12 +134,16 @@ export class ResilienceService {
 
     /**
      * Ejecuta una acción de Redis con Anti-Stampede y L1 Fallback
+     * @param ttl segundos de memoización local. Con ttl <= 0 NO se lee ni escribe memoria local
+     *            (obligatorio para datos de negocio compartidos entre réplicas).
      */
     static async runRedis<T>(key: string, action: () => Promise<T>, ttl: number = 3): Promise<T> {
         this.ensureInitialized();
 
+        const memoize = ttl > 0;
+
         // 1. Verificar L1 Cache
-        const cached = this.l1Cache.get(key);
+        const cached = memoize ? this.l1Cache.get(key) : undefined;
         if (cached && cached.expiry > Date.now()) {
             return cached.value;
         }
@@ -145,7 +155,7 @@ export class ResilienceService {
 
         // 3. Ejecutar a través del Breaker
         const promise = this.redisBreaker.fire(action).then(result => {
-            if (result !== undefined) {
+            if (memoize && result !== undefined) {
                 if (this.l1Cache.size >= this.MAX_L1_SIZE) {
                     this.evictOldestL1Entry(); // Desalojo FIFO: evita cache stampede
                 }

@@ -11,6 +11,11 @@ import prisma from "../../core/prismaClient";
 import { withConnectionRetry } from "../../core/withConnectionRetry";
 import { getCRLocalComponents } from "../../utils/businessDate";
 import { tz } from "../../utils/timezone";
+import {
+  getOrCompileVendorRules,
+  bumpRestrictionsVersion,
+  getOrSetRestrictionsListCache,
+} from "../../utils/restrictionCompiledCache";
 
 /**
  * Normaliza y valida el campo number
@@ -512,6 +517,15 @@ export const RestrictionRuleService = {
     // Invalidar el caché local de validación de balances (ticket.repository)
     await invalidateRestrictionRulesCache();
 
+    // Invalidar caché de reglas compiladas por versión (O(1) no bloqueante)
+    const touchedBancasUpdate = new Set<string | null>();
+    for (const rule of updatedRules) {
+      touchedBancasUpdate.add(rule.bancaId || null);
+    }
+    for (const bId of touchedBancasUpdate) {
+      await bumpRestrictionsVersion(bId);
+    }
+
     await ActivityService.log({
       userId: actorId,
       action: ActivityType.SYSTEM_ACTION,
@@ -574,6 +588,15 @@ export const RestrictionRuleService = {
     }
     // Invalidar el caché local de validación de balances (ticket.repository)
     await invalidateRestrictionRulesCache();
+
+    // Invalidar caché de reglas compiladas por versión (O(1) no bloqueante)
+    const touchedBancasDelete = new Set<string | null>();
+    for (const rule of deletedRules) {
+      touchedBancasDelete.add(rule.bancaId || null);
+    }
+    for (const bId of touchedBancasDelete) {
+      await bumpRestrictionsVersion(bId);
+    }
 
     await ActivityService.log({
       userId: actorId,
@@ -642,7 +665,14 @@ export const RestrictionRuleService = {
   },
 
   async list(query: any) {
-    return RestrictionRuleRepository.list(query);
+    const bancaId = query.bancaId || query.listeroBancaId || null;
+    const queryHash = Buffer.from(JSON.stringify(query)).toString('base64url');
+    return getOrSetRestrictionsListCache(
+      bancaId,
+      queryHash,
+      () => RestrictionRuleRepository.list(query),
+      120
+    );
   },
 
   /**
@@ -864,25 +894,37 @@ export const RestrictionRuleService = {
    * - **vendorSpecific**: reglas cuyo `userId` coincide con el vendedor.
    */
   async forVendor(vendorId: string, bancaId: string, ventanaId: string | null, sorteoId?: string) {
-    // 1️⃣ Obtener las reglas desde el repositorio
-    const general = await RestrictionRuleRepository.findGeneralRules(bancaId, ventanaId);
-    const vendorSpecific = await RestrictionRuleRepository.list({
-      userId: vendorId,
-    });
+    // 1️⃣ Obtener reglas compiladas (cache-aside sobre Redis L2 con invalidación O(1) por versión)
+    const compiled = await getOrCompileVendorRules(
+      { bancaId, ventanaId, vendorId },
+      async () => {
+        const general = await RestrictionRuleRepository.findGeneralRules(bancaId, ventanaId);
+        const vendorSpecific = await RestrictionRuleRepository.list({
+          userId: vendorId,
+        });
 
-    // 1.5️⃣ Resolver el cutoff efectivo y desduplicar/filtrar reglas no efectivas
-    const effectiveCutoff = await RestrictionRuleRepository.resolveSalesCutoff({
-      bancaId,
-      ventanaId,
-      userId: vendorId,
-    });
+        const effectiveCutoff = await RestrictionRuleRepository.resolveSalesCutoff({
+          bancaId,
+          ventanaId,
+          userId: vendorId,
+        });
 
-    const filteredGeneral = general.filter(
-      (r) => r.salesCutoffMinutes === null || r.salesCutoffMinutes === effectiveCutoff.minutes
+        const filteredGeneral = general.filter(
+          (r) => r.salesCutoffMinutes === null || r.salesCutoffMinutes === effectiveCutoff.minutes
+        );
+        const filteredVendorSpecific = vendorSpecific.data.filter(
+          (r) => r.salesCutoffMinutes === null || r.salesCutoffMinutes === effectiveCutoff.minutes
+        );
+
+        return {
+          general: filteredGeneral,
+          vendorSpecific: filteredVendorSpecific,
+        };
+      }
     );
-    const filteredVendorSpecific = vendorSpecific.data.filter(
-      (r) => r.salesCutoffMinutes === null || r.salesCutoffMinutes === effectiveCutoff.minutes
-    );
+
+    const filteredGeneral = compiled.general;
+    const filteredVendorSpecific = compiled.vendorSpecific;
 
     // Pre-calcular balances por regla si viene sorteoId
     const numberBalancesByRule: Record<string, Record<string, { remaining: number; limit: number; accumulated: number }>> = {};

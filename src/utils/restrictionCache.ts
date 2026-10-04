@@ -1,4 +1,4 @@
-import { CacheService, L1_TTL_RESTRICTIONS_MS, L1_TTL_CUTOFF_MS } from '../core/cache.service';
+import { CacheService } from '../core/cache.service';
 import logger from '../core/logger';
 
 /**
@@ -49,7 +49,7 @@ export async function getCachedCutoff(params: {
 }): Promise<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" } | null> {
     const key = getCutoffCacheKey(params);
     // useL1: true + 60s TTL para cutoffs (más estables que restricciones de número)
-    const result = await CacheService.get<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }>(key, true, L1_TTL_CUTOFF_MS);
+    const result = await CacheService.get<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }>(key, false);
     if (!result) {
         logger.info({
             layer: 'restrictionCache',
@@ -73,7 +73,7 @@ export async function setCachedCutoff(
 ): Promise<void> {
     const key = getCutoffCacheKey(params);
     // useL1: true + 60s TTL para cutoffs
-    await CacheService.set(key, value, CUTOFF_TTL, [], true, L1_TTL_CUTOFF_MS);
+    await CacheService.set(key, value, CUTOFF_TTL, [], false);
 }
 
 /**
@@ -88,7 +88,7 @@ export async function getCachedRestrictions(params: {
 }): Promise<any | null> {
     const key = getRestrictionsCacheKey(params);
     // useL1: true + 30s TTL para restricciones de vendedor (bloqueos de números deben propagarse rápido)
-    const result = await CacheService.get<any>(key, true, L1_TTL_RESTRICTIONS_MS);
+    const result = await CacheService.get<any>(key, false);
     if (!result) {
         logger.warn({
             layer: 'restrictionCache',
@@ -112,7 +112,7 @@ export async function setCachedRestrictions(
 ): Promise<void> {
     const key = getRestrictionsCacheKey(params);
     // useL1: true + 30s TTL para restricciones
-    await CacheService.set(key, value, RESTRICTIONS_TTL, [], true, L1_TTL_RESTRICTIONS_MS);
+    await CacheService.set(key, value, RESTRICTIONS_TTL, [], false);
 }
 
 /**
