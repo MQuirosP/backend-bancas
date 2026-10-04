@@ -131,7 +131,7 @@ export async function clearSorteoCache(pattern?: string): Promise<void> {
     const redis = getRedisClient();
     if (!redis) return;
 
-    const searchPattern = pattern ? `*sorteos*${pattern}*` : '*sorteos*';
+    const searchPattern = pattern ? `*sorteos*${pattern}*` : 'sorteos:*';
     const allKeys: string[] = [];
     let cursor = '0';
 
@@ -143,9 +143,12 @@ export async function clearSorteoCache(pattern?: string): Promise<void> {
 
     if (allKeys.length > 0) {
       const prefix = (redis as any).options?.keyPrefix || '';
-      const cleanKeys = allKeys.map((k) =>
-        prefix && k.startsWith(prefix) ? k.slice(prefix.length) : k
-      );
+      const cleanKeys = allKeys
+        .map((k) => (prefix && k.startsWith(prefix) ? k.slice(prefix.length) : k))
+        // PROTECCIÓN ESTRICTA: NUNCA borrar contadores de ventas de sorteos ni acumulados
+        .filter((k) => !k.includes('sales_flags') && !k.includes(':acumulados'));
+
+      if (cleanKeys.length === 0) return;
 
       const BATCH_SIZE = 100;
       for (let i = 0; i < cleanKeys.length; i += BATCH_SIZE) {

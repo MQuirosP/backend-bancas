@@ -14,10 +14,10 @@ interface RedisL1CacheEntry {
 }
 
 /**
- * Timeout de fallo de Redis. Redis corre en la red privada de Render (latencia típica < 1ms),
- * por lo que 60ms es margen más que suficiente; superado ese tiempo se degrada a PostgreSQL.
+ * Timeout de fallo de Redis. En la red privada de Render la latencia típica es < 1ms,
+ * pero ante ráfagas concurrentes de I/O / event-loop lag, 150ms previene falsos positivos.
  */
-export const REDIS_BREAKER_TIMEOUT_MS = Number(process.env.REDIS_BREAKER_TIMEOUT_MS) || 60;
+export const REDIS_BREAKER_TIMEOUT_MS = Number(process.env.REDIS_BREAKER_TIMEOUT_MS) || 150;
 
 export class ResilienceService {
     private static prismaBreaker: CircuitBreaker;
@@ -88,7 +88,8 @@ export class ResilienceService {
         // Circuit Breaker para Redis
         this.redisBreaker = new CircuitBreaker(async (action: any) => action(), {
             timeout: REDIS_BREAKER_TIMEOUT_MS,
-            errorThresholdPercentage: 5,
+            errorThresholdPercentage: 50,
+            volumeThreshold: 10,
             resetTimeout: config.hardening.redisCbResetMs,
             rollingCountTimeout: 10000,
             errorFilter: (_err: any) => false // Todos los errores de Redis cuentan para el breaker
