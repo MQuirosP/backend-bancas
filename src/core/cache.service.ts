@@ -529,7 +529,7 @@ export class CacheService {
                 const BATCH_SIZE = 100;
                 for (let i = 0; i < cleanKeys.length; i += BATCH_SIZE) {
                     const batch = cleanKeys.slice(i, i + BATCH_SIZE);
-                    await redis.del(...batch);
+                    await redis.unlink(...batch);
                 }
                 return cleanKeys;
             }
