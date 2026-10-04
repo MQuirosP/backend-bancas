@@ -22,7 +22,7 @@ import { crDateService } from "../../utils/crDateService";
 import { getPreviousMonthFinalBalance, getPreviousMonthFinalBalancesBatch } from "../accounts/accounts.balances";
 import { ACCOUNT_CARRY_OVER_NOTES, ACCOUNT_PREVIOUS_MONTH_METHOD } from "../accounts/accounts.types";
 import { getMonthlyRemainingBalance, getMonthlyRemainingBalancesBatch } from "../accounts/accounts.service";
-import { CacheService } from "../../core/cache.service";
+import { CacheService, clearL1Memory } from "../../core/cache.service";
 import { getRedisClient } from "../../core/redisClient";
 import crypto from 'crypto';
 import { ConcurrencyManager, SharedWarmupPool, SingleFlight } from "../../utils/concurrency";
@@ -2343,8 +2343,7 @@ gs."hour24" ASC
                   }),
                   3600,
                   ['multipliers', 'loterias'],
-                  true,
-                  600_000
+                  false // Zero-L1: solo Redis L2
                 ),
               ]);
 
@@ -3556,6 +3555,9 @@ gs."hour24" ASC
           batchSucceeded = true;
           batchTotalVendors = sqlRows.length;
           batchEntriesCached = cacheEntries.length;
+
+          // Purgar preventivamente cualquier entrada L1 residual en la instancia
+          clearL1Memory('WARMUP_BATCH_SUCCESS');
 
           logger.info({
             layer: 'service',

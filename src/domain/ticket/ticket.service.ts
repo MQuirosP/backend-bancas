@@ -1925,8 +1925,7 @@ export const TicketService = {
         },
         20, // 20s TTL en Redis L2
         tags,
-        true, // useL1 = true (Memoria RAM Node.js)
-        20_000 // 20s en L1
+        false // useL1 = false (Zero-L1: solo Redis L2)
       );
     } catch (err: any) {
       logger.error({
