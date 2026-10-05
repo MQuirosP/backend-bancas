@@ -5,7 +5,7 @@ import { AccountPaymentRepository } from "../../repositories/accountPayment.repo
 import { AccountStatementRepository } from "../../repositories/accountStatement.repository";
 import { calculateDayStatement } from "./accounts.calculations";
 import { calculateIsSettled } from "./accounts.commissions";
-import { invalidateAccountStatementCache, invalidateBySorteoCache } from "../../utils/accountStatementCache";
+import { invalidateAccountStatementCache } from "../../utils/accountStatementCache";
 import { crDateService } from "../../utils/crDateService";
 import { recalculateMonthlyClosingForDimension } from "./monthlyClosing.service";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
@@ -462,7 +462,7 @@ export async function registerPayment(data: {
     }
 
     // Invalidar caché
-    updateCacheAfterMovement(data.date, finalVentanaId, data.vendedorId, finalBancaId);
+    await updateCacheAfterMovement(data.date, finalVentanaId, data.vendedorId, finalBancaId);
     return {
         payment: {
             ...payment,
@@ -599,7 +599,7 @@ export async function reversePayment(
         }
     }
 
-    updateCacheAfterMovement(dateStr, statement.ventanaId, statement.vendedorId, statement.bancaId);
+    await updateCacheAfterMovement(dateStr, statement.ventanaId, statement.vendedorId, statement.bancaId);
 
     // Recuperar el statement actualizado para la respuesta
     updatedStatement = await AccountStatementRepository.findById(statement.id);
@@ -613,11 +613,8 @@ export async function reversePayment(
 /**
  * Helper para invalidar caché después de un movimiento
  */
-function updateCacheAfterMovement(date: string, ventanaId?: string | null, vendedorId?: string | null, bancaId?: string | null) {
-    Promise.all([
-        invalidateAccountStatementCache({ date, ventanaId: ventanaId || null, vendedorId: vendedorId || null, bancaId: bancaId || null }),
-        invalidateBySorteoCache({ date, ventanaId: ventanaId || null, vendedorId: vendedorId || null, bancaId: bancaId || null }),
-    ]).catch(() => { });
+export async function updateCacheAfterMovement(date: string, ventanaId?: string | null, vendedorId?: string | null, bancaId?: string | null) {
+    await invalidateAccountStatementCache({ date, ventanaId: ventanaId || null, vendedorId: vendedorId || null, bancaId: bancaId || null });
 }
 
 /**

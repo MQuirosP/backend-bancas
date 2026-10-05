@@ -8,7 +8,7 @@ import { AccountStatementRepository } from "../../repositories/accountStatement.
 import { AccountPaymentRepository } from "../../repositories/accountPayment.repository";
 import prisma from "../../core/prismaClient";
 import { Prisma, Role } from "../../generated/prisma/client";
-import { getCachedStatement, setCachedStatement } from "../../utils/accountStatementCache";
+import { getAccountStatementCacheVersion, getCachedStatement, setCachedStatement } from "../../utils/accountStatementCache";
 import { crDateService } from "../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
 import logger from "../../core/logger";
@@ -472,6 +472,7 @@ export const AccountsService = {
         if (endDateStr > todayCR) endDateStr = todayCR;
 
         //  OPTIMIZACIÓN: Intentar obtener del caché primero
+        const cacheVersion = await getAccountStatementCacheVersion();
         const cacheKey = {
             month: month || undefined,
             date: date || undefined,
@@ -483,6 +484,7 @@ export const AccountsService = {
             bancaId: bancaId || null,
             userRole: filters.userRole || "ADMIN",
             sort: sort || "desc",
+            cacheVersion,
         };
 
         const cached = await getCachedStatement(cacheKey);

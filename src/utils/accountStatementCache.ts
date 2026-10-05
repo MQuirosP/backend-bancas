@@ -1,5 +1,6 @@
 import { CacheService } from '../core/cache.service';
 import logger from '../core/logger';
+import { randomUUID } from 'crypto';
 
 /**
  *  OPTIMIZACIÓN: Caché de estados de cuenta
@@ -16,6 +17,25 @@ import logger from '../core/logger';
 const STATEMENT_TTL = parseInt(process.env.CACHE_TTL_ACCOUNT_STATEMENT || '300'); // 5 min
 const DAY_STATEMENT_TTL = parseInt(process.env.CACHE_TTL_ACCOUNT_DAY_STATEMENT || '180'); // 3 min
 const BY_SORTEO_TTL = parseInt(process.env.CACHE_TTL_BY_SORTEO || '3600'); // 1 hora (bySorteo cambia menos frecuentemente)
+const STATEMENT_CACHE_VERSION_KEY = 'account:statement:version';
+const STATEMENT_CACHE_VERSION_TTL = 60 * 60 * 24 * 365;
+
+export async function getAccountStatementCacheVersion(): Promise<string> {
+    const cachedVersion = await CacheService.get<string>(STATEMENT_CACHE_VERSION_KEY);
+    if (cachedVersion) return cachedVersion;
+
+    const version = randomUUID();
+    await CacheService.set(STATEMENT_CACHE_VERSION_KEY, version, STATEMENT_CACHE_VERSION_TTL);
+    return version;
+}
+
+async function rotateAccountStatementCacheVersion(): Promise<void> {
+    await CacheService.set(
+        STATEMENT_CACHE_VERSION_KEY,
+        randomUUID(),
+        STATEMENT_CACHE_VERSION_TTL
+    );
+}
 
 /**
  * Generar clave de caché para estado de cuenta (mes/período)
@@ -31,6 +51,7 @@ function getStatementCacheKey(params: {
     bancaId?: string | null;
     userRole?: string;
     sort?: string;
+    cacheVersion?: string;
 }): string {
     const parts = [
         'account:statement',
@@ -44,6 +65,7 @@ function getStatementCacheKey(params: {
         params.bancaId || 'null',
         params.userRole || 'ADMIN',
         params.sort || 'desc',
+        params.cacheVersion || 'legacy',
     ];
     return parts.join(':');
 }
@@ -120,6 +142,7 @@ export async function getCachedStatement<T>(params: {
     bancaId?: string | null;
     userRole?: string;
     sort?: string;
+    cacheVersion?: string;
 }): Promise<T | null> {
     const key = getStatementCacheKey(params);
     const result = await CacheService.get<T>(key);
@@ -165,6 +188,7 @@ export async function setCachedStatement<T>(
         bancaId?: string | null;
         userRole?: string;
         sort?: string;
+        cacheVersion?: string;
     },
     value: T,
     ttlSeconds?: number
@@ -222,31 +246,17 @@ export async function invalidateAccountStatementCache(params: {
     bancaId?: string | null;
 }): Promise<void> {
     try {
+        await rotateAccountStatementCacheVersion();
+
         const month = params.date.substring(0, 7); // YYYY-MM
-        const patterns: string[] = [];
-        let totalKeysDeleted = 0;
-
-        // 1. Invalidar estado del día específico (account:day:YYYY-MM-DD:*)
-        const dayPattern = `account:day:${params.date}:*`;
-        const dayKeys = await CacheService.delPattern(dayPattern);
-        totalKeysDeleted += dayKeys?.length || 0;
-
-        // 2.  OPTIMIZACIÓN: Invalidar solo statements del mes que contiene esta fecha
-        // Esto es más específico que invalidar todos los statements
-        const monthPattern = `account:statement:${month}:*`;
-        const monthKeys = await CacheService.delPattern(monthPattern);
-        totalKeysDeleted += monthKeys?.length || 0;
-
-        // 3. Invalidar statements con períodos (fromDate/toDate) que incluyan esta fecha
-        // Los patrones deben coincidir con la estructura de la clave:
-        // account:statement:month:date:fromDate:toDate:dimension:ventanaId:vendedorId:bancaId:userRole:sort
-        // Solo invalidamos statements con períodos que incluyan esta fecha específica
-        patterns.push(`account:statement:*:null:${params.date}:*`); // fromDate = fecha
-        patterns.push(`account:statement:*:null:*:${params.date}:*`); // toDate = fecha
-
-        // 4.  CRÍTICO: Invalidar queries dinámicos (date=today, yesterday, week, etc.)
-        // Estos queries tienen month=null en su clave (ej. account:statement:null:today:...)
-        patterns.push(`account:statement:null:*`);
+        const patterns = [
+            `account:day:${params.date}:*`,
+            `account:statement:${month}:*`,
+            `account:statement:*:null:${params.date}:*`,
+            `account:statement:*:null:*:${params.date}:*`,
+            `account:statement:null:*`,
+            `account:bySorteo:${params.date}:*`,
+        ];
 
         // Si hay IDs específicos, invalidar solo esos (más específico)
         // Estructura de clave: account:statement:month:date:fromDate:toDate:dimension:ventanaId:vendedorId:bancaId:role:sort
@@ -260,11 +270,8 @@ export async function invalidateAccountStatementCache(params: {
             patterns.push(`account:statement:*:*:*:*:*:*:*:*:${params.bancaId}:*`); // pos 8
         }
 
-        // Invalidar todos los patrones y contar claves eliminadas
-        for (const pattern of patterns) {
-            const deleted = await CacheService.delPattern(pattern);
-            totalKeysDeleted += deleted?.length || 0;
-        }
+        const deletedKeys = await CacheService.delPatterns(patterns);
+        const totalKeysDeleted = deletedKeys?.length || 0;
 
         logger.info({
             layer: 'cache',
@@ -274,7 +281,7 @@ export async function invalidateAccountStatementCache(params: {
                 month,
                 ventanaId: params.ventanaId, 
                 vendedorId: params.vendedorId,
-                patternsInvalidated: [dayPattern, monthPattern, ...patterns],
+                patternsInvalidated: patterns,
                 keysDeleted: totalKeysDeleted
             }
         });

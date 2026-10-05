@@ -541,6 +541,72 @@ export class CacheService {
     }
 
     /**
+     * Elimina varias familias de claves en un solo recorrido de Redis.
+     */
+    static async delPatterns(patterns: string[]): Promise<string[] | null> {
+        if (patterns.length === 0) return [];
+
+        const regexes = patterns.map((pattern) => new RegExp(
+            '^' + pattern.replace(/([.+?^=!:${}()|\[\]\/\\])/g, '\\$1').replace(/\*/g, '.*') + '$'
+        ));
+        const matchesPattern = (key: string) => regexes.some((regex) => regex.test(key));
+
+        for (const key of Array.from(l1Cache.keys())) {
+            if (matchesPattern(key)) deleteL1Entry(key);
+        }
+
+        if (!isRedisAvailable()) return null;
+        const redis = getRedisClient();
+        if (!redis) return null;
+
+        try {
+            let commonPrefix = patterns[0];
+            for (const pattern of patterns.slice(1)) {
+                let sharedLength = 0;
+                while (
+                    sharedLength < commonPrefix.length &&
+                    sharedLength < pattern.length &&
+                    commonPrefix[sharedLength] === pattern[sharedLength]
+                ) {
+                    sharedLength++;
+                }
+                commonPrefix = commonPrefix.slice(0, sharedLength);
+            }
+
+            const wildcardIndex = commonPrefix.indexOf('*');
+            const scanPrefix = wildcardIndex < 0 ? commonPrefix : commonPrefix.slice(0, wildcardIndex);
+            const scanPattern = `${scanPrefix}*`;
+            const scannedKeys: string[] = [];
+            let cursor = '0';
+
+            do {
+                const [newCursor, keys] = await redis.scan(cursor, 'MATCH', scanPattern, 'COUNT', 100);
+                cursor = newCursor;
+                scannedKeys.push(...keys);
+            } while (cursor !== '0');
+
+            const keyPrefix = (redis as any).options?.keyPrefix || '';
+            const cleanKeys = scannedKeys
+                .map((key) => keyPrefix && key.startsWith(keyPrefix) ? key.slice(keyPrefix.length) : key)
+                .filter(matchesPattern);
+
+            const BATCH_SIZE = 100;
+            for (let i = 0; i < cleanKeys.length; i += BATCH_SIZE) {
+                await redis.unlink(...cleanKeys.slice(i, i + BATCH_SIZE));
+            }
+
+            return cleanKeys;
+        } catch (error) {
+            logger.warn({
+                layer: 'cache',
+                action: 'DEL_PATTERNS_ERROR',
+                payload: { patterns, error: (error as Error).message },
+            });
+            return null;
+        }
+    }
+
+    /**
      * Renueva el TTL de una clave existente en Redis (expiración deslizante).
      */
     static async touch(key: string, ttlSeconds: number): Promise<void> {
