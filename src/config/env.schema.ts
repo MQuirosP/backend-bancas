@@ -72,4 +72,8 @@ export const EnvSchema = z.object({
 
   // ATOMIC TICKET RPC (Feature Flag)
   ENABLE_ATOMIC_TICKET_RPC: parseBooleanWithDefault(false),
+
+  // BETTER STACK CLICKHOUSE MONITOR (CLI)
+  BETTERSTACK_CLICKHOUSE_HOST: z.string().default('us-west-2a-connect.betterstackdata.com'),
+  BETTERSTACK_CLICKHOUSE_AUTH: z.string().optional(),
 });

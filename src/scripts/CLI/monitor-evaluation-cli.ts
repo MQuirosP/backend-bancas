@@ -10,13 +10,20 @@ import https from 'https';
 // ============================================================================
 
 async function runQuery(sql: string): Promise<any[]> {
+  const auth = process.env.BETTERSTACK_CLICKHOUSE_AUTH;
+  if (!auth) {
+    throw new Error(
+      'Falta la variable de entorno BETTERSTACK_CLICKHOUSE_AUTH (formato "usuario:password") para consultar métricas.'
+    );
+  }
+
   return new Promise((resolve, reject) => {
     const options = {
-      hostname: 'us-west-2a-connect.betterstackdata.com',
+      hostname: process.env.BETTERSTACK_CLICKHOUSE_HOST || 'us-west-2a-connect.betterstackdata.com',
       port: 443,
       path: '/',
       method: 'POST',
-      auth: 'uqHhQJrvjCfVU0paJIQ41zP050BGhRLoB:Nc9qKY14GvKP5rZnU2ovVY3yPeFrwUGTP1ODp1aedbiGrRZl8UJdNzsY4eLXKoCa',
+      auth,
       headers: {
         'Content-Type': 'text/plain',
         'Content-Length': Buffer.byteLength(sql),
