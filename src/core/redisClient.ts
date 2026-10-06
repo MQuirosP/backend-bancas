@@ -90,24 +90,24 @@ export async function initRedisClient(): Promise<void> {
 
         // Crear cliente Redis estándar con ioredis
         redisClient = new Redis(config.redis.url, {
-            password: config.redis.token, // Usar REDIS_TOKEN si está disponible
+            password: config.redis.token,
             keyPrefix: process.env.REDIS_PREFIX ?? (process.env.NODE_ENV === 'production' ? 'prod:' : 'local:'),
             connectTimeout: config.redis.connectTimeout,
             retryStrategy: (times: number) => {
                 if (times > 3) {
                     logger.warn({ layer: 'redis', action: 'MAX_RETRIES_REACHED', payload: { attempts: times } });
-                    return null; // Stop retrying
+                    return null;
                 }
                 const delay = Math.min(times * 200, 2000);
                 return delay;
             },
-            maxRetriesPerRequest: 3,
+            maxRetriesPerRequest: 1, // <- CAMBIO AQUÍ (antes 3)
             enableReadyCheck: true,
-            lazyConnect: true, // No conectar inmediatamente hasta init()
-            commandTimeout: 2000, // Timeout para comandos individuales
-            enableOfflineQueue: false, //  EVITAR MEMORY LEAK: No encolar comandos en memoria si Redis está caído
+            lazyConnect: true,
+            commandTimeout: 300,     // <- CAMBIO AQUÍ (antes 2000)
+            enableOfflineQueue: false,
         });
-
+        
         // Cliente duplicado exclusivo para Pub/Sub con offline queue para que espere conexión
         redisSubscriber = redisClient.duplicate({
             enableOfflineQueue: true,
