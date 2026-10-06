@@ -741,7 +741,7 @@ export const TicketsReportService = {
 
     const todayCRStr = crDateService.dateUTCToCRString(new Date());
     const isToday = dateRange.toString >= todayCRStr;
-    const ttl = isToday ? 15 : 300;
+    const ttl = isToday ? 45 : 300;
     const topLimit = filters.top || 10;
 
     const cacheKey = `reports:tickets:numbers-analysis:${filters.bancaId || 'all'}:${filters.ventanaId || 'all'}:${filters.vendedorId || 'all'}:${filters.loteriaId || 'all'}:${filters.betType || 'all'}:${dateRange.fromString}:${dateRange.toString}:${topLimit}:${Boolean(filters.includeComparison)}:${Boolean(filters.includeWinners)}:${Boolean(filters.includeExposure)}`;
@@ -749,47 +749,6 @@ export const TicketsReportService = {
     return CacheService.wrap(
       cacheKey,
       async () => {
-
-    // 1. Obtener la lista de sorteos dentro del rango y sus estados
-    const sorteos = await prisma.sorteo.findMany({
-      where: {
-        scheduledAt: {
-          gte: dateRange.from,
-          lte: dateRange.to,
-        },
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        status: true,
-      },
-    });
-
-    if (sorteos.length === 0) {
-      return {
-        data: {
-          currentPeriod: {
-            from: dateRange.fromString,
-            to: dateRange.toString,
-            numbers: [],
-          },
-          summary: {
-            totalNumbersPlayed: 0,
-            totalAmount: 0,
-            totalTickets: 0,
-            topNumber: null,
-            topNumberAmount: 0,
-          },
-        },
-        meta: {
-          dateRange: {
-            from: dateRange.fromString,
-            to: dateRange.toString,
-          },
-          comparisonEnabled: filters.includeComparison || false,
-        },
-      };
-    }
 
     // Filtros de entidad para queries de Jugada/Ticket (filtrado por t.bancaId)
     const jugadaEntityFilters = Prisma.sql`
@@ -809,74 +768,93 @@ export const TicketsReportService = {
       ${filters.betType && filters.betType !== 'all' ? Prisma.sql`AND db.type = ${filters.betType}::"BetType"` : Prisma.empty}
     `;
 
-    // Consultar números jugados en el rango de fechas (Filtrado por businessDate de Ticket: < 5ms para el día actual)
-    const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
+    const [numberSummary] = await prisma.$queryRaw<Array<{
+      total_numbers: number;
+      total_amount: number;
+      total_tickets: number;
+      total_jugadas: number;
+      numbers: Array<{
+        number: string;
+        totalAmount: number;
+        ticketsCount: number;
+        jugadasCount: number;
+        avgAmount: number;
+        rank: number;
+      }>;
+    }>>(Prisma.sql`
+      WITH per_number AS (
+        SELECT
+          j.number,
+          SUM(j.amount)::double precision AS total_amount,
+          COUNT(DISTINCT j."ticketId")::integer AS tickets_count,
+          COUNT(*)::integer AS jugadas_count
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
+          AND t."deletedAt" IS NULL
+          AND t."isActive" = true
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          ${jugadaEntityFilters}
+        GROUP BY j.number
+      ),
+      summary AS (
+        SELECT
+          COUNT(*)::integer AS total_numbers,
+          COALESCE(SUM(total_amount), 0)::double precision AS total_amount,
+          COALESCE(SUM(tickets_count), 0)::integer AS total_tickets,
+          COALESCE(SUM(jugadas_count), 0)::integer AS total_jugadas
+        FROM per_number
+      ),
+      top_numbers AS (
+        SELECT
+          per_number.*,
+          ROW_NUMBER() OVER (ORDER BY total_amount DESC, number)::integer AS rank
+        FROM per_number
+        ORDER BY total_amount DESC, number
+        LIMIT ${topLimit}
+      )
       SELECT
-        j.number,
-        SUM(j.amount)::double precision as total_amount,
-        COUNT(DISTINCT j."ticketId")::integer as tickets_count,
-        COUNT(*)::integer as jugadas_count
-      FROM "Jugada" j
-      INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      WHERE t."businessDate" BETWEEN ${dateRange.fromString}::date AND ${dateRange.toString}::date
-        AND t."deletedAt" IS NULL
-        AND t."isActive" = true
-        AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
-        AND j."deletedAt" IS NULL
-        AND j."isExcluded" = false
-        ${jugadaEntityFilters}
-      GROUP BY j.number
-      ORDER BY total_amount DESC
+        summary.total_numbers,
+        summary.total_amount,
+        summary.total_tickets,
+        summary.total_jugadas,
+        COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'number', top_numbers.number,
+              'totalAmount', top_numbers.total_amount,
+              'ticketsCount', top_numbers.tickets_count,
+              'jugadasCount', top_numbers.jugadas_count,
+              'avgAmount', top_numbers.total_amount / NULLIF(top_numbers.jugadas_count, 0),
+              'rank', top_numbers.rank
+            )
+            ORDER BY top_numbers.total_amount DESC, top_numbers.number
+          ) FILTER (WHERE top_numbers.number IS NOT NULL),
+          '[]'::jsonb
+        ) AS numbers
+      FROM summary
+      LEFT JOIN top_numbers ON true
+      GROUP BY
+        summary.total_numbers,
+        summary.total_amount,
+        summary.total_tickets,
+        summary.total_jugadas
     `);
 
-    const numbersMap = new Map<string, {
-      number: string;
-      total_amount: number;
-      tickets_count: number;
-      jugadas_count: number;
-      avg_amount: number;
-    }>();
-
-    for (const r of rows) {
-      const num = r.number;
-      const total = parseFloat(r.total_amount?.toString() || '0');
-      const tickets = parseInt(r.tickets_count?.toString() || '0');
-      const jugadas = parseInt(r.jugadas_count?.toString() || '0');
-      const avgAmount = jugadas > 0 ? total / jugadas : 0;
-
-      numbersMap.set(num, {
-        number: num,
-        total_amount: total,
-        tickets_count: tickets,
-        jugadas_count: jugadas,
-        avg_amount: avgAmount,
-      });
+    if (!numberSummary) {
+      throw new Error('La consulta agregada de números no devolvió su fila de resumen.');
     }
 
-    const mergedNumbers = Array.from(numbersMap.values());
-    mergedNumbers.sort((a, b) => b.total_amount - a.total_amount);
-    const topLimit = filters.top || 10;
-    const finalNumbersRaw = mergedNumbers.slice(0, topLimit);
-
-    let summaryTotalAmount = 0;
-    let summaryTotalTickets = 0;
-    let summaryTotalJugadas = 0;
-
-    for (const n of mergedNumbers) {
-      summaryTotalAmount += n.total_amount;
-      summaryTotalTickets += n.tickets_count;
-      summaryTotalJugadas += n.jugadas_count;
-    }
-
+    const finalNumbersRaw = numberSummary.numbers;
     const topNumberItem = finalNumbersRaw[0] || null;
-
     const summary = {
-      totalNumbersPlayed: mergedNumbers.length,
-      totalAmount: summaryTotalAmount,
-      totalTickets: summaryTotalTickets,
-      totalJugadas: summaryTotalJugadas,
-      topNumber: topNumberItem ? topNumberItem.number : null,
-      topNumberAmount: topNumberItem ? topNumberItem.total_amount : 0,
+      totalNumbersPlayed: numberSummary.total_numbers,
+      totalAmount: numberSummary.total_amount,
+      totalTickets: numberSummary.total_tickets,
+      topNumber: topNumberItem?.number || null,
+      topNumberAmount: topNumberItem?.totalAmount || 0,
     };
 
     const DEFAULT_MULTIPLIER = 30;
@@ -1013,13 +991,13 @@ export const TicketsReportService = {
 
     const exposureMap = new Map(numbersWithExposure.map(n => [n.number, n.exposure]));
 
-    const numbersData = finalNumbersRaw.map((n, index) => ({
+    const numbersData = finalNumbersRaw.map((n) => ({
       number: n.number,
-      totalAmount: n.total_amount,
-      ticketsCount: n.tickets_count,
-      jugadasCount: n.jugadas_count,
-      avgAmount: n.avg_amount,
-      rank: index + 1,
+      totalAmount: n.totalAmount,
+      ticketsCount: n.ticketsCount,
+      jugadasCount: n.jugadasCount,
+      avgAmount: n.avgAmount,
+      rank: n.rank,
       // Campos adicionales si se solicitan
       ...(filters.includeExposure && {
         exposure: exposureMap.get(n.number) || 0,
@@ -1142,7 +1120,9 @@ export const TicketsReportService = {
     };
   },
   ttl,
-  ['reports', 'dashboard']
+  ['reports', 'dashboard'],
+  true,
+  5_000
 );
   },
 

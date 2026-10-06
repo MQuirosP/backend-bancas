@@ -5,6 +5,7 @@ import { AccountPaymentRepository } from "../../repositories/accountPayment.repo
 import { AccountStatementRepository } from "../../repositories/accountStatement.repository";
 import { calculateDayStatement } from "./accounts.calculations";
 import { calculateIsSettled } from "./accounts.commissions";
+import { CacheService } from "../../core/cache.service";
 import { invalidateAccountStatementCache } from "../../utils/accountStatementCache";
 import { crDateService } from "../../utils/crDateService";
 import { recalculateMonthlyClosingForDimension } from "./monthlyClosing.service";
@@ -614,7 +615,17 @@ export async function reversePayment(
  * Helper para invalidar caché después de un movimiento
  */
 export async function updateCacheAfterMovement(date: string, ventanaId?: string | null, vendedorId?: string | null, bancaId?: string | null) {
-    await invalidateAccountStatementCache({ date, ventanaId: ventanaId || null, vendedorId: vendedorId || null, bancaId: bancaId || null });
+    await Promise.all([
+        invalidateAccountStatementCache({
+            date,
+            ventanaId: ventanaId || null,
+            vendedorId: vendedorId || null,
+            bancaId: bancaId || null,
+        }),
+        vendedorId
+            ? CacheService.invalidateTag(`vendedor:${vendedorId}`)
+            : Promise.resolve(),
+    ]);
 }
 
 /**
