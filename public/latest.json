@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.24",
-  "versionCode": 30,
-  "buildNumber": 30,
-  "minSupportedVersion": "1.0.24",
-  "forceUpdate": true,
+  "versionName": "1.0.25",
+  "versionCode": 31,
+  "buildNumber": 31,
+  "minSupportedVersion": "1.0.25",
+  "forceUpdate": false,
   "changelog": "Mejoras de estabilidad y corrección de errores",
-  "releasedAt": "2026-10-02T00:17:00Z",
+  "releasedAt": "2026-10-07T00:17:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "934564c93f8a6cbba4c5ff8417240fbdd591ccff0b6e8c8e075f4d631629b32e"
+      "sha256": "4e3192bfa91c2751b09c20de507d92579229444869fbbddc00cf7a4e909b70e8"
     },
     "arm64-v8a": {
-      "sha256": "934564c93f8a6cbba4c5ff8417240fbdd591ccff0b6e8c8e075f4d631629b32e"
+      "sha256": "4e3192bfa91c2751b09c20de507d92579229444869fbbddc00cf7a4e909b70e8"
     }
   }
 }
