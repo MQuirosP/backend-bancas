@@ -794,100 +794,22 @@ export class AccountStatementSyncService {
     entityId?: string
   ): Promise<void> {
     const startDateStr = crDateService.postgresDateToCRString(startDate);
-    const criteria: any = {};
-    if (dimension === "vendedor") criteria.vendedorId = entityId;
-    else if (dimension === "ventana") { criteria.ventanaId = entityId; criteria.vendedorId = null; }
-    else if (dimension === "banca") { criteria.bancaId = entityId; criteria.ventanaId = null; criteria.vendedorId = null; }
-
-    // 1. Obtener el statement original para saber qué saldo arrastrar
-    const startStatement = await prisma.accountStatement.findFirst({
-      where: { date: startDate, ...criteria },
-      select: { remainingBalance: true }
-    });
-
-    if (!startStatement) {
-      logger.warn({
-        layer: "service",
-        action: "PROPAGATE_BALANCE_CHANGE_SKIPPED",
-        payload: { reason: "Start statement not found", dimension, entityId, startDateStr }
-      });
-      return;
-    }
-
-    let currentAccumulated = Number(startStatement.remainingBalance);
-
-    // 2. Iterar día por día desde startDate + 1 día hasta hoy en CR
     const todayCRStr = crDateService.dateUTCToCRString(new Date());
     const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
     const curDate = new Date(Date.UTC(startYear, startMonth - 1, startDay + 1, 0, 0, 0, 0));
     const [endYear, endMonth, endDay] = todayCRStr.split('-').map(Number);
     const endDate = new Date(Date.UTC(endYear, endMonth - 1, endDay, 0, 0, 0, 0));
 
-    const { calculateIsSettled } = await import('./accounts.commissions');
+    logger.info({
+      layer: "service",
+      action: "PROPAGATE_BALANCE_CHANGE_START",
+      payload: { startDateStr, todayCRStr, dimension, entityId }
+    });
 
     while (curDate <= endDate) {
       const curDateStr = crDateService.postgresDateToCRString(curDate);
       try {
-        let stmt = await prisma.accountStatement.findFirst({
-          where: { date: curDate, ...criteria },
-          select: {
-            id: true,
-            date: true,
-            balance: true,
-            totalCollected: true,
-            totalPaid: true,
-            ticketCount: true,
-            accumulatedBalance: true,
-            remainingBalance: true
-          }
-        });
-
-        // Si no existe statement para este día (día en cero), generarlo con syncCarryForwardStatement
-        if (!stmt) {
-          await this.syncCarryForwardStatement(curDateStr, dimension, entityId);
-          stmt = await prisma.accountStatement.findFirst({
-            where: { date: curDate, ...criteria },
-            select: {
-              id: true,
-              date: true,
-              balance: true,
-              totalCollected: true,
-              totalPaid: true,
-              ticketCount: true,
-              accumulatedBalance: true,
-              remainingBalance: true
-            }
-          });
-        }
-
-        if (stmt) {
-          // Nuevo saldo arrastrado
-          const newAccumulated = parseFloat(currentAccumulated.toFixed(2));
-          // Nuevo saldo final: arrastrado + balance del día + cobros - pagos
-          const newRemaining = parseFloat((newAccumulated + Number(stmt.balance) + Number(stmt.totalCollected) - Number(stmt.totalPaid)).toFixed(2));
-
-          const newIsSettled = calculateIsSettled(
-            stmt.ticketCount,
-            newAccumulated,
-            Number(stmt.totalPaid),
-            Number(stmt.totalCollected)
-          );
-
-          // Actualizar en base de datos si hay cambios
-          if (Math.abs(Number(stmt.remainingBalance) - newRemaining) > 0.01 || Math.abs(Number(stmt.accumulatedBalance) - newAccumulated) > 0.01) {
-            await prisma.accountStatement.update({
-              where: { id: stmt.id },
-              data: {
-                accumulatedBalance: newAccumulated,
-                remainingBalance: newRemaining,
-                isSettled: newIsSettled
-              }
-            });
-          }
-
-          // El saldo final de hoy es el arrastrado de mañana
-          currentAccumulated = newRemaining;
-        }
+        await this._syncDayStatementInternal(curDate, dimension, entityId);
       } catch (error) {
         logger.error({
           layer: "service",
@@ -903,6 +825,16 @@ export class AccountStatementSyncService {
 
       curDate.setUTCDate(curDate.getUTCDate() + 1);
     }
+
+    try {
+      const { invalidateAccountStatementCache } = await import('../../utils/accountStatementCache');
+      await invalidateAccountStatementCache({
+        date: todayCRStr,
+        ...(dimension === 'vendedor' ? { vendedorId: entityId } : {}),
+        ...(dimension === 'ventana' ? { ventanaId: entityId } : {}),
+        ...(dimension === 'banca' ? { bancaId: entityId } : {}),
+      });
+    } catch (_) {}
   }
 
   /**

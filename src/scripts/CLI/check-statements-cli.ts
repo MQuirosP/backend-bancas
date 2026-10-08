@@ -88,15 +88,18 @@ export async function runCheckStatements(options?: {
       });
 
       const dbBalance = dbStmt ? Number(dbStmt.balance) : 0;
+      const dbAccumulated = dbStmt ? Number(dbStmt.accumulatedBalance) : 0;
+      const dbRemaining = dbStmt ? Number(dbStmt.remainingBalance) : 0;
 
       let realBalance = 0;
+      let realAccumulated: number | null = null;
       try {
         const bySorteoData = await AccountsService.getBySorteo(dateStr, {
           dimension: 'vendedor',
           vendedorId: v.id
         });
 
-        if (bySorteoData && Array.isArray(bySorteoData)) {
+        if (bySorteoData && Array.isArray(bySorteoData) && bySorteoData.length > 0) {
           let sSales = 0, sPayouts = 0, sComm = 0;
           for (const ev of bySorteoData) {
             const isMov = (ev.sorteoId || '').startsWith('mov-');
@@ -107,21 +110,46 @@ export async function runCheckStatements(options?: {
             }
           }
           realBalance = parseFloat((sSales - sPayouts - sComm).toFixed(2));
+          const lastEvent = bySorteoData.reduce(
+            (max: any, e: any) => (e.chronologicalIndex || 0) > (max.chronologicalIndex || 0) ? e : max,
+            bySorteoData[0]
+          );
+          realAccumulated = parseFloat(Number(lastEvent.accumulated || 0).toFixed(2));
         }
       } catch (err) {
         realBalance = dbBalance;
+        realAccumulated = dbAccumulated;
       }
 
-      const diff = Math.abs(dbBalance - realBalance);
-      if (diff < 0.01) {
+      const diffBalance = Math.abs(dbBalance - realBalance);
+      const diffAccumulated = realAccumulated !== null ? Math.abs(dbAccumulated - realAccumulated) : 0;
+      const diffInternal = dbStmt ? Math.abs(dbAccumulated - dbRemaining) : 0;
+
+      const isBalanceOk = diffBalance < 0.01;
+      const isAccumulatedOk = diffAccumulated < 0.01;
+      const isInternalOk = diffInternal < 0.01;
+
+      if (isBalanceOk && isAccumulatedOk && isInternalOk) {
         vendOk++;
         totalOk++;
       } else {
         vendFail++;
         totalFail++;
-        vendFailDetails.push(
-          `   ⚠️  [FAIL] ${v.name.padEnd(25, ' ')} │ DB: ${formatCRC(dbBalance).padEnd(14, ' ')} != Calc: ${formatCRC(realBalance).padEnd(14, ' ')} (Diff: ${formatCRC(diff)})`
-        );
+        if (!isBalanceOk) {
+          vendFailDetails.push(
+            `   ⚠️  [FAIL BAL]  ${v.name.padEnd(25, ' ')} │ DB Bal: ${formatCRC(dbBalance).padEnd(14, ' ')} != Calc Bal: ${formatCRC(realBalance).padEnd(14, ' ')} (Diff: ${formatCRC(diffBalance)})`
+          );
+        }
+        if (!isAccumulatedOk) {
+          vendFailDetails.push(
+            `   ⚠️  [FAIL ACUM] ${v.name.padEnd(25, ' ')} │ DB Acum: ${formatCRC(dbAccumulated).padEnd(14, ' ')} != Calc Acum: ${formatCRC(realAccumulated!).padEnd(14, ' ')} (Diff: ${formatCRC(diffAccumulated)})`
+          );
+        }
+        if (!isInternalOk) {
+          vendFailDetails.push(
+            `   ⚠️  [FAIL ASYNC] ${v.name.padEnd(25, ' ')} │ DB Acum: ${formatCRC(dbAccumulated).padEnd(14, ' ')} != DB Rem: ${formatCRC(dbRemaining).padEnd(14, ' ')} (Diff: ${formatCRC(diffInternal)})`
+          );
+        }
       }
     }
 
@@ -145,15 +173,18 @@ export async function runCheckStatements(options?: {
       });
 
       const dbBalance = dbStmt ? Number(dbStmt.balance) : 0;
+      const dbAccumulated = dbStmt ? Number(dbStmt.accumulatedBalance) : 0;
+      const dbRemaining = dbStmt ? Number(dbStmt.remainingBalance) : 0;
 
       let realBalance = 0;
+      let realAccumulated: number | null = null;
       try {
         const bySorteoData = await AccountsService.getBySorteo(dateStr, {
           dimension: 'ventana',
           ventanaId: vt.id
         });
 
-        if (bySorteoData && Array.isArray(bySorteoData)) {
+        if (bySorteoData && Array.isArray(bySorteoData) && bySorteoData.length > 0) {
           let sSales = 0, sPayouts = 0, sComm = 0;
           for (const ev of bySorteoData) {
             const isMov = (ev.sorteoId || '').startsWith('mov-');
@@ -164,21 +195,46 @@ export async function runCheckStatements(options?: {
             }
           }
           realBalance = parseFloat((sSales - sPayouts - sComm).toFixed(2));
+          const lastEvent = bySorteoData.reduce(
+            (max: any, e: any) => (e.chronologicalIndex || 0) > (max.chronologicalIndex || 0) ? e : max,
+            bySorteoData[0]
+          );
+          realAccumulated = parseFloat(Number(lastEvent.accumulated || 0).toFixed(2));
         }
       } catch (err) {
         realBalance = dbBalance;
+        realAccumulated = dbAccumulated;
       }
 
-      const diff = Math.abs(dbBalance - realBalance);
-      if (diff < 0.01) {
+      const diffBalance = Math.abs(dbBalance - realBalance);
+      const diffAccumulated = realAccumulated !== null ? Math.abs(dbAccumulated - realAccumulated) : 0;
+      const diffInternal = dbStmt ? Math.abs(dbAccumulated - dbRemaining) : 0;
+
+      const isBalanceOk = diffBalance < 0.01;
+      const isAccumulatedOk = diffAccumulated < 0.01;
+      const isInternalOk = diffInternal < 0.01;
+
+      if (isBalanceOk && isAccumulatedOk && isInternalOk) {
         ventOk++;
         totalOk++;
       } else {
         ventFail++;
         totalFail++;
-        ventFailDetails.push(
-          `   ⚠️  [FAIL] ${vt.name.padEnd(25, ' ')} │ DB: ${formatCRC(dbBalance).padEnd(14, ' ')} != Calc: ${formatCRC(realBalance).padEnd(14, ' ')} (Diff: ${formatCRC(diff)})`
-        );
+        if (!isBalanceOk) {
+          ventFailDetails.push(
+            `   ⚠️  [FAIL BAL]  ${vt.name.padEnd(25, ' ')} │ DB Bal: ${formatCRC(dbBalance).padEnd(14, ' ')} != Calc Bal: ${formatCRC(realBalance).padEnd(14, ' ')} (Diff: ${formatCRC(diffBalance)})`
+          );
+        }
+        if (!isAccumulatedOk) {
+          ventFailDetails.push(
+            `   ⚠️  [FAIL ACUM] ${vt.name.padEnd(25, ' ')} │ DB Acum: ${formatCRC(dbAccumulated).padEnd(14, ' ')} != Calc Acum: ${formatCRC(realAccumulated!).padEnd(14, ' ')} (Diff: ${formatCRC(diffAccumulated)})`
+          );
+        }
+        if (!isInternalOk) {
+          ventFailDetails.push(
+            `   ⚠️  [FAIL ASYNC] ${vt.name.padEnd(25, ' ')} │ DB Acum: ${formatCRC(dbAccumulated).padEnd(14, ' ')} != DB Rem: ${formatCRC(dbRemaining).padEnd(14, ' ')} (Diff: ${formatCRC(diffInternal)})`
+          );
+        }
       }
     }
 
@@ -202,15 +258,18 @@ export async function runCheckStatements(options?: {
       });
 
       const dbBalance = dbStmt ? Number(dbStmt.balance) : 0;
+      const dbAccumulated = dbStmt ? Number(dbStmt.accumulatedBalance) : 0;
+      const dbRemaining = dbStmt ? Number(dbStmt.remainingBalance) : 0;
 
       let realBalance = 0;
+      let realAccumulated: number | null = null;
       try {
         const bySorteoData = await AccountsService.getBySorteo(dateStr, {
           dimension: 'banca',
           bancaId: b.id
         });
 
-        if (bySorteoData && Array.isArray(bySorteoData)) {
+        if (bySorteoData && Array.isArray(bySorteoData) && bySorteoData.length > 0) {
           let sSales = 0, sPayouts = 0, sComm = 0;
           for (const ev of bySorteoData) {
             const isMov = (ev.sorteoId || '').startsWith('mov-');
@@ -221,21 +280,46 @@ export async function runCheckStatements(options?: {
             }
           }
           realBalance = parseFloat((sSales - sPayouts - sComm).toFixed(2));
+          const lastEvent = bySorteoData.reduce(
+            (max: any, e: any) => (e.chronologicalIndex || 0) > (max.chronologicalIndex || 0) ? e : max,
+            bySorteoData[0]
+          );
+          realAccumulated = parseFloat(Number(lastEvent.accumulated || 0).toFixed(2));
         }
       } catch (err) {
         realBalance = dbBalance;
+        realAccumulated = dbAccumulated;
       }
 
-      const diff = Math.abs(dbBalance - realBalance);
-      if (diff < 0.01) {
+      const diffBalance = Math.abs(dbBalance - realBalance);
+      const diffAccumulated = realAccumulated !== null ? Math.abs(dbAccumulated - realAccumulated) : 0;
+      const diffInternal = dbStmt ? Math.abs(dbAccumulated - dbRemaining) : 0;
+
+      const isBalanceOk = diffBalance < 0.01;
+      const isAccumulatedOk = diffAccumulated < 0.01;
+      const isInternalOk = diffInternal < 0.01;
+
+      if (isBalanceOk && isAccumulatedOk && isInternalOk) {
         bancaOk++;
         totalOk++;
       } else {
         bancaFail++;
         totalFail++;
-        bancaFailDetails.push(
-          `   ⚠️  [FAIL] ${b.name.padEnd(25, ' ')} │ DB: ${formatCRC(dbBalance).padEnd(14, ' ')} != Calc: ${formatCRC(realBalance).padEnd(14, ' ')} (Diff: ${formatCRC(diff)})`
-        );
+        if (!isBalanceOk) {
+          bancaFailDetails.push(
+            `   ⚠️  [FAIL BAL]  ${b.name.padEnd(25, ' ')} │ DB Bal: ${formatCRC(dbBalance).padEnd(14, ' ')} != Calc Bal: ${formatCRC(realBalance).padEnd(14, ' ')} (Diff: ${formatCRC(diffBalance)})`
+          );
+        }
+        if (!isAccumulatedOk) {
+          bancaFailDetails.push(
+            `   ⚠️  [FAIL ACUM] ${b.name.padEnd(25, ' ')} │ DB Acum: ${formatCRC(dbAccumulated).padEnd(14, ' ')} != Calc Acum: ${formatCRC(realAccumulated!).padEnd(14, ' ')} (Diff: ${formatCRC(diffAccumulated)})`
+          );
+        }
+        if (!isInternalOk) {
+          bancaFailDetails.push(
+            `   ⚠️  [FAIL ASYNC] ${b.name.padEnd(25, ' ')} │ DB Acum: ${formatCRC(dbAccumulated).padEnd(14, ' ')} != DB Rem: ${formatCRC(dbRemaining).padEnd(14, ' ')} (Diff: ${formatCRC(diffInternal)})`
+          );
+        }
       }
     }
 

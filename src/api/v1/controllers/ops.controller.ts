@@ -172,10 +172,13 @@ export class OpsController {
             where: { vendedorId: v.id, date: dateObj, ventanaId: null }
           });
           const dbBalance = dbStmt ? Number(dbStmt.balance) : 0;
+          const dbAccumulated = dbStmt ? Number(dbStmt.accumulatedBalance) : 0;
+          const dbRemaining = dbStmt ? Number(dbStmt.remainingBalance) : 0;
           let realBalance = 0;
+          let realAccumulated: number | null = null;
           try {
             const bySorteoData = await AccountsService.getBySorteo(dateStr, { dimension: 'vendedor', vendedorId: v.id });
-            if (bySorteoData && Array.isArray(bySorteoData)) {
+            if (bySorteoData && Array.isArray(bySorteoData) && bySorteoData.length > 0) {
               let sSales = 0, sPayouts = 0, sComm = 0;
               for (const ev of bySorteoData) {
                 if (!(ev.sorteoId || '').startsWith('mov-')) {
@@ -185,11 +188,17 @@ export class OpsController {
                 }
               }
               realBalance = parseFloat((sSales - sPayouts - sComm).toFixed(2));
+              const lastEvent = bySorteoData.reduce((max: any, e: any) => (e.chronologicalIndex || 0) > (max.chronologicalIndex || 0) ? e : max, bySorteoData[0]);
+              realAccumulated = parseFloat(Number(lastEvent.accumulated || 0).toFixed(2));
             }
           } catch (e) {
             realBalance = dbBalance;
+            realAccumulated = dbAccumulated;
           }
-          if (Math.abs(dbBalance - realBalance) < 0.01) totalOk++; else totalFail++;
+          const diffBalance = Math.abs(dbBalance - realBalance);
+          const diffAccumulated = realAccumulated !== null ? Math.abs(dbAccumulated - realAccumulated) : 0;
+          const diffInternal = dbStmt ? Math.abs(dbAccumulated - dbRemaining) : 0;
+          if (diffBalance < 0.01 && diffAccumulated < 0.01 && diffInternal < 0.01) totalOk++; else totalFail++;
         }
 
         for (const vt of ventanas) {
@@ -198,10 +207,13 @@ export class OpsController {
             where: { ventanaId: vt.id, date: dateObj, vendedorId: null }
           });
           const dbBalance = dbStmt ? Number(dbStmt.balance) : 0;
+          const dbAccumulated = dbStmt ? Number(dbStmt.accumulatedBalance) : 0;
+          const dbRemaining = dbStmt ? Number(dbStmt.remainingBalance) : 0;
           let realBalance = 0;
+          let realAccumulated: number | null = null;
           try {
             const bySorteoData = await AccountsService.getBySorteo(dateStr, { dimension: 'ventana', ventanaId: vt.id });
-            if (bySorteoData && Array.isArray(bySorteoData)) {
+            if (bySorteoData && Array.isArray(bySorteoData) && bySorteoData.length > 0) {
               let sSales = 0, sPayouts = 0, sComm = 0;
               for (const ev of bySorteoData) {
                 if (!(ev.sorteoId || '').startsWith('mov-')) {
@@ -211,11 +223,17 @@ export class OpsController {
                 }
               }
               realBalance = parseFloat((sSales - sPayouts - sComm).toFixed(2));
+              const lastEvent = bySorteoData.reduce((max: any, e: any) => (e.chronologicalIndex || 0) > (max.chronologicalIndex || 0) ? e : max, bySorteoData[0]);
+              realAccumulated = parseFloat(Number(lastEvent.accumulated || 0).toFixed(2));
             }
           } catch (e) {
             realBalance = dbBalance;
+            realAccumulated = dbAccumulated;
           }
-          if (Math.abs(dbBalance - realBalance) < 0.01) totalOk++; else totalFail++;
+          const diffBalance = Math.abs(dbBalance - realBalance);
+          const diffAccumulated = realAccumulated !== null ? Math.abs(dbAccumulated - realAccumulated) : 0;
+          const diffInternal = dbStmt ? Math.abs(dbAccumulated - dbRemaining) : 0;
+          if (diffBalance < 0.01 && diffAccumulated < 0.01 && diffInternal < 0.01) totalOk++; else totalFail++;
         }
 
         for (const b of bancas) {
@@ -224,10 +242,13 @@ export class OpsController {
             where: { bancaId: b.id, date: dateObj, ventanaId: null, vendedorId: null }
           });
           const dbBalance = dbStmt ? Number(dbStmt.balance) : 0;
+          const dbAccumulated = dbStmt ? Number(dbStmt.accumulatedBalance) : 0;
+          const dbRemaining = dbStmt ? Number(dbStmt.remainingBalance) : 0;
           let realBalance = 0;
+          let realAccumulated: number | null = null;
           try {
             const bySorteoData = await AccountsService.getBySorteo(dateStr, { dimension: 'banca', bancaId: b.id });
-            if (bySorteoData && Array.isArray(bySorteoData)) {
+            if (bySorteoData && Array.isArray(bySorteoData) && bySorteoData.length > 0) {
               let sSales = 0, sPayouts = 0, sComm = 0;
               for (const ev of bySorteoData) {
                 if (!(ev.sorteoId || '').startsWith('mov-')) {
@@ -237,11 +258,17 @@ export class OpsController {
                 }
               }
               realBalance = parseFloat((sSales - sPayouts - sComm).toFixed(2));
+              const lastEvent = bySorteoData.reduce((max: any, e: any) => (e.chronologicalIndex || 0) > (max.chronologicalIndex || 0) ? e : max, bySorteoData[0]);
+              realAccumulated = parseFloat(Number(lastEvent.accumulated || 0).toFixed(2));
             }
           } catch (e) {
             realBalance = dbBalance;
+            realAccumulated = dbAccumulated;
           }
-          if (Math.abs(dbBalance - realBalance) < 0.01) totalOk++; else totalFail++;
+          const diffBalance = Math.abs(dbBalance - realBalance);
+          const diffAccumulated = realAccumulated !== null ? Math.abs(dbAccumulated - realAccumulated) : 0;
+          const diffInternal = dbStmt ? Math.abs(dbAccumulated - dbRemaining) : 0;
+          if (diffBalance < 0.01 && diffAccumulated < 0.01 && diffInternal < 0.01) totalOk++; else totalFail++;
         }
       }
 
