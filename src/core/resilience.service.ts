@@ -53,7 +53,13 @@ export class ResilienceService {
             errorFilter: (err: unknown) => {
                 // El errorFilter solo decide si el error cuenta para abrir el circuito
                 const prismaCode = (err as any)?.code as string | undefined;
-                return !PRISMA_TRANSIENT_ERRORS.includes(prismaCode ?? '');
+                const msg = String((err as any)?.message ?? '').toLowerCase();
+                const isTransient = PRISMA_TRANSIENT_ERRORS.includes(prismaCode ?? '')
+                    || msg.includes('econnaborted')
+                    || msg.includes('not queryable')
+                    || msg.includes('connection error')
+                    || (err as any)?.name === 'TimeoutError';
+                return !isTransient;
             }
         });
 
@@ -76,7 +82,12 @@ export class ResilienceService {
             // Solo registramos error en métricas si es un error transitorio
             // Los errores lógicos (P2002, etc.) no son fallos de infraestructura
             const prismaCode = (err as any)?.code as string | undefined;
-            const isTransient = PRISMA_TRANSIENT_ERRORS.includes(prismaCode ?? '') || (err as any)?.name === 'TimeoutError';
+            const msg = String((err as any)?.message ?? '').toLowerCase();
+            const isTransient = PRISMA_TRANSIENT_ERRORS.includes(prismaCode ?? '')
+                || msg.includes('econnaborted')
+                || msg.includes('not queryable')
+                || msg.includes('connection error')
+                || (err as any)?.name === 'TimeoutError';
             if (isTransient) {
                 metricsService.recordDbRequest(true, latency);
             } else {

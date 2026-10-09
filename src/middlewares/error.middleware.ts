@@ -47,10 +47,16 @@ export const errorHandler = (err: any, req: Request, res: Response, _next: NextF
     return errorResponse(res, err.message, err.statusCode, err.meta ?? undefined);
   }
 
-  // PrismaClientInitializationError — no tiene .code, se detecta por nombre o errorCode
+  // PrismaClientInitializationError o errores irrecuperables de socket/conexión DB
   const isInitError = err?.constructor?.name === 'PrismaClientInitializationError'
     || err?.errorCode?.startsWith('P1')
-    || (typeof err?.message === 'string' && err.message.includes("Can't reach database server"));
+    || (typeof err?.message === 'string' && (
+      err.message.includes("Can't reach database server")
+      || err.message.includes("ECONNABORTED")
+      || err.message.includes("is not queryable")
+      || err.message.includes("ECONNRESET")
+      || err.message.includes("ECONNREFUSED")
+    ));
 
   if (isInitError) {
     logger.error({

@@ -230,8 +230,11 @@ interface DegradedVendorCache {
 }
 
 export class VendorCreditService {
-  // Mapa de coalescencia en memoria para hidratación single-flight por vendedor
-  private static hydrationLocks = new Map<string, Promise<HydratedCreditState>>();
+  // Mapa de coalescencia en memoria para hidratación single-flight por vendedor (deduplicación de promesas)
+  private static inFlightHydrations = new Map<string, Promise<HydratedCreditState>>();
+  private static get hydrationLocks() {
+    return this.inFlightHydrations;
+  }
 
   // Contador global de eventos fail-open
   private static failOpenCounter = 0;
@@ -1004,152 +1007,166 @@ export class VendorCreditService {
 
   /**
    * Hidrata las claves de crédito del vendedor desde PostgreSQL (Single-Flight).
-   * Consulta optimizada con ventana acotada de días y agregación sobre Jugada sin correlated subquery.
+   * Deduplica promesas concurrentes mediante inFlightHydrations para mitigar Thundering Herd hacia PostgreSQL.
    */
   static async hydrate(vendedorId: string): Promise<HydratedCreditState> {
-    const existingPromise = this.hydrationLocks.get(vendedorId);
-    if (existingPromise) {
-      return existingPromise;
+    if (this.inFlightHydrations.has(vendedorId)) {
+      return this.inFlightHydrations.get(vendedorId)!;
     }
 
-    const hydrationPromise = (async () => {
+    const promise = (async () => {
       try {
-        const { cfg, base, open } = this.getKeys(vendedorId);
-
-        // 1. Obtener configuración y relaciones del vendedor
-        const vendor = await prisma.user.findUnique({
-          where: { id: vendedorId },
-          select: {
-            id: true,
-            creditLimit: true,
-            creditAlertThreshold: true,
-            creditBlockMode: true,
-            settings: true,
-            ventanaId: true,
-            bancaId: true,
-            isActive: true,
-            updatedAt: true,
-            ventana: { select: { bancaId: true } },
-          },
-        });
-
-        if (!vendor) {
-          throw new Error(`Vendor ${vendedorId} not found during credit hydration`);
-        }
-
-        const effectiveBancaId = vendor.bancaId || vendor.ventana?.bancaId || null;
-        const limit = vendor.creditLimit !== null && vendor.creditLimit !== undefined && vendor.creditLimit > 0
-          ? vendor.creditLimit
-          : null;
-        const threshold = vendor.creditAlertThreshold ?? 80;
-        const blockMode = vendor.creditBlockMode ?? true;
-        const vendorUpdatedAt = vendor.updatedAt ? vendor.updatedAt.toISOString() : new Date().toISOString();
-        const hasLimit = limit !== null && limit > 0;
-
-        let baseBalance = 0;
-        const openBySorteo: Record<string, number> = {};
-        let totalOpen = 0;
-        let projected = 0;
-
-        // Vendedores con tope configurado (>0): cargar balances y ventas abiertas reales desde BD
-        if (hasLimit) {
-          // 2. Obtener saldo base desde el último AccountStatement con date <= hoy
-          const todayCRStr = tz.toDateStr();
-          const todayDateUTC = tz.parse(todayCRStr);
-
-          const lastStatement = await prisma.accountStatement.findFirst({
-            where: {
-              vendedorId,
-              date: { lte: todayDateUTC },
-            },
-            orderBy: { date: "desc" },
-            select: { accumulatedBalance: true, date: true },
-          });
-
-          if (lastStatement) {
-            baseBalance = lastStatement.accumulatedBalance ?? 0;
-
-            // Respetar reset de balance si fue configurado en settings
-            const resetAt = (vendor.settings as any)?.balanceResetAt;
-            if (resetAt && new Date(lastStatement.date).getTime() < new Date(resetAt).getTime()) {
-              baseBalance = 0;
-            }
-          }
-
-          // 3. Ventana acotada de días para ventas abiertas (businessDate >= hoy - N días en zona Costa Rica)
-          const daysWindow = config.creditLimit.openSalesDaysWindow || 2;
-          const windowDateUTC = new Date(todayDateUTC.getTime() - daysWindow * 24 * 60 * 60 * 1000);
-          const windowDateStr = tz.toDateStr(windowDateUTC);
-
-          // 4. Obtener ventas netas abiertas sin correlated subquery por ticket
-          const openSales = await this.fetchOpenSales(vendedorId, windowDateStr);
-
-          for (const row of openSales) {
-            const val = parseFloat(String(row.netAmount)) || 0;
-            if (val > 0) {
-              openBySorteo[row.sorteoId] = val;
-              totalOpen += val;
-            }
-          }
-
-          projected = Math.round((baseBalance + totalOpen) * 100) / 100;
-        }
-
-        const status = hasLimit ? this.computeCreditStatus(projected, limit, threshold, blockMode) : "NORMAL";
-
-        // 5. Guardar en Redis mediante pipeline
-        if (isRedisAvailable()) {
-          const redis = getRedisClient();
-          if (redis) {
-            const pipeline = redis.pipeline();
-            pipeline.del(cfg, base, open);
-
-            pipeline.hset(cfg, {
-              limit: limit !== null ? limit.toString() : "-1",
-              threshold: threshold.toString(),
-              blockMode: blockMode ? "1" : "0",
-              status,
-              bancaId: effectiveBancaId || "",
-              ventanaId: vendor.ventanaId || "",
-              isActive: vendor.isActive ? "1" : "0",
-              updatedAt: vendorUpdatedAt,
-            });
-            pipeline.expire(cfg, DEFAULT_TTL_SECONDS);
-
-            pipeline.set(base, baseBalance.toString(), "EX", DEFAULT_TTL_SECONDS);
-
-            if (Object.keys(openBySorteo).length > 0) {
-              const stringMap: Record<string, string> = {};
-              for (const [sId, amt] of Object.entries(openBySorteo)) {
-                stringMap[sId] = amt.toString();
-              }
-              pipeline.hset(open, stringMap);
-              pipeline.expire(open, DEFAULT_TTL_SECONDS);
-            }
-
-            await pipeline.exec();
-          }
-        }
-
-        return {
-          limit,
-          threshold,
-          blockMode,
-          baseBalance,
-          openBySorteo,
-          status,
-          bancaId: effectiveBancaId,
-          ventanaId: vendor.ventanaId,
-          isActive: vendor.isActive,
-          updatedAt: vendorUpdatedAt,
-        };
+        return await this._doHydrate(vendedorId);
       } finally {
-        this.hydrationLocks.delete(vendedorId);
+        this.inFlightHydrations.delete(vendedorId);
       }
     })();
 
-    this.hydrationLocks.set(vendedorId, hydrationPromise);
-    return hydrationPromise;
+    this.inFlightHydrations.set(vendedorId, promise);
+    return promise;
+  }
+
+  /**
+   * Ejecución real de la hidratación desde PostgreSQL hacia Redis.
+   */
+  private static async _doHydrate(vendedorId: string): Promise<HydratedCreditState> {
+    const { cfg, base, open } = this.getKeys(vendedorId);
+
+    // 1. Obtener configuración y relaciones del vendedor
+    const vendor = await prisma.user.findUnique({
+      where: { id: vendedorId },
+      select: {
+        id: true,
+        creditLimit: true,
+        creditAlertThreshold: true,
+        creditBlockMode: true,
+        settings: true,
+        ventanaId: true,
+        bancaId: true,
+        isActive: true,
+        updatedAt: true,
+        ventana: { select: { bancaId: true } },
+      },
+    });
+
+    if (!vendor) {
+      throw new Error(`Vendor ${vendedorId} not found during credit hydration`);
+    }
+
+    const effectiveBancaId = vendor.bancaId || vendor.ventana?.bancaId || null;
+    const limit = vendor.creditLimit !== null && vendor.creditLimit !== undefined && vendor.creditLimit > 0
+      ? vendor.creditLimit
+      : null;
+    const threshold = vendor.creditAlertThreshold ?? 80;
+    const blockMode = vendor.creditBlockMode ?? true;
+    const vendorUpdatedAt = vendor.updatedAt ? vendor.updatedAt.toISOString() : new Date().toISOString();
+    const hasLimit = limit !== null && limit > 0;
+
+    let baseBalance = 0;
+    const openBySorteo: Record<string, number> = {};
+    let totalOpen = 0;
+    let projected = 0;
+
+    // Vendedores con tope configurado (>0): cargar balances y ventas abiertas reales desde BD
+    if (hasLimit) {
+      // 2. Obtener saldo base desde el último AccountStatement con date <= hoy
+      const todayCRStr = tz.toDateStr();
+      const todayDateUTC = tz.parse(todayCRStr);
+
+      const lastStatement = await prisma.accountStatement.findFirst({
+        where: {
+          vendedorId,
+          date: { lte: todayDateUTC },
+        },
+        orderBy: { date: "desc" },
+        select: { accumulatedBalance: true, date: true },
+      });
+
+      if (lastStatement) {
+        baseBalance = lastStatement.accumulatedBalance ?? 0;
+
+        // Respetar reset de balance si fue configurado en settings
+        const resetAt = (vendor.settings as any)?.balanceResetAt;
+        if (resetAt && new Date(lastStatement.date).getTime() < new Date(resetAt).getTime()) {
+          baseBalance = 0;
+        }
+      }
+
+      // 3. Ventana acotada de días para ventas abiertas (businessDate >= hoy - N días en zona Costa Rica)
+      const daysWindow = config.creditLimit.openSalesDaysWindow || 2;
+      const windowDateUTC = new Date(todayDateUTC.getTime() - daysWindow * 24 * 60 * 60 * 1000);
+      const windowDateStr = tz.toDateStr(windowDateUTC);
+
+      // 4. Obtener ventas netas abiertas sin correlated subquery por ticket
+      const openSales = await this.fetchOpenSales(vendedorId, windowDateStr);
+
+      for (const row of openSales) {
+        const val = parseFloat(String(row.netAmount)) || 0;
+        if (val > 0) {
+          openBySorteo[row.sorteoId] = val;
+          totalOpen += val;
+        }
+      }
+
+      projected = Math.round((baseBalance + totalOpen) * 100) / 100;
+    }
+
+    const status = hasLimit ? this.computeCreditStatus(projected, limit, threshold, blockMode) : "NORMAL";
+
+    // 5. Guardar en Redis mediante pipeline
+    if (isRedisAvailable()) {
+      const redis = getRedisClient();
+      if (redis) {
+        const pipeline = redis.pipeline();
+        pipeline.del(cfg, base, open);
+
+        pipeline.hset(cfg, {
+          limit: limit !== null ? limit.toString() : "-1",
+          threshold: threshold.toString(),
+          blockMode: blockMode ? "1" : "0",
+          status,
+          bancaId: effectiveBancaId || "",
+          ventanaId: vendor.ventanaId || "",
+          isActive: vendor.isActive ? "1" : "0",
+          updatedAt: vendorUpdatedAt,
+        });
+        pipeline.expire(cfg, DEFAULT_TTL_SECONDS);
+
+        pipeline.set(base, baseBalance.toString(), "EX", DEFAULT_TTL_SECONDS);
+
+        if (Object.keys(openBySorteo).length > 0) {
+          const stringMap: Record<string, string> = {};
+          for (const [sId, amt] of Object.entries(openBySorteo)) {
+            stringMap[sId] = amt.toString();
+          }
+          pipeline.hset(open, stringMap);
+          pipeline.expire(open, DEFAULT_TTL_SECONDS);
+        }
+
+        try {
+          await pipeline.exec();
+        } catch (redisPipeErr: any) {
+          logger.warn({
+            layer: "credit",
+            action: "HYDRATE_REDIS_PIPELINE_WARN",
+            payload: { vendedorId, error: redisPipeErr?.message || String(redisPipeErr) },
+          });
+        }
+      }
+    }
+
+    return {
+      limit,
+      threshold,
+      blockMode,
+      baseBalance,
+      openBySorteo,
+      status,
+      bancaId: effectiveBancaId,
+      ventanaId: vendor.ventanaId,
+      isActive: vendor.isActive,
+      updatedAt: vendorUpdatedAt,
+    };
   }
 
   /**
@@ -1827,10 +1844,28 @@ export class VendorCreditService {
     if (redis && isRedisAvailable()) {
       for (const v of targetVendors) {
         const { base, open } = this.getKeys(v.id);
-        const [baseVal, openMap] = await Promise.all([
-          redis.get(base),
-          redis.hgetall(open),
-        ]);
+        let baseVal: string | null = null;
+        let openMap: Record<string, string> = {};
+
+        try {
+          const [resBase, resOpen] = await Promise.all([
+            redis.get(base),
+            redis.hgetall(open),
+          ]);
+          baseVal = resBase;
+          openMap = resOpen || {};
+        } catch (err: any) {
+          logger.warn({
+            layer: "credit",
+            action: "GET_VENDOR_CREDIT_STATUS_REDIS_READ_WARN",
+            payload: {
+              vendedorId: v.id,
+              error: err?.message || String(err),
+            },
+          });
+          baseVal = null;
+          openMap = {};
+        }
 
         if (baseVal === null) {
           toHydrate.push(v);
@@ -1872,24 +1907,53 @@ export class VendorCreditService {
         const batch = toHydrate.slice(i, i + CONCURRENCY_LIMIT);
         const hydratedBatch = await Promise.all(
           batch.map(async (v) => {
-            const h = await this.hydrate(v.id);
-            const totalOpen = Object.values(h.openBySorteo).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0);
-            const effectiveBalance = Math.round((h.baseBalance + totalOpen) * 100) / 100;
-            const limit = v.creditLimit && v.creditLimit > 0 ? v.creditLimit : null;
-            const threshold = v.creditAlertThreshold ?? 80;
-            const blockMode = v.creditBlockMode ?? true;
-            const percentageUsed = limit && limit > 0
-              ? Math.round(((effectiveBalance / limit) * 100) * 100) / 100
-              : 0;
-            const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
-            return {
-              vendedorId: v.id,
-              creditLimit: limit,
-              effectiveBalance,
-              percentageUsed,
-              status,
-              updatedAt: v.updatedAt.toISOString(),
-            };
+            try {
+              const h = await this.hydrate(v.id);
+              const totalOpen = Object.values(h.openBySorteo).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0);
+              const effectiveBalance = Math.round((h.baseBalance + totalOpen) * 100) / 100;
+              const limit = v.creditLimit && v.creditLimit > 0 ? v.creditLimit : null;
+              const threshold = v.creditAlertThreshold ?? 80;
+              const blockMode = v.creditBlockMode ?? true;
+              const percentageUsed = limit && limit > 0
+                ? Math.round(((effectiveBalance / limit) * 100) * 100) / 100
+                : 0;
+              const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
+              return {
+                vendedorId: v.id,
+                creditLimit: limit,
+                effectiveBalance,
+                percentageUsed,
+                status,
+                updatedAt: v.updatedAt.toISOString(),
+              };
+            } catch (hydrErr: any) {
+              logger.warn({
+                layer: "credit",
+                action: "GET_VENDOR_CREDIT_STATUS_HYDRATE_FALLBACK_WARN",
+                payload: { vendedorId: v.id, error: hydrErr?.message || String(hydrErr) },
+              });
+              const limit = v.creditLimit && v.creditLimit > 0 ? v.creditLimit : null;
+              if (limit && limit > 0) {
+                const blockMode = v.creditBlockMode ?? true;
+                const failClosedStatus: CreditStatus = blockMode ? "BLOCKED" : "EXCEEDED_ALERT_ONLY";
+                return {
+                  vendedorId: v.id,
+                  creditLimit: limit,
+                  effectiveBalance: limit,
+                  percentageUsed: 100,
+                  status: failClosedStatus,
+                  updatedAt: v.updatedAt.toISOString(),
+                };
+              }
+              return {
+                vendedorId: v.id,
+                creditLimit: null,
+                effectiveBalance: 0,
+                percentageUsed: 0,
+                status: "NORMAL" as CreditStatus,
+                updatedAt: v.updatedAt.toISOString(),
+              };
+            }
           })
         );
         items.push(...hydratedBatch);

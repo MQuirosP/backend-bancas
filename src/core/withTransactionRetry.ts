@@ -52,9 +52,16 @@ function isPoolerConnectionError(code: string | undefined, msg: string): boolean
   return (
     code === "P1001" || // Can't reach database server
     code === "P1008" || // Operations timed out
+    code === "P1017" || // Server has closed the connection
     code === "P2024" || // Timed out fetching a new connection from the pool
     /can't reach database/i.test(msg) ||
-    /connection pool timeout/i.test(msg)
+    /connection pool timeout/i.test(msg) ||
+    /econnaborted/i.test(msg) ||
+    /client has encountered a connection error and is not queryable/i.test(msg) ||
+    /not queryable/i.test(msg) ||
+    /server has closed the connection/i.test(msg) ||
+    /econnreset/i.test(msg) ||
+    /socket hang up/i.test(msg)
   );
 }
 

@@ -2,6 +2,7 @@ import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { tenantIsolationExtension } from "./prismaExtensions";
+import logger from "./logger";
 
 declare global {
   var __prisma: PrismaClient | undefined;
@@ -36,6 +37,14 @@ if (!global.__prismaPool) {
     idleTimeoutMillis: 10000,
     application_name: "bancas_backend_general",
   });
+
+  global.__prismaPool.on("error", (err) => {
+    logger.warn({
+      layer: "database",
+      action: "PG_POOL_GENERAL_CLIENT_ERROR",
+      payload: { error: err?.message || String(err) },
+    });
+  });
 }
 
 if (!global.__salesPool) {
@@ -45,6 +54,14 @@ if (!global.__salesPool) {
     connectionTimeoutMillis: 3000,
     idleTimeoutMillis: 10000,
     application_name: "bancas_backend_sales",
+  });
+
+  global.__salesPool.on("error", (err) => {
+    logger.warn({
+      layer: "database",
+      action: "PG_POOL_SALES_CLIENT_ERROR",
+      payload: { error: err?.message || String(err) },
+    });
   });
 }
 

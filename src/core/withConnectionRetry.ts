@@ -53,6 +53,7 @@ export function isConnectionError(error: any): boolean {
     "P1008", // Operations timed out
     "P1011", // Error opening a TLS connection
     "P1012", // Schema validation error (puede ser temporal en cold start)
+    "P2024", // Timed out fetching a new connection from the connection pool
   ];
 
   // Mensajes comunes de errores de conexión
@@ -65,12 +66,16 @@ export function isConnectionError(error: any): boolean {
     "timeout",
     "econnrefused",
     "econnreset",
+    "econnaborted",
+    "read econnaborted",
     "enotfound",
     "etimedout",
     "pooler",
     "connection pool",
     "socket hang up",
     "network error",
+    "client has encountered a connection error and is not queryable",
+    "not queryable",
   ];
 
   return (
@@ -78,6 +83,9 @@ export function isConnectionError(error: any): boolean {
     connectionErrorMessages.some((pattern) => msg.includes(pattern))
   );
 }
+
+/** Alias para compatibilidad de nomenclatura */
+export const isTransientDbConnectionError = isConnectionError;
 
 /**
  * Ejecuta una función con reintentos automáticos ante errores de conexión a la base de datos.
@@ -121,11 +129,14 @@ export async function withConnectionRetry<T>(
       // Solo reintentar si es un error de conexión y no hemos alcanzado el límite
       if (isConnectionErr && attempt < maxRetries) {
         // Reportar la falla al circuit breaker para que pueda abrirse durante outages
-        if (!isJob) ResilienceService.reportPrismaConnectionError();
-
-        // Si el circuit breaker ya abrió (por acumulación de fallas), no seguir reintentando
-        if (!isJob && ResilienceService.isPrismaOpen()) {
-          throw error;
+        try {
+          if (!isJob) ResilienceService.reportPrismaConnectionError();
+          if (!isJob && ResilienceService.isPrismaOpen()) {
+            throw error;
+          }
+        } catch (resErr: any) {
+          if (resErr === error) throw error;
+          // Si ResilienceService no ha sido inicializado (ej: tests o bootstrap), continuar con reintento
         }
 
         const backoff = nextDelayMs(attempt, backoffMinMs, backoffMaxMs);
@@ -151,7 +162,11 @@ export async function withConnectionRetry<T>(
       // Si no es un error de conexión o ya agotamos los reintentos, lanzar el error
       if (isConnectionErr) {
         // Reportar al circuit breaker en el intento final también
-        if (!isJob) ResilienceService.reportPrismaConnectionError();
+        try {
+          if (!isJob) ResilienceService.reportPrismaConnectionError();
+        } catch {
+          // Ignorar si ResilienceService no está inicializado
+        }
 
         logger.error({
           layer: "connection",

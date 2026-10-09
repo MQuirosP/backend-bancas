@@ -11,6 +11,7 @@ import { DateToken, PaymentStatus, PaginationMeta, ReportMeta, DateRange } from 
 import { formatIsoLocal } from '../../utils/datetime';
 import { CacheService } from '../../core/cache.service';
 import { crDateService } from '../../utils/crDateService';
+import { withConnectionRetry } from '../../core/withConnectionRetry';
 
 // Helper para formatear solo fecha YYYY-MM-DD
 const formatDateOnly = (date: Date): string => formatIsoLocal(date).split('T')[0];
@@ -749,7 +750,7 @@ export const TicketsReportService = {
     return CacheService.wrap(
       cacheKey,
       async () => {
-
+        return withConnectionRetry(async () => {
     // Filtros de entidad para queries de Jugada/Ticket (filtrado por t.bancaId)
     const jugadaEntityFilters = Prisma.sql`
       ${filters.loteriaId && filters.loteriaId.trim() !== '' ? Prisma.sql`AND t."loteriaId" = CAST(${filters.loteriaId} AS uuid)` : Prisma.empty}
@@ -1118,6 +1119,7 @@ export const TicketsReportService = {
         comparisonEnabled: filters.includeComparison || false,
       },
     };
+        }, { context: 'ticketsReport.getNumbersAnalysis' });
   },
   ttl,
   ['reports', 'dashboard'],
@@ -2524,6 +2526,7 @@ export const TicketsReportService = {
       filters.toDate
     );
 
+    return withConnectionRetry(async () => {
     // 1. Obtener información de la lotería
     const loteria = await prisma.loteria.findUnique({
       where: { id: filters.loteriaId },
@@ -2650,5 +2653,6 @@ export const TicketsReportService = {
         },
       },
     };
+    }, { context: 'ticketsReport.getNumbersAnalysisDetail' });
   },
 };
