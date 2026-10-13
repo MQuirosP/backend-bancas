@@ -336,10 +336,13 @@ export class CacheService {
         const redis = getRedisClient();
         if (!redis) return;
 
-        const CHUNK_SIZE = Number(process.env.CACHE_SET_BATCH_CHUNK_SIZE) || 50;
+        const CHUNK_SIZE = Number(process.env.CACHE_SET_BATCH_CHUNK_SIZE) || 20;
 
         try {
             for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+                if (i > 0) {
+                    await new Promise((resolve) => setImmediate(resolve));
+                }
                 const chunk = entries.slice(i, i + CHUNK_SIZE);
                 const pipeline = redis.pipeline();
 
@@ -421,12 +424,11 @@ export class CacheService {
                 const pipeline = redis.pipeline();
                 pipeline.del(...keys);
                 pipeline.del(tagKey);
-                await pipeline.exec();
-                
                 for (const k of keys) {
                     deleteL1Entry(k);
-                    redis.publish('cache:invalidate', k);
+                    pipeline.publish('cache:invalidate', k);
                 }
+                await pipeline.exec();
                 
                 logger.info({
                     layer: 'cache',

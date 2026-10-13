@@ -5,7 +5,7 @@ import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";
 import { restrictionCacheV2 } from "../../utils/restrictionCacheV2";
-import { getRedisClient, isRedisAvailable, markRedisError } from "../../core/redisClient";
+import { getRedisClient, getRedisSalesClient, isRedisAvailable, isRedisSalesAvailable, markRedisError } from "../../core/redisClient";
 import { rehydrateSorteoSalesCounters } from "../../utils/sorteoSalesCounters";
 import prisma from "../../core/prismaClient";
 
@@ -14,8 +14,8 @@ import prisma from "../../core/prismaClient";
  * Retorna true si se adquirió, false en caso contrario.
  */
 export async function acquireLock(key: string, value: string, ttlSeconds: number): Promise<boolean> {
-  if (!isRedisAvailable()) return false;
-  const redis = getRedisClient();
+  if (!isRedisSalesAvailable()) return false;
+  const redis = getRedisSalesClient();
   if (!redis) return false;
 
   try {
@@ -36,8 +36,8 @@ export async function acquireLock(key: string, value: string, ttlSeconds: number
  * Compara el valor actual con el proporcionado antes de eliminar.
  */
 export async function releaseLock(key: string, value: string): Promise<boolean> {
-  if (!isRedisAvailable()) return false;
-  const redis = getRedisClient();
+  if (!isRedisSalesAvailable()) return false;
+  const redis = getRedisSalesClient();
   if (!redis) return false;
 
   const luaScript = `
@@ -389,8 +389,8 @@ export async function calculateAccumulatedForMultipleScopes(
   }
 
   // 1.5 Intentar obtener de Redis en lote
-  if (isRedisAvailable()) {
-    const redis = getRedisClient();
+  if (isRedisSalesAvailable()) {
+    const redis = getRedisSalesClient();
     if (redis) {
       try {
         // Asegurar hidratación

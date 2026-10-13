@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import { salesPrisma } from "../../../core/prismaClient";
 import logger from "../../../core/logger";
 import { AppError } from "../../../core/errors";
-import { isRedisAvailable } from "../../../core/redisClient";
+import { isRedisSalesAvailable } from "../../../core/redisClient";
 import { acquireLock, releaseLock } from "../../../repositories/helpers/ticket-restriction.helper";
 import { buildRulesCacheKey, getCachedRestrictionRules } from "../../../repositories/ticket.repository";
 import { CreateTicketOptions, TicketLockHandle } from "./ticket.types";
@@ -21,7 +21,7 @@ export class TicketConcurrencyManager {
     let lockKey = "";
     let lockAcquired = false;
 
-    if (isRedisAvailable()) {
+    if (isRedisSalesAvailable()) {
       let targetBancaId = options?.preFetched?.ventana?.bancaId;
       if (!targetBancaId) {
         const vent = await salesPrisma.ventana.findUnique({
@@ -121,7 +121,7 @@ export class TicketConcurrencyManager {
           );
         }
 
-        return { lockKey, lockValue, lockAcquired: true };
+        return { lockKey, lockValue, lockAcquired: true, waitDurationMs, attempts };
       }
     }
 

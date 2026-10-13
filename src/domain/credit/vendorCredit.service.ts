@@ -1,7 +1,7 @@
 import prisma from "../../core/prismaClient";
 import logger from "../../core/logger";
 import { config } from "../../config";
-import { getRedisClient, isRedisAvailable, markRedisError } from "../../core/redisClient";
+import { getRedisClient, getRedisSalesClient, isRedisAvailable, isRedisSalesAvailable, markRedisError } from "../../core/redisClient";
 import { SocketService } from "../../core/socket.service";
 import { tz } from "../../utils/timezone";
 import { Role } from "../../generated/prisma/client";
@@ -522,12 +522,12 @@ export class VendorCreditService {
     }
 
     // Si Redis no está disponible o cliente en estado terminal, entrar a modo degradado (Nivel 2)
-    if (!isRedisAvailable()) {
+    if (!isRedisSalesAvailable()) {
       this.enterDegradedMode("Redis client not available");
       return this.validateAndReserveDegraded(vendedorId, sorteoId, netAmount);
     }
 
-    const redis = getRedisClient();
+    const redis = getRedisSalesClient();
     if (!redis) {
       this.enterDegradedMode("Redis client is null");
       return this.validateAndReserveDegraded(vendedorId, sorteoId, netAmount);
@@ -1644,8 +1644,8 @@ export class VendorCreditService {
         return { enabled: true, items: [] };
       }
 
-      const redis = getRedisClient();
-      if (redis && isRedisAvailable()) {
+      const redis = getRedisSalesClient();
+      if (redis && isRedisSalesAvailable()) {
         try {
           const { cfg, base, open } = this.getKeys(targetId);
           const pipeline = redis.pipeline();

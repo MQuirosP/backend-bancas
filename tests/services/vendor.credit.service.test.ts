@@ -1,6 +1,15 @@
 import { VendorCreditService } from "../../src/domain/credit/vendorCredit.service";
 import prisma from "../../src/core/prismaClient";
-import { getRedisClient, isRedisAvailable, markRedisError } from "../../src/core/redisClient";
+import {
+  getRedisClient,
+  getRedisSalesClient,
+  getRedisGeneralClient,
+  isRedisAvailable,
+  isRedisSalesAvailable,
+  markRedisError,
+  markSalesRedisError,
+  markGeneralRedisError,
+} from "../../src/core/redisClient";
 import { SocketService } from "../../src/core/socket.service";
 import { config } from "../../src/config";
 
@@ -24,8 +33,13 @@ jest.mock("../../src/core/prismaClient", () => ({
 jest.mock("../../src/core/redisClient", () => ({
   __esModule: true,
   getRedisClient: jest.fn(),
+  getRedisSalesClient: jest.fn(),
+  getRedisGeneralClient: jest.fn(),
   isRedisAvailable: jest.fn(),
+  isRedisSalesAvailable: jest.fn(),
   markRedisError: jest.fn(),
+  markSalesRedisError: jest.fn(),
+  markGeneralRedisError: jest.fn(),
 }));
 
 jest.mock("../../src/core/socket.service", () => ({
@@ -69,7 +83,10 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
     };
 
     (isRedisAvailable as jest.Mock).mockReturnValue(true);
+    (isRedisSalesAvailable as jest.Mock).mockReturnValue(true);
     (getRedisClient as jest.Mock).mockReturnValue(mockRedis);
+    (getRedisSalesClient as jest.Mock).mockReturnValue(mockRedis);
+    (getRedisGeneralClient as jest.Mock).mockReturnValue(mockRedis);
   });
 
   describe("1. Atomic Check and Reservation (Lua Script Execution)", () => {
@@ -245,6 +262,7 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
   describe("3. Stepped Fallback (Degraded Mode & Fail-Open)", () => {
     it("enters degraded mode (Nivel 2) when Redis is down", async () => {
       (isRedisAvailable as jest.Mock).mockReturnValue(false);
+      (isRedisSalesAvailable as jest.Mock).mockReturnValue(false);
       (prisma.user.findUnique as jest.Mock).mockResolvedValueOnce({
         id: "v-1",
         creditLimit: 1000,
@@ -312,6 +330,7 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
 
     it("applies Level 3 fail-open when DB calculation ALSO fails or times out in degraded mode", async () => {
       (isRedisAvailable as jest.Mock).mockReturnValue(false);
+      (isRedisSalesAvailable as jest.Mock).mockReturnValue(false);
       (prisma.user.findUnique as jest.Mock).mockRejectedValueOnce(new Error("DB Pool connection timeout"));
 
       const result = await VendorCreditService.validateAndReserve("v-1", "s-1", 500);

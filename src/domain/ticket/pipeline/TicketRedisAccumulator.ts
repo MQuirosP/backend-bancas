@@ -2,7 +2,7 @@ import { BetType } from "../../../generated/prisma/client";
 import { ReportDimension } from "../../../types/enums/report.enum";
 import { salesPrisma } from "../../../core/prismaClient";
 import logger from "../../../core/logger";
-import { getRedisClient, isRedisAvailable, markRedisError } from "../../../core/redisClient";
+import { getRedisSalesClient, isRedisSalesAvailable, markRedisError } from "../../../core/redisClient";
 import { CreateTicketOptions } from "./ticket.types";
 import { appendSalesCounterOps } from "../../../utils/sorteoSalesCounters";
 
@@ -17,9 +17,9 @@ export class TicketRedisAccumulator {
     sorteoScheduledAt: Date | null | undefined,
     options?: CreateTicketOptions
   ): Promise<void> {
-    if (!isRedisAvailable()) return;
+    if (!isRedisSalesAvailable()) return;
 
-    const redis = getRedisClient();
+    const redis = getRedisSalesClient();
     if (!redis) return;
 
     try {

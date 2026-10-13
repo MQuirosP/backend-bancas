@@ -483,6 +483,8 @@ export const TicketRepository = {
       try {
         if (options?.timingCollector?.prefetch_breakdown) {
           options.timingCollector.prefetch_breakdown.t_lock_acquire = Math.round((performance.now() - t_lock_start) * 100) / 100;
+          options.timingCollector.prefetch_breakdown.lock_wait_ms = lock?.waitDurationMs ?? 0;
+          options.timingCollector.prefetch_breakdown.lock_attempts = lock?.attempts ?? 0;
         }
       } catch {}
 

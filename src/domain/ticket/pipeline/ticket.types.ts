@@ -61,6 +61,8 @@ export type TicketTimingCollector = {
     t_cutoff?: number;
     t_commissions?: number;
     t_lock_acquire?: number;
+    lock_wait_ms?: number;
+    lock_attempts?: number;
     t_multipliers?: number;
     t_pre_tx_meta?: number;
     t_rules?: number;
@@ -93,6 +95,8 @@ export type TicketLockHandle = {
   lockKey: string;
   lockValue: string;
   lockAcquired: boolean;
+  waitDurationMs?: number;
+  attempts?: number;
 };
 
 export type TransactionMeta = {
