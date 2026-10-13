@@ -27,6 +27,7 @@ import { getRedisClient } from "../../core/redisClient";
 import crypto from 'crypto';
 import { ConcurrencyManager, SharedWarmupPool, SingleFlight } from "../../utils/concurrency";
 import { SorteoEvaluationCoordinator } from "./sorteoEvaluation.coordinator";
+import { TenantEvaluationQueue } from "./tenantEvaluation.queue";
 import { SocketService } from "../../core/socket.service";
 import {
   WARMUP_CHUNK_SIZE,
@@ -665,29 +666,33 @@ const SorteoService = {
       role
     );
 
-    // 3) Ejecutar la evaluación transaccional (ACID) en base de datos (marca automáticamente sorteos:evaluating)
-    const evaluated = await SorteoRepository.evaluate(id, {
-      winningNumber: body.winningNumber.trim(),
-      extraOutcomeCode,
-      extraMultiplierId: body.extraMultiplierId && body.extraMultiplierId !== 'none' && body.extraMultiplierId !== ''
-        ? body.extraMultiplierId
-        : null,
+    const targetBancaId = bancaId || existing.bancaId || null;
+
+    return TenantEvaluationQueue.enqueue(targetBancaId, id, async () => {
+      // 3) Ejecutar la evaluación transaccional (ACID) en base de datos (marca automáticamente sorteos:evaluating)
+      const evaluated = await SorteoRepository.evaluate(id, {
+        winningNumber: body.winningNumber.trim(),
+        extraOutcomeCode,
+        extraMultiplierId: body.extraMultiplierId && body.extraMultiplierId !== 'none' && body.extraMultiplierId !== ''
+          ? body.extraMultiplierId
+          : null,
+      });
+
+      if (!evaluated) throw new AppError('Error al recuperar el sorteo evaluado', 500);
+
+      // 4) Ejecutar los efectos secundarios secuenciales (Sync -> Warmup O(1) -> Broadcast WebSocket)
+      await SorteoEvaluationCoordinator.triggerPostEvaluation(
+        id,
+        body.winningNumber.trim(),
+        body.extraMultiplierId,
+        existing,
+        evaluated,
+        userId,
+        bancaId,
+      );
+
+      return serializeSorteo(evaluated);
     });
-
-    if (!evaluated) throw new AppError('Error al recuperar el sorteo evaluado', 500);
-
-    // 4) Ejecutar los efectos secundarios secuenciales (Sync -> Warmup O(1) -> Broadcast WebSocket)
-    await SorteoEvaluationCoordinator.triggerPostEvaluation(
-      id,
-      body.winningNumber.trim(),
-      body.extraMultiplierId,
-      existing,
-      evaluated,
-      userId,
-      bancaId,
-    );
-
-    return serializeSorteo(evaluated);
   },
 
   async remove(id: string, userId: string, reason?: string, bancaId?: string, role?: Role) {

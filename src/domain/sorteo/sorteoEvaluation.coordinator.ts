@@ -313,77 +313,31 @@ export class SorteoEvaluationCoordinator {
       });
     }
 
-    // 5. Pre-calentamiento masivo O(1) de Caché en L1 RAM y Redis L2 (Secuencial con await)
-    const warmupStart = Date.now();
-    try {
-      const activeVendorsCount = await prisma.user.count({
-        where: {
-          role: Role.VENDEDOR,
-          isActive: true,
-          ...(targetBancaId ? { ventana: { bancaId: targetBancaId } } : {}),
-        },
-      });
+    // 5. Despachar Warmup coalescido + WebSocket Broadcast en Background (Fire-and-Forget controlado)
+    // El ciclo contable y transaccional concluyó con éxito. Despachamos el warmup L1/L2 para que prepare la caché
+    // y emita los eventos de socket una vez caliente, sin suspender el response HTTP 200 de la evaluación.
+    const socketBroadcastPayload = {
+      sorteoId: id,
+      sorteoNombre: existingSorteo?.name || existingSorteo?.nombre || 'Sorteo',
+      loteriaNombre: existingSorteo?.loteria?.name || existingSorteo?.loteriaName || undefined,
+      winningNumber,
+      extraOutcomeCode: (evaluatedSorteo as any)?.extraOutcomeCode || null,
+      scheduledAt: existingSorteo?.scheduledAt ? new Date(existingSorteo.scheduledAt).toISOString() : new Date().toISOString(),
+      bancaId: targetBancaId,
+      evaluatedAt: new Date().toISOString(),
+    };
 
-      logger.info({
-        layer: "coordinator",
-        action: "WARMUP_EVALUATED_SUMMARY_START",
-        payload: {
-          sorteoId: id,
-          bancaId: targetBancaId,
-          totalVendors: activeVendorsCount,
-        },
+    import("./warmup.coordinator")
+      .then(({ WarmupCoordinator }) => {
+        WarmupCoordinator.scheduleWarmupAndBroadcast(id, targetBancaId, socketBroadcastPayload);
+      })
+      .catch((err) => {
+        logger.error({
+          layer: "coordinator",
+          action: "WARMUP_DISPATCH_BACKGROUND_ERROR",
+          payload: { sorteoId: id, error: err?.message || String(err) },
+        });
       });
-
-      const { WarmupCoordinator } = await import("./warmup.coordinator");
-      const warmupResult = await WarmupCoordinator.executeWarmup(id, targetBancaId ?? undefined);
-
-      logger.info({
-        layer: "coordinator",
-        action: "WARMUP_EVALUATED_SUMMARY_COMPLETED",
-        payload: {
-          sorteoId: id,
-          bancaId: targetBancaId,
-          totalVendors: warmupResult?.totalVendors ?? activeVendorsCount,
-          entriesCached: warmupResult?.entriesCached ?? activeVendorsCount,
-          durationMs: Date.now() - warmupStart,
-        },
-      });
-    } catch (warmupErr: any) {
-      logger.error({
-        layer: "coordinator",
-        action: "WARMUP_EVALUATED_SUMMARY_ERROR",
-        payload: {
-          sorteoId: id,
-          error: warmupErr?.message || String(warmupErr),
-          durationMs: Date.now() - warmupStart,
-        },
-      });
-    }
-
-    // 6. Notificación en Tiempo Real a Clientes Conectados (WebSocket BROADCAST)
-    // Ceder el Event Loop cooperativamente para permitir que peticiones de I/O concurrentes (/tickets)
-    // se procesen antes de la serialización y emisión masiva a todos los sockets conectados.
-    await new Promise((resolve) => setImmediate(resolve));
-
-    try {
-      SocketService.notifySorteoEvaluated({
-        sorteoId: id,
-        sorteoNombre: existingSorteo?.name || existingSorteo?.nombre || 'Sorteo',
-        loteriaNombre: existingSorteo?.loteria?.name || existingSorteo?.loteriaName || undefined,
-        winningNumber,
-        extraOutcomeCode: (evaluatedSorteo as any)?.extraOutcomeCode || null,
-        scheduledAt: existingSorteo?.scheduledAt ? new Date(existingSorteo.scheduledAt).toISOString() : new Date().toISOString(),
-        bancaId: targetBancaId,
-        evaluatedAt: new Date().toISOString(),
-      });
-      SocketService.notifyDashboardUpdated({ bancaId: targetBancaId });
-    } catch (wsErr: any) {
-      logger.warn({
-        layer: "coordinator",
-        action: "SOCKET_NOTIFY_ERROR",
-        payload: { sorteoId: id, error: wsErr?.message || String(wsErr) },
-      });
-    }
     });
   }
 }

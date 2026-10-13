@@ -1,6 +1,7 @@
 import logger from "../../core/logger";
 import SorteoService from "./sorteo.service";
 import { WARMUP_CHUNK_SIZE, WARMUP_COOLDOWN_MS } from "./warmup.constants";
+import { SocketService } from "../../core/socket.service";
 
 export interface WarmupResult {
   totalVendors: number;
@@ -18,6 +19,7 @@ interface BancaWarmupState {
   isRunning: boolean;
   lastCompletedAt: number;
   pendingSorteos: Set<string>;
+  pendingBroadcasts: Array<{ sorteoId: string; payload: any }>;
   deferredWaiters: DeferredPromise<WarmupResult>[];
   cooldownTimeout: NodeJS.Timeout | null;
 }
@@ -32,6 +34,8 @@ interface BancaWarmupState {
  * 3. Cooldown de 5s: Aplica una ventana mínima de 5,000 ms entre warmups para dejar respirar
  *    al Event Loop de Node.js (0.5 vCPU) y evitar que peticiones HTTP entrantes (OPTIONS, consultas)
  *    sufran retrasos.
+ * 4. Broadcast protegido: El WebSocket broadcast de sorteos evaluados se emite tras calentar L1/L2
+ *    (o en fallback si falla el warmup) para evitar cold-reads masivos contra PostgreSQL.
  */
 export class WarmupCoordinator {
   public static readonly WARMUP_CHUNK_SIZE = WARMUP_CHUNK_SIZE;
@@ -45,12 +49,37 @@ export class WarmupCoordinator {
         isRunning: false,
         lastCompletedAt: 0,
         pendingSorteos: new Set<string>(),
+        pendingBroadcasts: [],
         deferredWaiters: [],
         cooldownTimeout: null,
       };
       this.states.set(bancaKey, state);
     }
     return state;
+  }
+
+  /**
+   * Encola el warmup y broadcast en background de forma coalescida.
+   * Garantiza que el broadcast ocurra ÚNICAMENTE tras calentar L1/L2,
+   * o mediante fallback si el warmup falla, sin retrasar el response HTTP 200.
+   */
+  static scheduleWarmupAndBroadcast(
+    sorteoId: string,
+    bancaId: string | null | undefined,
+    broadcastPayload: any
+  ): void {
+    const bancaKey = bancaId || "global";
+    const state = this.getState(bancaKey);
+
+    state.pendingSorteos.add(sorteoId);
+    state.pendingBroadcasts.push({ sorteoId, payload: broadcastPayload });
+
+    // Si no está corriendo y no hay un cooldown activo, disparar ciclo en el próximo tick cooperativo
+    if (!state.isRunning && !state.cooldownTimeout) {
+      setImmediate(() => {
+        this.processNext(bancaKey, 0);
+      });
+    }
   }
 
   /**
@@ -173,6 +202,9 @@ export class WarmupCoordinator {
           cooldownAppliedMs,
         },
       });
+
+      // Emisión de WebSocket broadcast: la caché L1/L2 ya está caliente y lista
+      this.emitPendingBroadcasts(state);
     } catch (err: any) {
       error = err;
       logger.error({
@@ -185,6 +217,10 @@ export class WarmupCoordinator {
           durationMs: Date.now() - startTime,
         },
       });
+
+      // Fallback defensivo: Si el warmup falla, emitir de todas formas para no silenciar
+      // la notificación del sorteo evaluado hacia las terminales cliente
+      this.emitPendingBroadcasts(state);
     } finally {
       state.isRunning = false;
       state.lastCompletedAt = Date.now();
@@ -230,6 +266,34 @@ export class WarmupCoordinator {
     }
 
     return result;
+  }
+
+  /**
+   * Emite de forma segura todos los WebSocket broadcasts acumulados para la banca.
+   */
+  private static emitPendingBroadcasts(state: BancaWarmupState): void {
+    if (!state.pendingBroadcasts || state.pendingBroadcasts.length === 0) {
+      return;
+    }
+
+    const broadcastsToEmit = [...state.pendingBroadcasts];
+    state.pendingBroadcasts = [];
+
+    for (const { payload } of broadcastsToEmit) {
+      try {
+        SocketService.notifySorteoEvaluated(payload);
+        SocketService.notifyDashboardUpdated({ bancaId: payload.bancaId });
+      } catch (wsErr: any) {
+        logger.warn({
+          layer: "coordinator",
+          action: "WARMUP_SOCKET_EMIT_WARN",
+          payload: {
+            sorteoId: payload?.sorteoId,
+            error: wsErr?.message || String(wsErr),
+          },
+        });
+      }
+    }
   }
 
   /**

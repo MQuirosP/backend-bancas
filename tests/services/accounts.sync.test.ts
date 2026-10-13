@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import { AccountStatementSyncService } from '../../src/api/v1/services/accounts/accounts.sync.service';
+import { AccountStatementSyncService } from '../../src/domain/accounts/accounts.sync.service';
 import prisma from '../../src/core/prismaClient';
 
 jest.mock('../../src/core/prismaClient', () => ({
