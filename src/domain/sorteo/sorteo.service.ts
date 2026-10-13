@@ -770,6 +770,12 @@ const SorteoService = {
         const { AccountStatementSyncService } = await import('../accounts/accounts.sync.service');
         await AccountStatementSyncService.syncSorteoStatements(id, existing.scheduledAt);
 
+        const { CierreRollupService } = await import('../cierre/cierre.rollup.service');
+        const { tz } = await import('../../utils/timezone');
+        const sorteoDateStr = existing.scheduledAt ? tz.toDateStr(existing.scheduledAt) : tz.toDateStr();
+        const todayCR = tz.toDateStr();
+        await CierreRollupService.aggregateRange(sorteoDateStr, sorteoDateStr < todayCR ? todayCR : sorteoDateStr);
+
         const { VendorCreditService } = await import('../credit/vendorCredit.service');
         await VendorCreditService.onSorteoReverted(id).catch(() => {});
 

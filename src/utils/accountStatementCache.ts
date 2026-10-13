@@ -384,12 +384,26 @@ export async function invalidateCacheForSorteo(
         // Consolidación atómica en lote: invalidar los patrones del día y mes en una sola pasada
         // evitando 78+ eventos repetitivos y más de 150 scans redundantes en Redis.
         const month = dateStr.substring(0, 7);
-        await Promise.all([
-            CacheService.delPattern(`account:day:${dateStr}:*`),
-            CacheService.delPattern(`account:statement:${month}:*`),
-            CacheService.delPattern(`account:statement:null:*`),
-            CacheService.delPattern(`account:bySorteo:${dateStr}:*`),
-        ]);
+        const todayCR = tz.toDateStr();
+        const currentMonth = todayCR.substring(0, 7);
+
+        const patternsToDel = [
+            `account:day:${dateStr}:*`,
+            `account:statement:${month}:*`,
+            `account:statement:null:*`,
+            `account:bySorteo:${dateStr}:*`,
+        ];
+
+        // Si el sorteo es histórico (anterior a hoy), invalidar también el caché de hoy
+        if (dateStr < todayCR) {
+            patternsToDel.push(`account:day:${todayCR}:*`);
+            patternsToDel.push(`account:bySorteo:${todayCR}:*`);
+            if (month !== currentMonth) {
+                patternsToDel.push(`account:statement:${currentMonth}:*`);
+            }
+        }
+
+        await Promise.all(patternsToDel.map(p => CacheService.delPattern(p)));
 
         logger.info({
             layer: 'cache',

@@ -164,7 +164,84 @@ export class SorteoEvaluationCoordinator {
       const { CierreRollupService } = await import("../cierre/cierre.rollup.service");
       const { tz } = await import("../../utils/timezone");
       const dateStr = syncOutput?.businessDate || (existingSorteo.scheduledAt ? tz.toDateStr(existingSorteo.scheduledAt) : tz.toDateStr());
-      await CierreRollupService.aggregateRange(dateStr, dateStr);
+      const todayCR = tz.toDateStr();
+      const isHistorical = dateStr < todayCR;
+
+      // Si el sorteo evaluado es de una fecha anterior, agregar rollups hasta hoy inclusive
+      await CierreRollupService.aggregateRange(dateStr, isHistorical ? todayCR : dateStr);
+
+      // Si es un sorteo histórico (ej. revertido y re-evaluado), propagar cambios de balance
+      // a AccountStatement para todos los días posteriores hasta hoy.
+      if (isHistorical) {
+        logger.info({
+          layer: "coordinator",
+          action: "SORTEO_HISTORICAL_EVALUATE_PROPAGATION_START",
+          payload: { sorteoId: id, dateStr, todayCR },
+        });
+
+        const { AccountStatementSyncService } = await import("../accounts/accounts.sync.service");
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const sorteoDateUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+
+        const uniqueVendedores = new Set<string>();
+        const uniqueVentanas = new Set<string>();
+        const uniqueBancas = new Set<string>();
+
+        if (Array.isArray(syncOutput?.statements)) {
+          for (const s of syncOutput.statements) {
+            if (s.dimension === "vendedor" && s.entityId) uniqueVendedores.add(s.entityId);
+            if (s.dimension === "ventana" && s.entityId) uniqueVentanas.add(s.entityId);
+            if (s.dimension === "banca" && s.entityId) uniqueBancas.add(s.entityId);
+          }
+        }
+
+        if (uniqueVendedores.size === 0 && uniqueVentanas.size === 0 && uniqueBancas.size === 0) {
+          const tickets = await prisma.ticket.findMany({
+            where: { sorteoId: id, status: { not: "CANCELLED" }, isActive: true, deletedAt: null },
+            select: { vendedorId: true, ventanaId: true, ventana: { select: { bancaId: true } } },
+          });
+          for (const t of tickets) {
+            if (t.vendedorId) uniqueVendedores.add(t.vendedorId);
+            if (t.ventanaId) uniqueVentanas.add(t.ventanaId);
+            if (t.ventana?.bancaId) uniqueBancas.add(t.ventana.bancaId);
+          }
+        }
+
+        for (const vendedorId of uniqueVendedores) {
+          await AccountStatementSyncService.propagateBalanceChange(sorteoDateUTC, "vendedor", vendedorId);
+        }
+        for (const ventanaId of uniqueVentanas) {
+          await AccountStatementSyncService.propagateBalanceChange(sorteoDateUTC, "ventana", ventanaId);
+        }
+        for (const bancaId of uniqueBancas) {
+          await AccountStatementSyncService.propagateBalanceChange(sorteoDateUTC, "banca", bancaId);
+        }
+
+        // Reconciliar saldos base de crédito en Redis con el nuevo balance de hoy ya propagado
+        try {
+          const { VendorCreditService } = await import("../credit/vendorCredit.service");
+          for (const vendedorId of uniqueVendedores) {
+            await VendorCreditService.updateBaseBalance(vendedorId).catch(() => {});
+          }
+        } catch (_) {}
+
+        // Invalidar caché de statements para hoy también en Redis
+        const { invalidateAccountStatementCache } = await import("../../utils/accountStatementCache");
+        await invalidateAccountStatementCache({ date: todayCR });
+
+        logger.info({
+          layer: "coordinator",
+          action: "SORTEO_HISTORICAL_EVALUATE_PROPAGATION_COMPLETED",
+          payload: {
+            sorteoId: id,
+            dateStr,
+            todayCR,
+            vendedoresCount: uniqueVendedores.size,
+            ventanasCount: uniqueVentanas.size,
+            bancasCount: uniqueBancas.size,
+          },
+        });
+      }
     } catch (syncErr: any) {
       // NOTA CRÍTICA: NO limpiar el marcador sorteos:evaluating si el sync contable falla.
       // Como el sorteo ya quedó en estado EVALUATED en PostgreSQL, si se eliminara el marcador
