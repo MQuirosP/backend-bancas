@@ -11,6 +11,7 @@ import { Prisma, Role } from "../../generated/prisma/client";
 import { getAccountStatementCacheVersion, getCachedStatement, setCachedStatement } from "../../utils/accountStatementCache";
 import { crDateService } from "../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
+import { tz } from "../../utils/timezone";
 import logger from "../../core/logger";
 
 /**
@@ -734,7 +735,7 @@ export const AccountsService = {
 
         } else {
             // MODO ENTIDAD ÚNICA: Mapear directo
-            optimizedStatements = rawStatements.map(stmt => {
+            optimizedStatements = rawStatements.map((stmt: any) => {
                 const effectiveBancaId = stmt.bancaId || stmt.ventana?.banca?.id || null;
                 const effectiveBancaName = stmt.banca?.name || stmt.ventana?.banca?.name || null;
                 const effectiveBancaCode = stmt.banca?.code || stmt.ventana?.banca?.code || null;
