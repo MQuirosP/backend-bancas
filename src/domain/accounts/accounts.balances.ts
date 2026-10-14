@@ -1,4 +1,4 @@
-﻿import { Prisma, Role } from "../../generated/prisma/client";
+import { Prisma, Role } from "../../generated/prisma/client";
 import prisma from "../../core/prismaClient";
 import logger from "../../core/logger";
 import { getCachedPreviousMonthBalance, setCachedPreviousMonthBalance } from "../../utils/accountStatementCache";
@@ -221,9 +221,12 @@ export async function getPreviousMonthFinalBalance(
         // Esto permite que el sistema sea robusto incluso si hubo varios meses de inactividad
         const firstDayOfCurrentMonth = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
 
-        // PASO 1: Buscar en AccountStatement (fuente de verdad)
-        // Priorizar accumulatedBalance del último día disponible ANTES del mes actual
-        //  MEJORA: Buscar el último statement histórico antes del mes actual, no solo del mes inmediatamente anterior
+        const cacheKey = { effectiveMonth, dimension, ventanaId, vendedorId, bancaId };
+        const cachedBalance = await getCachedPreviousMonthBalance(cacheKey);
+        // ⚠️ CRÍTICO: Convertir a Number() para garantizar tipo numérico (el caché podría tener strings)
+        if (cachedBalance !== null) return Number(cachedBalance) || 0;
+
+        // PASO 2: Buscar en AccountStatement (fuente única de verdad contable autorizada)
         let isConsolidated = false;
 
         let balanceResetAtDayStr: string | null = null;
@@ -283,7 +286,9 @@ export async function getPreviousMonthFinalBalance(
             });
 
             if (lastStatement) {
-                return Number(lastStatement.remainingBalance) || Number(lastStatement.accumulatedBalance) || 0;
+                const balance = Number(lastStatement.remainingBalance) || Number(lastStatement.accumulatedBalance) || 0;
+                await setCachedPreviousMonthBalance(cacheKey, balance, 300).catch(() => {});
+                return balance;
             }
         } else {
             // Para consolidados, sumar los remainingBalance o accumulatedBalance del último día de cada entidad
@@ -296,22 +301,15 @@ export async function getPreviousMonthFinalBalance(
 
             if (statements.length > 0) {
                 const total = statements.reduce((sum, s) => sum + (Number(s.remainingBalance) || Number(s.accumulatedBalance) || 0), 0);
+                await setCachedPreviousMonthBalance(cacheKey, total, 300).catch(() => {});
                 return total;
             }
         }
 
-        // PASO 3: Caché
-        const cacheKey = { effectiveMonth, dimension, ventanaId, vendedorId, bancaId };
-        const cachedBalance = await getCachedPreviousMonthBalance(cacheKey);
-        //  CRÍTICO: Convertir a Number() para garantizar tipo numérico (el caché podría tener strings)
-        if (cachedBalance !== null) return Number(cachedBalance) || 0;
-
-        // PASO 4: Calcular desde fuente
-        const balance = await calculatePreviousMonthBalanceFromSource(effectiveMonth, dimension, { ventanaId, vendedorId, bancaId, ignoreReset });
-        
-        await setCachedPreviousMonthBalance(cacheKey, balance, 300).catch(() => {});
-        
-        return balance;
+        // PASO 3: Si no existe registro histórico previo en AccountStatement, el balance inicial es 0.
+        // NUNCA recalcular sumando millones de filas en Ticket y Jugada en tiempo real (Regla 4).
+        await setCachedPreviousMonthBalance(cacheKey, 0, 300).catch(() => {});
+        return 0;
     } catch (error) {
         logger.error({
             layer: "service",

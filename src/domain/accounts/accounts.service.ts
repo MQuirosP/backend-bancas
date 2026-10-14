@@ -617,13 +617,20 @@ export const AccountsService = {
             // bancaId ya se aplicó arriba en la línea 585
         }
 
+        //  OPTIMIZACIÓN: Prisma Lean Include según dimensión para no ejecutar subconsultas fantasma a entidades NULL
+        const include: Prisma.AccountStatementInclude = {
+            banca: { select: { id: true, name: true, code: true } },
+            ...(dimension === "ventana" || dimension === "vendedor"
+                ? { ventana: { select: { id: true, name: true, code: true, banca: { select: { id: true, name: true, code: true } } } } }
+                : {}),
+            ...(dimension === "vendedor"
+                ? { vendedor: { select: { id: true, name: true, code: true } } }
+                : {}),
+        };
+
         const rawStatements = await prisma.accountStatement.findMany({
             where,
-            include: {
-                banca: { select: { id: true, name: true, code: true } },
-                ventana: { select: { id: true, name: true, code: true, banca: { select: { id: true, name: true, code: true } } } },
-                vendedor: { select: { id: true, name: true, code: true } }
-            },
+            include,
             orderBy: { date: 'asc' }
         });
 
@@ -794,38 +801,35 @@ export const AccountsService = {
         const statementsMap = new Map<string, DayStatement>();
         optimizedStatements.forEach(s => statementsMap.set(s.date as string, s));
 
-        //  CRÍTICO: El bucle debe cubrir desde queryStartDate hasta queryEndDate
-        // Esto asegura que tengamos los datos de TODO el mes del reporte (para Saldo a Hoy)
-        // Y TAMBIÉN los días extra del periodo solicitado (si cruza meses).
-        const startOfLoop = new Date(queryStartDate);
-        startOfLoop.setUTCHours(0, 0, 0, 0);
-        const currentDate = new Date(startOfLoop);
+        // ⚠️ CRÍTICO: El bucle debe cubrir desde queryStartDate hasta queryEndDate
+        // Para Costa Rica (UTC-6), inicializamos con medianoche local (06:00:00 UTC)
+        // para garantizar que la fecha calendario CR coincida exactamente sin cruzar al mes anterior.
+        const startOfLoopCRStr = crDateService.dateUTCToCRString(queryStartDate);
+        const [startYear, startMonth, startDay] = startOfLoopCRStr.split('-').map(Number);
+        const currentDate = new Date(Date.UTC(startYear, startMonth - 1, startDay, 6, 0, 0, 0));
 
-        const endOfLoop = new Date(queryEndDate);
-        endOfLoop.setUTCHours(0, 0, 0, 0);
+        const endOfLoopCRStr = crDateService.dateUTCToCRString(queryEndDate);
+        const [endYear, endMonth, endDay] = endOfLoopCRStr.split('-').map(Number);
+        const endOfLoop = new Date(Date.UTC(endYear, endMonth - 1, endDay, 6, 0, 0, 0));
 
-        // ️ CRÍTICO: El límite de "relleno" es el máximo entre hoy y el último día con datos reales.
-        // El bucle usa dateUTCToCRString (-6h). Para incluir un día X, currentDate debe llegar a 00:00 UTC del día X+1.
+        // ⚠️ CRÍTICO: El límite de "relleno" es el máximo entre hoy y el último día con datos reales.
         const lastDataDateStr = rawStatements.length > 0
             ? crDateService.postgresDateToCRString(rawStatements[rawStatements.length - 1].date)
             : '';
         const gapLimitStr = lastDataDateStr > todayCR ? lastDataDateStr : todayCR;
-        const gapLimitDate = new Date(gapLimitStr + 'T00:00:00Z');
-        gapLimitDate.setUTCDate(gapLimitDate.getUTCDate() + 1); // Boundary to include gapLimitStr day
+        const [glYear, glMonth, glDay] = gapLimitStr.split('-').map(Number);
+        const gapLimitDate = new Date(Date.UTC(glYear, glMonth - 1, glDay, 6, 0, 0, 0));
 
         const finalLoopEndDate = endOfLoop < gapLimitDate ? endOfLoop : gapLimitDate;
 
-        //  CORRECCIÓN: Inicializar balance carry-over basado en la fecha de inicio real
+        // 💡 CORRECCIÓN: Inicializar balance carry-over basado en la fecha de inicio real
         // Si el inicio es el día 1, usar el saldo del mes anterior.
         // Si no, tendremos que inferirlo del primer statement disponible o fetch previo.
         let lastKnownRemainingBalance = 0;
-        const startOfLoopCRStr = crDateService.dateUTCToCRString(currentDate);
 
         if (balanceResetAtDayStr && startOfLoopCRStr === balanceResetAtDayStr) {
             lastKnownRemainingBalance = 0;
         } else {
-            const [startYear, startMonth, startDay] = startOfLoopCRStr.split('-').map(Number);
-
             if (startDay === 1) {
                 // Caso estándar: Inicio de mes
                 lastKnownRemainingBalance = await getPreviousMonthFinalBalance(
@@ -838,8 +842,8 @@ export const AccountsService = {
                 );
             } else {
                 // Caso Rango Personalizado (ej. Dic 29): Buscar el balance al día anterior
-                const dayBefore = new Date(currentDate);
-                dayBefore.setUTCDate(dayBefore.getUTCDate() - 1);
+                const dayBeforeCRStr = tz.toDateStr(tz.addDays(new Date(Date.UTC(startYear, startMonth - 1, startDay, 12)), -1));
+                const dayBefore = new Date(dayBeforeCRStr + 'T00:00:00.000Z');
 
                 // Intentar obtener el statement del día anterior desde la BD
                 const prevStmt = await prisma.accountStatement.findFirst({
