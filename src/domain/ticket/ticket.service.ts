@@ -467,46 +467,68 @@ export const TicketService = {
       }
 
       // 3. Master Promise.all (Fase 2): Carga paralela de reglas de negocio, multiplicadores, cutoff y reglas de riesgo
-      const t_phase2_start = performance.now();
+      let t_cutoff_ms = 0;
+      let t_rules_ms = 0;
+      let t_multipliers_ms = 0;
+      let t_base_multiplier_ms = 0;
+
       const [
         cutoff,
         preFetchedRules,
         preFetchedMultipliers,
         preFetchedBaseMultiplier,
       ] = await Promise.all([
-        RestrictionRuleRepository.resolveSalesCutoff({
-          bancaId: resolvedVentanaWithBanca.bancaId,
-          ventanaId,
-          userId: effectiveVendedorId,
-          defaultCutoff: 1,
-          client: salesPrisma,
-        }),
-        TicketRiskValidator.prefetchRules({
-          userId: effectiveVendedorId,
-          ventanaId,
-          bancaId: resolvedVentanaWithBanca.bancaId,
-        }),
-        TicketPrefetchService.fetchMultipliersIfNeeded(
-          data.jugadas,
-          undefined,
-          loteriaId,
-        ),
-        resolveBaseMultiplierX(salesPrisma as any, {
-          bancaId: resolvedVentanaWithBanca.bancaId,
-          loteriaId,
-          userId: effectiveVendedorId,
-          ventanaId,
-        }),
+        (async () => {
+          const t0 = performance.now();
+          const res = await RestrictionRuleRepository.resolveSalesCutoff({
+            bancaId: resolvedVentanaWithBanca.bancaId,
+            ventanaId,
+            userId: effectiveVendedorId,
+            defaultCutoff: 1,
+            client: salesPrisma,
+          });
+          t_cutoff_ms = Math.round((performance.now() - t0) * 100) / 100;
+          return res;
+        })(),
+        (async () => {
+          const t0 = performance.now();
+          const res = await TicketRiskValidator.prefetchRules({
+            userId: effectiveVendedorId,
+            ventanaId,
+            bancaId: resolvedVentanaWithBanca.bancaId,
+          });
+          t_rules_ms = Math.round((performance.now() - t0) * 100) / 100;
+          return res;
+        })(),
+        (async () => {
+          const t0 = performance.now();
+          const res = await TicketPrefetchService.fetchMultipliersIfNeeded(
+            data.jugadas,
+            undefined,
+            loteriaId,
+          );
+          t_multipliers_ms = Math.round((performance.now() - t0) * 100) / 100;
+          return res;
+        })(),
+        (async () => {
+          const t0 = performance.now();
+          const res = await resolveBaseMultiplierX(salesPrisma as any, {
+            bancaId: resolvedVentanaWithBanca.bancaId,
+            loteriaId,
+            userId: effectiveVendedorId,
+            ventanaId,
+          });
+          t_base_multiplier_ms = Math.round((performance.now() - t0) * 100) / 100;
+          return res;
+        })(),
       ]);
 
       try {
         if (timingCollector.prefetch_breakdown) {
-          const t_phase2_total =
-            Math.round((performance.now() - t_phase2_start) * 100) / 100;
-          timingCollector.prefetch_breakdown.t_cutoff = t_phase2_total;
-          timingCollector.prefetch_breakdown.t_rules = 0.01;
-          timingCollector.prefetch_breakdown.t_multipliers = 0.01;
-          timingCollector.prefetch_breakdown.t_pre_tx_meta = 0.01;
+          timingCollector.prefetch_breakdown.t_cutoff = t_cutoff_ms;
+          timingCollector.prefetch_breakdown.t_rules = t_rules_ms;
+          timingCollector.prefetch_breakdown.t_multipliers = t_multipliers_ms;
+          timingCollector.prefetch_breakdown.t_pre_tx_meta = t_base_multiplier_ms;
         }
       } catch {}
 

@@ -54,11 +54,11 @@ export function buildRulesCacheKey(params: {
 }
 
 export async function getCachedRestrictionRules<T = unknown>(key: string): Promise<T[] | null> {
-  return CacheService.get<T[]>(key, false);
+  return CacheService.get<T[]>(key, true, 30_000);
 }
 
 export async function setCachedRestrictionRules<T = unknown>(key: string, rules: T[]): Promise<void> {
-  await CacheService.set(key, rules, RULES_CACHE_TTL_SECONDS, ['rules'], false).catch(() => {});
+  await CacheService.set(key, rules, RULES_CACHE_TTL_SECONDS, ['rules'], true, 30_000).catch(() => {});
 }
 
 /** Llamar desde el controller/repository de RestrictionRule en mutaciones (create/update/delete) */
@@ -399,7 +399,8 @@ export async function resolveBaseMultiplierX(
       `banca-setting:${bancaId}`,
       `loteria:${loteriaId}`
     ],
-    false // useL1 = false (Zero-L1: multiplicadores/comisiones compartidos entre réplicas solo en Redis L2)
+    true, // useL1 = true (Memoria local RAM O(1) < 0.05ms)
+    60_000 // 60s TTL en L1
   );
 }
 
@@ -439,7 +440,9 @@ export const TicketRepository = {
             );
       try {
         if (options?.timingCollector?.prefetch_breakdown) {
-          options.timingCollector.prefetch_breakdown.t_multipliers = Math.round((performance.now() - t_mult_start) * 100) / 100;
+          if (options.timingCollector.prefetch_breakdown.t_multipliers === undefined) {
+            options.timingCollector.prefetch_breakdown.t_multipliers = Math.round((performance.now() - t_mult_start) * 100) / 100;
+          }
         }
       } catch {}
 
@@ -472,7 +475,9 @@ export const TicketRepository = {
       }
       try {
         if (options?.timingCollector?.prefetch_breakdown) {
-          options.timingCollector.prefetch_breakdown.t_rules = Math.round((performance.now() - t_rules_start) * 100) / 100;
+          if (options.timingCollector.prefetch_breakdown.t_rules === undefined) {
+            options.timingCollector.prefetch_breakdown.t_rules = Math.round((performance.now() - t_rules_start) * 100) / 100;
+          }
         }
       } catch {}
 
