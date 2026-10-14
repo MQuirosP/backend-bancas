@@ -11,7 +11,6 @@ import { Prisma, Role } from "../../generated/prisma/client";
 import { getAccountStatementCacheVersion, getCachedStatement, setCachedStatement } from "../../utils/accountStatementCache";
 import { crDateService } from "../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
-import { tz } from "../../utils/timezone";
 import logger from "../../core/logger";
 
 /**
@@ -843,7 +842,7 @@ export const AccountsService = {
                 );
             } else {
                 // Caso Rango Personalizado (ej. Dic 29): Buscar el balance al día anterior
-                const dayBeforeCRStr = tz.toDateStr(tz.addDays(new Date(Date.UTC(startYear, startMonth - 1, startDay, 12)), -1));
+                const dayBeforeCRStr = crDateService.subtractDays(startOfLoopCRStr, 1);
                 const dayBefore = new Date(dayBeforeCRStr + 'T00:00:00.000Z');
 
                 // Intentar obtener el statement del día anterior desde la BD
