@@ -10,15 +10,14 @@ import { invalidateRestrictionRulesCache } from "./ticket.repository";
 import { bumpRestrictionsVersion } from "../utils/restrictionCompiledCache";
 import { CacheService } from "../core/cache.service";
 
-const CUTOFF_CACHE_TTL_SECONDS = 300; // 5 minutos en Redis L2
+const CUTOFF_CACHE_TTL_SECONDS = 7200; // 2 horas en Redis L2 (antes 300s)
+const CUTOFF_L1_TTL_MS = 30 * 60 * 1000; // 30 minutos en memoria local L1
 
 export async function clearL1CutoffCache(bancaId?: string): Promise<void> {
+  // Invalidación selectiva: si hay bancaId, solo invalida las claves de esa banca.
+  // Si no hay bancaId (mutación global SuperAdmin), invalida el tag general 'cutoff'.
   const tag = bancaId ? `cutoff:${bancaId}` : 'cutoff';
   await CacheService.invalidateTag(tag).catch(() => {});
-  if (bancaId) {
-    // También invalidar el tag genérico de cutoff
-    await CacheService.invalidateTag('cutoff').catch(() => {});
-  }
 }
 
 export type EffectiveRestriction = {
@@ -852,9 +851,10 @@ export const RestrictionRuleRepository = {
 
         return result;
       },
-      CUTOFF_CACHE_TTL_SECONDS, // 300s en Redis L2
+      CUTOFF_CACHE_TTL_SECONDS, // 7200s (2 horas en Redis L2)
       tags,
-      false // useL1 = false (Zero-L1: el cutoff compartido vive solo en Redis L2)
+      true, // useL1 = true (Resolución O(1) < 0.05ms en memoria RAM de Node.js)
+      CUTOFF_L1_TTL_MS // 30 minutos en L1 RAM con invalidación reactiva inmediata por eventos
     );
   },
 };

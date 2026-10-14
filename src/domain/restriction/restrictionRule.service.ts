@@ -6,7 +6,7 @@ import {
   CreateRestrictionRuleInput,
   UpdateRestrictionRuleInput,
 } from "../../api/v1/dto/restrictionRule.dto";
-import { RestrictionRuleRepository } from "../../repositories/restrictionRule.repository";
+import { RestrictionRuleRepository, clearL1CutoffCache } from "../../repositories/restrictionRule.repository";
 import prisma from "../../core/prismaClient";
 import { withConnectionRetry } from "../../core/withConnectionRetry";
 import { getCRLocalComponents } from "../../utils/businessDate";
@@ -326,6 +326,7 @@ export const RestrictionRuleService = {
         ventanaId: first.ventanaId || undefined,
         userId: first.userId || undefined,
       });
+      await clearL1CutoffCache(first.bancaId || undefined);
     }
 
     // 6. Registro de Actividad
@@ -524,6 +525,7 @@ export const RestrictionRuleService = {
     }
     for (const bId of touchedBancasUpdate) {
       await bumpRestrictionsVersion(bId);
+      await clearL1CutoffCache(bId || undefined);
     }
 
     await ActivityService.log({
@@ -596,6 +598,7 @@ export const RestrictionRuleService = {
     }
     for (const bId of touchedBancasDelete) {
       await bumpRestrictionsVersion(bId);
+      await clearL1CutoffCache(bId || undefined);
     }
 
     await ActivityService.log({

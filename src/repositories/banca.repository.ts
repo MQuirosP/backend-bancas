@@ -132,8 +132,9 @@ const BancaRepository = {
         });
       }
       
-      // Invalidar caché de cutoff para esta banca
+      // Invalidar caché de cutoff para esta banca (L1 RAM y Redis L2)
       await invalidateRestrictionCaches({ bancaId: id });
+      await CacheService.invalidateTag(`cutoff:${id}`).catch(() => {});
     }
 
     const banca = await prisma.banca.update({
@@ -143,6 +144,9 @@ const BancaRepository = {
     
     // Invalida caché de metadatos de la banca
     await CacheService.invalidateTag(`banca:${id}`).catch(() => {});
+    if (typeof data.salesCutoffMinutes === 'number') {
+      await CacheService.invalidateTag(`cutoff:${id}`).catch(() => {});
+    }
 
     logger.info({
       layer: "repository",

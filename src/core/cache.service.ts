@@ -54,9 +54,9 @@ const l1TagMap = new Map<string, Set<string>>(); // tag -> Set of keys
 const MAX_L1_SIZE = 200; // Límite estricto de seguridad para evitar OOM en contenedor de 512MB
 const inFlightPromises = new Map<string, Promise<any>>();
 
-// TTLs para L1: restricciones de vendedor 30s, cutoffs 60s
-export const L1_TTL_RESTRICTIONS_MS = 30_000;  // 30 segundos — bloqueos de números rápidos
-export const L1_TTL_CUTOFF_MS      = 60_000;   // 60 segundos — cutoffs son más estables
+// TTLs para L1: restricciones de vendedor 30s, cutoffs 30 min (con invalidación reactiva por eventos)
+export const L1_TTL_RESTRICTIONS_MS = 30_000;      // 30 segundos — bloqueos de números rápidos
+export const L1_TTL_CUTOFF_MS      = 1_800_000;   // 30 minutos — cutoffs son altamente estáticos
 
 /**
  * Elimina una entrada de L1 y desvincula sus tags asociados

@@ -148,6 +148,9 @@ export const BancaService = {
     }
 
     await CacheService.invalidateTag(`banca:${id}`);
+    if (typeof data.salesCutoffMinutes === 'number') {
+      await CacheService.invalidateTag(`cutoff:${id}`).catch(() => {});
+    }
 
     await ActivityService.log({
       userId,
