@@ -15,6 +15,7 @@ import {
   ScopeCache,
   calculateAccumulatedForMultipleScopes,
   validateRulesInParallel,
+  resolveNumbersToValidate,
 } from "../../../repositories/helpers/ticket-restriction.helper";
 import {
   CreateTicketInput,
@@ -131,6 +132,48 @@ export class TicketRiskValidator {
   }
 
   /**
+   * Filtra las reglas aplicables para conservar ÚNICAMENTE aquellas relevantes
+   * para los números, tipos de jugada y multiplicadores contenidos en este ticket específico.
+   * Evita precargas de acumulados y cálculos de límites dinámicos para números ajenos.
+   */
+  static filterRulesRelevantForTicket(
+    rules: RestrictionRuleWithRelations[],
+    uniqueNumbers: string[],
+    jugadas: any[],
+    at: Date = new Date()
+  ): RestrictionRuleWithRelations[] {
+    const hasReventado = jugadas.some((j) => j.type === BetType.REVENTADO);
+    const activeMultiplierIds = new Set(
+      jugadas
+        .filter((j) => j.multiplierId)
+        .map((j) => j.multiplierId as string)
+    );
+    const uniqueNumbersSet = new Set(uniqueNumbers);
+
+    return rules.filter((rule) => {
+      // 1. Filtrar por multiplicador / tipo de jugada si la regla lo especifica
+      if (rule.multiplierId) {
+        if (rule.multiplier?.kind === BetType.REVENTADO) {
+          if (!hasReventado) return false;
+        } else {
+          if (!activeMultiplierIds.has(rule.multiplierId)) return false;
+        }
+      }
+
+      // 2. Filtrar por número específico o día de autoFecha
+      if (rule.number || rule.isAutoDate) {
+        const ruleNumbers = resolveNumbersToValidate(rule, at);
+        if (ruleNumbers.length > 0) {
+          const hasMatchingNumber = ruleNumbers.some((rn) => uniqueNumbersSet.has(rn));
+          if (!hasMatchingNumber) return false;
+        }
+      }
+
+      return true;
+    });
+  }
+
+  /**
    * FAST-PATH PRE-TX: Precarga las reglas de restricción candidatas FUERA de la transacción.
    */
   static async prefetchRules(params: {
@@ -199,7 +242,13 @@ export class TicketRiskValidator {
           )
         )
       );
-      const scopesArray = TicketRiskValidator.extractScopesToPreload(applicable);
+      // Filtrar reglas candidatas a únicamente las relevantes para los números y apuestas del ticket
+      const relevantRules = TicketRiskValidator.filterRulesRelevantForTicket(
+        applicable,
+        uniqueNumbers,
+        jugadas
+      );
+      const scopesArray = TicketRiskValidator.extractScopesToPreload(relevantRules);
 
       // 1. Hidratar acumulados de scopes fuera de la TX interactiva
       if (scopesArray.length > 0 && uniqueNumbers.length > 0) {
@@ -212,7 +261,7 @@ export class TicketRiskValidator {
       }
 
       // 2. Pre-calcular límites dinámicos fuera de la TX interactiva
-      const rulesNeedingDynamicLimits = applicable.filter(
+      const rulesNeedingDynamicLimits = relevantRules.filter(
         (rule: any) =>
           (rule.baseAmount != null && rule.baseAmount > 0) ||
           (rule.salesPercentage != null && rule.salesPercentage > 0)
@@ -375,7 +424,12 @@ export class TicketRiskValidator {
     }));
 
     const uniqueNumberStrings = ticketNumbers.map((n: any) => n.number);
-    const scopesArray = TicketRiskValidator.extractScopesToPreload(applicable);
+    const relevantRules = TicketRiskValidator.filterRulesRelevantForTicket(
+      applicable,
+      uniqueNumberStrings,
+      jugadas
+    );
+    const scopesArray = TicketRiskValidator.extractScopesToPreload(relevantRules);
 
     // Solo si el prefetch NO vino provisto, ejecutar consulta de acumulados contra la TX
     if (!context.prefetchedCache && scopesArray.length > 0) {
@@ -393,7 +447,7 @@ export class TicketRiskValidator {
       dynamicLimits = context.prefetchedDynamicLimits;
     } else {
       dynamicLimits = new Map<string, number>();
-      const rulesNeedingDynamicLimits = applicable.filter(
+      const rulesNeedingDynamicLimits = relevantRules.filter(
         (rule: any) =>
           (rule.baseAmount != null && rule.baseAmount > 0) ||
           (rule.salesPercentage != null && rule.salesPercentage > 0)
@@ -454,7 +508,7 @@ export class TicketRiskValidator {
 
     // 8) Validación final de todas las reglas en paralelo (100% en memoria cuando cache está poblado)
     await validateRulesInParallel(tx, {
-      rules: applicable,
+      rules: relevantRules,
       numbers: ticketNumbers,
       sorteoId,
       loteriaId,

@@ -82,6 +82,17 @@ export class TicketRedisAccumulator {
           }
         }
 
+        // 3. Clave de ventas totales del sorteo por alcance (Fast-Path para límites dinámicos)
+        const ticketTotal = Number(ticket.totalAmount || 0);
+        if (ticketTotal > 0) {
+          for (const sc of scopes) {
+            if (!sc.id) continue;
+            const totalSalesKey = `sorteo:${ticket.sorteoId}:scope:${sc.id}:total_sales`;
+            pipeline.incrbyfloat(totalSalesKey, ticketTotal);
+            keysToExpire.add(totalSalesKey);
+          }
+        }
+
         // Aplicar expiración una sola vez por clave única
         for (const key of keysToExpire) {
           pipeline.expire(key, ttlSeconds);

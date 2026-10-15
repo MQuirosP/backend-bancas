@@ -13,7 +13,7 @@ import { getBusinessDateCRInfo, getCRDayRangeUTC, getCRLocalComponents } from ".
 import { nowCR, validateDate, formatDateCRWithTZ } from "../utils/datetime";
 import { v4 as uuidv4 } from "uuid";
 import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope, calculateAccumulatedForMultipleScopes, acquireLock, releaseLock } from "./helpers/ticket-restriction.helper";
-import { getRedisClient, isRedisAvailable, markRedisError } from "../core/redisClient";
+import { getRedisClient, getRedisSalesClient, isRedisAvailable, isRedisSalesAvailable, markRedisError } from "../core/redisClient";
 import { CacheService } from "../core/cache.service";
 import { BackgroundTaskQueue } from "../utils/concurrency";
 import { DailyNumberSalesService } from "../domain/sorteo/dailyNumberSales.service";
@@ -159,6 +159,7 @@ export async function calculateDynamicLimit(
     };
 
     let cacheKey = "";
+    let scopeId = "";
 
     //  LÓGICA DE ALCANCE JERÁRQUICO
     //  Prioriza el alcance más específico definido en la regla
@@ -166,46 +167,91 @@ export async function calculateDynamicLimit(
       // 1. Vendedor Individual (Personal o Automático/Masivo)
       where.vendedorId = context.userId;
       cacheKey = `USER:${context.userId}`;
+      scopeId = context.userId;
     } else if (rule.ventanaId) {
       // 2. Ventana Específica
       where.ventanaId = rule.ventanaId;
       cacheKey = `VENTANA:${rule.ventanaId}`;
+      scopeId = rule.ventanaId;
     } else if (rule.bancaId) {
       // 3. Banca Completa (Filtra todas las ventanas de la banca)
       where.ventana = { bancaId: rule.bancaId };
       cacheKey = `BANCA:${rule.bancaId}`;
+      scopeId = rule.bancaId;
     } else {
       // Fallback: Ventana actual (Seguridad para reglas globales sin scope explícito en registro)
       where.ventanaId = context.ventanaId;
       cacheKey = `VENTANA:${context.ventanaId}`;
+      scopeId = context.ventanaId;
     }
 
-    // 2. Intentar obtener de caché (ahora con el alcance correcto)
+    // 2. Intentar obtener de caché L1 en memoria (ScopeCache)
+    let sorteoSales: number | undefined;
     if (context.cache) {
-      const cached = context.cache.salesTotals.get(cacheKey);
-      if (cached !== undefined) {
-        const percentageAmount = (cached * rule.salesPercentage!) / 100;
-        // base actúa como piso garantizado: aunque el % sea menor, siempre se puede vender hasta la base
-        // Cuando el % supera la base, el % es el límite total
-        dynamicLimit = baseAmt > 0
-          ? Math.max(baseAmt, percentageAmount)
-          : percentageAmount;
-        return Math.max(0, dynamicLimit);
+      sorteoSales = context.cache.salesTotals.get(cacheKey);
+    }
+
+    // 2.1 Deduplicación de promesas en vuelo para el mismo alcance (Thundering Herd Protection)
+    if (sorteoSales === undefined && context.cache?.salesInFlight?.has(cacheKey)) {
+      sorteoSales = await context.cache.salesInFlight.get(cacheKey)!;
+    }
+
+    // 2.2 Si no está en L1, resolver vía L2 Redis o L3 DB protegiendo con salesInFlight
+    if (sorteoSales === undefined) {
+      const fetchSalesTotal = async (): Promise<number> => {
+        // A) Intentar obtener de Redis L2 Fast-Path (< 0.5 ms)
+        if (scopeId && isRedisSalesAvailable()) {
+          const redis = getRedisSalesClient();
+          if (redis) {
+            try {
+              const redisKey = `sorteo:${context.sorteoId}:scope:${scopeId}:total_sales`;
+              const redisVal = await redis.get(redisKey);
+              if (redisVal !== null && redisVal !== undefined) {
+                return parseFloat(redisVal) || 0;
+              }
+            } catch (err: any) {
+              markRedisError("calculateDynamicLimit-redis-read");
+            }
+          }
+        }
+
+        // B) Fallback a PostgreSQL (L3)
+        const result = await tx.ticket.aggregate({
+          _sum: { totalAmount: true },
+          where,
+        });
+
+        const dbSales = Number(result._sum.totalAmount) || 0;
+
+        // C) Backfill asíncrono a Redis L2 para que próximas jugadas/tickets gocen de 0ms
+        if (scopeId && isRedisSalesAvailable()) {
+          const redis = getRedisSalesClient();
+          if (redis) {
+            const redisKey = `sorteo:${context.sorteoId}:scope:${scopeId}:total_sales`;
+            redis.set(redisKey, String(dbSales), "EX", 43200).catch(() => {});
+          }
+        }
+
+        return dbSales;
+      };
+
+      if (context.cache) {
+        if (!context.cache.salesInFlight) {
+          context.cache.salesInFlight = new Map();
+        }
+        const promise = fetchSalesTotal();
+        context.cache.salesInFlight.set(cacheKey, promise);
+        try {
+          sorteoSales = await promise;
+          context.cache.salesTotals.set(cacheKey, sorteoSales);
+        } finally {
+          context.cache.salesInFlight.delete(cacheKey);
+        }
+      } else {
+        sorteoSales = await fetchSalesTotal();
       }
     }
 
-    // Calcular ventas del sorteo según el alcance determinado
-    const result = await tx.ticket.aggregate({
-      _sum: { totalAmount: true },
-      where,
-    });
-
-    const sorteoSales = Number(result._sum.totalAmount) || 0;
-
-    // Guardar en caché
-    if (context.cache) {
-      context.cache.salesTotals.set(cacheKey, sorteoSales);
-    }
     const percentageAmount = (sorteoSales * rule.salesPercentage!) / 100;
 
     // base actúa como piso garantizado: aunque el % sea menor, siempre se puede vender hasta la base
@@ -481,19 +527,7 @@ export const TicketRepository = {
         }
       } catch {}
 
-      // 2.3. [LOCK] Adquirir el Lock Distribuido ÚNICAMENTE tras resolver metadatos y reglas estáticas
-      // Esto minimiza el hold-time del lock en Redis y elimina colas de espera concurrentes
-      const t_lock_start = performance.now();
-      lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
-      try {
-        if (options?.timingCollector?.prefetch_breakdown) {
-          options.timingCollector.prefetch_breakdown.t_lock_acquire = Math.round((performance.now() - t_lock_start) * 100) / 100;
-          options.timingCollector.prefetch_breakdown.lock_wait_ms = lock?.waitDurationMs ?? 0;
-          options.timingCollector.prefetch_breakdown.lock_attempts = lock?.attempts ?? 0;
-        }
-      } catch {}
-
-      // 2.5. [PRE-TX] Pre-calcular ScopeCache y DynamicLimits FUERA de la transacción interactiva
+      // 2.3. [PRE-TX] Pre-calcular ScopeCache y DynamicLimits FUERA de la transacción interactiva
       const t_risk_prefetch_start = performance.now();
       const { prefetchedCache, prefetchedDynamicLimits } =
         await TicketRiskValidator.prefetchRiskCalculations({
@@ -512,6 +546,18 @@ export const TicketRepository = {
         if (options?.timingCollector?.prefetch_breakdown) {
           options.timingCollector.prefetch_breakdown.t_risk_prefetch =
             Math.round((performance.now() - t_risk_prefetch_start) * 100) / 100;
+        }
+      } catch {}
+
+      // 2.4. [LOCK] Adquirir el Lock Distribuido ÚNICAMENTE tras resolver todo el prefetch y validaciones
+      // Esto minimiza el hold-time del lock en Redis a prácticamente solo la transacción interactiva
+      const t_lock_start = performance.now();
+      lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
+      try {
+        if (options?.timingCollector?.prefetch_breakdown) {
+          options.timingCollector.prefetch_breakdown.t_lock_acquire = Math.round((performance.now() - t_lock_start) * 100) / 100;
+          options.timingCollector.prefetch_breakdown.lock_wait_ms = lock?.waitDurationMs ?? 0;
+          options.timingCollector.prefetch_breakdown.lock_attempts = lock?.attempts ?? 0;
         }
       } catch {}
 

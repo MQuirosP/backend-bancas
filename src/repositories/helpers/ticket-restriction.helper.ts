@@ -70,6 +70,9 @@ export interface ScopeCache {
   // Key: "scopeType:scopeId" (ej: "USER:uuid", "VENTANA:uuid")
   salesTotals: Map<string, number>;
 
+  // Promesas en vuelo para deduplicar cálculos de venta concurrentes para el mismo alcance (Zero Thundering Herd)
+  salesInFlight?: Map<string, Promise<number>>;
+
   // Acumulados por número y alcance (para validateMaxTotal)
   // Key: "scopeType:scopeId:sorteoId:multiplierKey"
   // multiplierKey = multiplierId | "REVENTADO" | "NONE"
@@ -1457,178 +1460,190 @@ export async function validateRulesInParallel(
   }
 }
 
+const rehydratePromises = new Map<string, Promise<void>>();
+
 /**
  * Rehidrata de forma masiva los acumulados de un sorteo en Redis desde PostgreSQL.
  * Agrupa los acumulados en memoria y ejecuta un único HSET por clave dentro de un pipeline de Redis.
+ * Deduplica llamadas concurrentes para el mismo sorteo evitando saturación de BD.
  */
 export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.TransactionClient): Promise<void> {
-  if (!isRedisAvailable()) {
-    logger.warn({
-      layer: "redis-rehydrate",
-      action: "REHYDRATE_SKIPPED_REDIS_UNAVAILABLE",
-      payload: { sorteoId },
-    });
-    return;
+  const existingPromise = rehydratePromises.get(sorteoId);
+  if (existingPromise) {
+    return existingPromise;
   }
-  const redis = getRedisClient();
-  if (!redis) return;
 
-  logger.info({
-    layer: "redis-rehydrate",
-    action: "REHYDRATE_START",
-    payload: { sorteoId },
-  });
-
-  const startTime = Date.now();
-
-  try {
-    const client = tx || prisma;
-
-    // Obtener la fecha del sorteo para calcular un TTL inteligente (evitar acumulación en RAM de Redis)
-    const sorteo = await client.sorteo.findUnique({
-      where: { id: sorteoId },
-      select: { scheduledAt: true },
-    });
-
-    let ttlSeconds = 43200; // 12 horas por defecto
-    if (sorteo?.scheduledAt) {
-      const msToDraw = new Date(sorteo.scheduledAt).getTime() - Date.now();
-      const twoHoursMs = 2 * 60 * 60 * 1000;
-      const calculatedTtl = Math.ceil((msToDraw + twoHoursMs) / 1000);
-      // Mínimo de 2 horas (7,200s), máximo de 24 horas (86,400s)
-      ttlSeconds = Math.max(7200, Math.min(calculatedTtl, 86400));
-    }
-
-    // 1. Obtener todos los acumulados consolidados desde la base de datos
-    const result = await client.$queryRaw<
-      Array<{
-        number: string;
-        vendedorId: string | null;
-        ventanaId: string | null;
-        bancaId: string | null;
-        jugadaType: string;
-        multiplierId: string | null;
-        total: string | number;
-      }>
-    >(
-      Prisma.sql`
-        SELECT 
-          j."number" as number,
-          t."vendedorId" as "vendedorId",
-          t."ventanaId" as "ventanaId",
-          v."bancaId" as "bancaId",
-          j."type" as "jugadaType",
-          j."multiplierId" as "multiplierId",
-          COALESCE(SUM(j.amount), 0)::numeric as total
-        FROM "Ticket" t
-        INNER JOIN "Jugada" j ON j."ticketId" = t.id
-        INNER JOIN "Ventana" v ON v.id = t."ventanaId"
-        WHERE 
-          t."sorteoId" = ${sorteoId}::uuid
-          AND t."status" != 'CANCELLED'
-          AND t."isActive" = true
-          AND t."deletedAt" IS NULL
-          AND j."isActive" = true
-          AND j."deletedAt" IS NULL
-        GROUP BY j."number", t."vendedorId", t."ventanaId", v."bancaId", j."type", j."multiplierId"
-      `
-    );
-
-    // 2. Agrupar en memoria por clave de Redis
-    const redisData = new Map<string, Record<string, number>>();
-
-    const addValue = (key: string, num: string, amount: number) => {
-      let record = redisData.get(key);
-      if (!record) {
-        record = {};
-        redisData.set(key, record);
-      }
-      record[num] = (record[num] || 0) + amount;
-    };
-
-    for (const row of result) {
-      const amount = Number(row.total);
-      const num = row.number;
-      const scopes = [
-        { id: row.vendedorId, type: ReportDimension.VENDEDOR },
-        { id: row.ventanaId, type: ReportDimension.VENTANA },
-        { id: row.bancaId, type: ReportDimension.BANCA }
-      ];
-
-      for (const sc of scopes) {
-        if (!sc.id) continue;
-
-        // A. Llave general
-        const genKey = `sorteo:${sorteoId}:scope:${sc.id}:acumulados`;
-        addValue(genKey, num, amount);
-
-        // B. Llave por multiplicador
-        const multId = row.jugadaType === BetType.REVENTADO ? 'REVENTADO' : row.multiplierId;
-        if (multId) {
-          const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
-          addValue(multKey, num, amount);
-        }
-      }
-    }
-
-    // 3. Escribir masivamente en Redis usando un pipeline
-    const pipeline = redis.pipeline();
-
-    // Eliminar llaves existentes del sorteo antes de rehidratar
-    const keysPattern = `sorteo:${sorteoId}:scope:*`;
-    const existingKeys = await redis.keys(keysPattern);
-    if (existingKeys.length > 0) {
-      // Eliminar el prefijo local si está configurado en ioredis (ioredis maneja prefijos automáticamente)
-      // pero keys() retorna las llaves con el prefijo incluido si se consulta directo.
-      // ioredis keys() remueve el prefijo de la respuesta si está configurado.
-      for (const k of existingKeys) {
-        pipeline.del(k);
-      }
-    }
-
-    // Guardar los acumulados agrupados en lote
-    for (const [key, record] of redisData.entries()) {
-      const stringRecord = Object.fromEntries(
-        Object.entries(record).map(([num, amt]) => [num, String(amt)])
-      );
-      
-      // HSET masivo de pares clave-valor
-      pipeline.hset(key, stringRecord);
-      // TTL dinámico e inteligente
-      pipeline.expire(key, ttlSeconds);
-    }
-
-    // Guardar llave de control que marca el sorteo como hidratado
-    const hydratedKey = `sorteo:${sorteoId}:hydrated`;
-    pipeline.set(hydratedKey, "true", "EX", ttlSeconds);
-
-    await pipeline.exec();
-
-    // Rehidratar también los contadores de tickets (hasSales / ticketCount) en Redis L2
-    await rehydrateSorteoSalesCounters(sorteoId, client).catch((err) => {
+  const executionPromise = (async () => {
+    if (!isRedisAvailable()) {
       logger.warn({
         layer: "redis-rehydrate",
-        action: "REHYDRATE_SALES_COUNTERS_WARN",
-        payload: { sorteoId, error: err?.message },
+        action: "REHYDRATE_SKIPPED_REDIS_UNAVAILABLE",
+        payload: { sorteoId },
       });
-    });
+      return;
+    }
+    const redis = getRedisClient();
+    if (!redis) return;
 
     logger.info({
       layer: "redis-rehydrate",
-      action: "REHYDRATE_SUCCESS",
-      payload: {
-        sorteoId,
-        keysHydrated: redisData.size,
-        durationMs: Date.now() - startTime,
-      },
+      action: "REHYDRATE_START",
+      payload: { sorteoId },
     });
-  } catch (err: any) {
-    logger.error({
-      layer: "redis-rehydrate",
-      action: "REHYDRATE_ERROR",
-      payload: { sorteoId, error: err.message },
-    });
-    throw err;
-  }
+
+    const startTime = Date.now();
+
+    try {
+      const client = tx || prisma;
+
+      // Obtener la fecha del sorteo para calcular un TTL inteligente (evitar acumulación en RAM de Redis)
+      const sorteo = await client.sorteo.findUnique({
+        where: { id: sorteoId },
+        select: { scheduledAt: true },
+      });
+
+      let ttlSeconds = 43200; // 12 horas por defecto
+      if (sorteo?.scheduledAt) {
+        const msToDraw = new Date(sorteo.scheduledAt).getTime() - Date.now();
+        const twoHoursMs = 2 * 60 * 60 * 1000;
+        const calculatedTtl = Math.ceil((msToDraw + twoHoursMs) / 1000);
+        // Mínimo de 2 horas (7,200s), máximo de 24 horas (86,400s)
+        ttlSeconds = Math.max(7200, Math.min(calculatedTtl, 86400));
+      }
+
+      // 1. Obtener todos los acumulados consolidados desde la base de datos
+      const result = await client.$queryRaw<
+        Array<{
+          number: string;
+          vendedorId: string | null;
+          ventanaId: string | null;
+          bancaId: string | null;
+          jugadaType: string;
+          multiplierId: string | null;
+          total: string | number;
+        }>
+      >(
+        Prisma.sql`
+          SELECT 
+            j."number" as number,
+            t."vendedorId" as "vendedorId",
+            t."ventanaId" as "ventanaId",
+            v."bancaId" as "bancaId",
+            j."type" as "jugadaType",
+            j."multiplierId" as "multiplierId",
+            COALESCE(SUM(j.amount), 0)::numeric as total
+          FROM "Ticket" t
+          INNER JOIN "Jugada" j ON j."ticketId" = t.id
+          INNER JOIN "Ventana" v ON v.id = t."ventanaId"
+          WHERE 
+            t."sorteoId" = ${sorteoId}::uuid
+            AND t."status" != 'CANCELLED'
+            AND t."isActive" = true
+            AND t."deletedAt" IS NULL
+            AND j."isActive" = true
+            AND j."deletedAt" IS NULL
+          GROUP BY j."number", t."vendedorId", t."ventanaId", v."bancaId", j."type", j."multiplierId"
+        `
+      );
+
+      // 2. Agrupar en memoria por clave de Redis y acumular ventas totales por alcance
+      const redisData = new Map<string, Record<string, number>>();
+      const scopeTotalSales = new Map<string, number>();
+
+      const addValue = (key: string, num: string, amount: number) => {
+        let record = redisData.get(key);
+        if (!record) {
+          record = {};
+          redisData.set(key, record);
+        }
+        record[num] = (record[num] || 0) + amount;
+      };
+
+      for (const row of result) {
+        const amount = Number(row.total);
+        const num = row.number;
+        const scopes = [
+          { id: row.vendedorId, type: ReportDimension.VENDEDOR },
+          { id: row.ventanaId, type: ReportDimension.VENTANA },
+          { id: row.bancaId, type: ReportDimension.BANCA }
+        ];
+
+        for (const sc of scopes) {
+          if (!sc.id) continue;
+
+          // A. Llave general por número
+          const genKey = `sorteo:${sorteoId}:scope:${sc.id}:acumulados`;
+          addValue(genKey, num, amount);
+
+          // B. Llave por multiplicador
+          const multId = row.jugadaType === BetType.REVENTADO ? 'REVENTADO' : row.multiplierId;
+          if (multId) {
+            const multKey = `sorteo:${sorteoId}:scope:${sc.id}:multiplier:${multId}:acumulados`;
+            addValue(multKey, num, amount);
+          }
+
+          // C. Ventas totales del sorteo para este scope (Fast-Path de límites dinámicos)
+          scopeTotalSales.set(sc.id, (scopeTotalSales.get(sc.id) || 0) + amount);
+        }
+      }
+
+      // 3. Escribir masivamente en Redis usando un pipeline
+      const pipeline = redis.pipeline();
+
+      // Guardar los acumulados agrupados en lote
+      for (const [key, record] of redisData.entries()) {
+        const stringRecord = Object.fromEntries(
+          Object.entries(record).map(([num, amt]) => [num, String(amt)])
+        );
+        
+        // HSET masivo de pares clave-valor
+        pipeline.hset(key, stringRecord);
+        pipeline.expire(key, ttlSeconds);
+      }
+
+      // Guardar ventas totales por alcance
+      for (const [scopeId, totalAmt] of scopeTotalSales.entries()) {
+        const totalSalesKey = `sorteo:${sorteoId}:scope:${scopeId}:total_sales`;
+        pipeline.set(totalSalesKey, String(totalAmt), "EX", ttlSeconds);
+      }
+
+      // Guardar llave de control que marca el sorteo como hidratado
+      const hydratedKey = `sorteo:${sorteoId}:hydrated`;
+      pipeline.set(hydratedKey, "true", "EX", ttlSeconds);
+
+      await pipeline.exec();
+
+      // Rehidratar también los contadores de tickets (hasSales / ticketCount) en Redis L2
+      await rehydrateSorteoSalesCounters(sorteoId, client).catch((err) => {
+        logger.warn({
+          layer: "redis-rehydrate",
+          action: "REHYDRATE_SALES_COUNTERS_WARN",
+          payload: { sorteoId, error: err?.message },
+        });
+      });
+
+      logger.info({
+        layer: "redis-rehydrate",
+        action: "REHYDRATE_SUCCESS",
+        payload: {
+          sorteoId,
+          keysHydrated: redisData.size,
+          durationMs: Date.now() - startTime,
+        },
+      });
+    } catch (err: any) {
+      logger.error({
+        layer: "redis-rehydrate",
+        action: "REHYDRATE_ERROR",
+        payload: { sorteoId, error: err.message },
+      });
+      throw err;
+    } finally {
+      rehydratePromises.delete(sorteoId);
+    }
+  })();
+
+  rehydratePromises.set(sorteoId, executionPromise);
+  return executionPromise;
 }
 
