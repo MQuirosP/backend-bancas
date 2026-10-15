@@ -3268,7 +3268,7 @@ gs."hour24" ASC
    * Precalentamiento atómico O(1) de resúmenes evaluados para todos los vendedores
    * involucrados en un sorteo y su banca.
    * Ejecuta agregaciones en lote en PostgreSQL (<50ms) y puebla simultáneamente L1 (RAM)
-   * y L2 (Upstash Redis) mediante un pipeline atómico, eliminando 234+ queries individuales.
+   * y L2 (Redis Render) mediante un pipeline atómico, eliminando 234+ queries individuales.
    */
   async warmupSorteoSummariesBatch(
     sorteoId: string,

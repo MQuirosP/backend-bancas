@@ -183,6 +183,7 @@ export const TicketService = {
     userId: string,
     requestId?: string,
     actorRole: Role = Role.VENDEDOR,
+    userVentanaId?: string | null,
   ) {
     try {
       const t0 = performance.now();
@@ -205,7 +206,7 @@ export const TicketService = {
       const clientIdempotencyKey: string | undefined =
         data.idempotencyKey ?? data.requestId;
 
-      const initialVentanaId = data.ventanaId;
+      const initialVentanaId = data.ventanaId ?? userVentanaId ?? undefined;
       const requestedVendedorId = data.vendedorId;
 
       // 1. Master Promise.all (Fase 1): Carga paralela de todas las entidades independientes
@@ -374,6 +375,7 @@ export const TicketService = {
         !resolvedVentanaWithBanca ||
         resolvedVentanaWithBanca.id !== ventanaId
       ) {
+        const t_fallback_start = performance.now();
         [resolvedVentanaWithBanca, resolvedListeroUser] = await Promise.all([
           CacheService.wrap(
             `ventana:${ventanaId}`,
@@ -422,6 +424,18 @@ export const TicketService = {
             [`ventana:${ventanaId}`],
           ),
         ]);
+        try {
+          if (timingCollector.prefetch_breakdown) {
+            timingCollector.prefetch_breakdown.t_resolved_ventana =
+              Math.round((performance.now() - t_fallback_start) * 100) / 100;
+          }
+        } catch {}
+      } else {
+        try {
+          if (timingCollector.prefetch_breakdown) {
+            timingCollector.prefetch_breakdown.t_resolved_ventana = 0;
+          }
+        } catch {}
       }
 
       if (sorteo.scheduledAt) {

@@ -332,7 +332,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
         `   - En Caché L1 RAM (<15ms):  ${m.hits_l1_sub15ms} requests (${Math.round((m.hits_l1_sub15ms / m.total_requests) * 100)}%)`
       );
       console.log(
-        `   - En Caché L2 Upstash:      ${m.hits_l2_sub350ms} requests (${Math.round((m.hits_l2_sub350ms / m.total_requests) * 100)}%)`
+        `   - En Caché L2 Redis Render: ${m.hits_l2_sub350ms} requests (${Math.round((m.hits_l2_sub350ms / m.total_requests) * 100)}%)`
       );
       console.log(`   - Peticiones Lentas (>1s):  ${m.slow_over_1s} requests`);
     } else {

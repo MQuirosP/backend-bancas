@@ -6,7 +6,7 @@ const inFlightReports = new Map<string, Promise<any>>();
 
 export class ReportCache {
   /**
-   * Obtiene un reporte desde Upstash Redis o lo calcula con protección Single-Flight (Anti-Stampede).
+   * Obtiene un reporte desde Redis Render o lo calcula con protección Single-Flight (Anti-Stampede).
    * Si Redis falla o no está disponible, realiza fallback silencioso a la función de cálculo (PostgreSQL).
    * 
    * @param cacheKey Clave única de caché para el reporte

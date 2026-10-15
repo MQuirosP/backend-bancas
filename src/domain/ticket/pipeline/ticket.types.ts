@@ -67,6 +67,8 @@ export type TicketTimingCollector = {
     t_pre_tx_meta?: number;
     t_rules?: number;
     t_risk_prefetch?: number;
+    t_credit?: number;
+    t_resolved_ventana?: number;
   };
 };
 

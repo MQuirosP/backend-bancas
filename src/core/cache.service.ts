@@ -447,7 +447,7 @@ export class CacheService {
 
     /**
      * Wrapper para Cache-Aside con Coalescing (evita Cache Stampede).
-     * Integra L1 (Memoria RAM Node.js) + L2 (Redis Upstash) para latencia sub-milisegundo.
+     * Integra L1 (Memoria RAM Node.js) + L2 (Redis Render) para latencia sub-milisegundo.
      */
     static async wrap<T>(
         key: string,

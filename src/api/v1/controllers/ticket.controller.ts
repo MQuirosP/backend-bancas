@@ -80,7 +80,8 @@ export const TicketController = {
         req.body,
         userId,
         req.requestId,
-        req.user!.role
+        req.user!.role,
+        req.user?.ventanaId
       );
 
       // 3. Commit Atómico (Lua: Update Cache + Release Lock)
