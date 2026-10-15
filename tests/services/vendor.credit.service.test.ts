@@ -123,23 +123,17 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
       );
     });
 
-    it("returns BLOCKED and does NOT allow sale when limit exceeded and blockMode is true", async () => {
-      mockRedis.eval.mockResolvedValueOnce(["BLOCKED", "1100", "110", "BLOCKED", "NORMAL"]);
+    it("returns BLOCKED and does NOT allow sale or emit WebSocket broadcast when limit exceeded and blockMode is true", async () => {
+      // Lua devuelve el saldo real preexistente (1000) y porcentaje (100%), preservando el estado previo sin inflar saldo
+      mockRedis.eval.mockResolvedValueOnce(["BLOCKED", "1000", "100", "NORMAL", "NORMAL"]);
 
       const result = await VendorCreditService.validateAndReserve("v-1", "s-1", 200);
 
       expect(result.code).toBe("BLOCKED");
-      expect(result.status).toBe("BLOCKED");
-      expect(result.projected).toBe(1100);
-      expect(SocketService.notifyVendorCreditStatusChanged).toHaveBeenCalledWith(
-        expect.objectContaining({
-          vendedorId: "v-1",
-          status: "BLOCKED",
-          percentageUsed: 110,
-          effectiveBalance: 1100,
-          updatedAt: expect.any(String),
-        })
-      );
+      expect(result.status).toBe("NORMAL");
+      expect(result.projected).toBe(1000);
+      // NUNCA debe emitir WebSocket ante un intento rechazado para no enviar saldo fantasma a la app
+      expect(SocketService.notifyVendorCreditStatusChanged).not.toHaveBeenCalled();
     });
 
     it("returns OK with EXCEEDED_ALERT_ONLY when limit exceeded but blockMode is false", async () => {
@@ -570,18 +564,16 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
       let currentTime = startTime;
       jest.spyOn(Date, "now").mockImplementation(() => currentTime);
 
-      // 1. Primer intento bloqueado: debe emitir
-      mockRedis.eval.mockResolvedValueOnce(["BLOCKED", "1100", "110", "BLOCKED", "NORMAL"]);
-      await VendorCreditService.validateAndReserve("v-debounce", "s-1", 100);
+      // 1. Primer evento BLOCKED legítimo: debe emitir
+      await (VendorCreditService as any).emitCreditStatusChanged("v-debounce", 1100, 110, "BLOCKED");
       expect(SocketService.notifyVendorCreditStatusChanged).toHaveBeenCalledTimes(1);
       expect(SocketService.notifyVendorCreditStatusChanged).toHaveBeenLastCalledWith(
         expect.objectContaining({ vendedorId: "v-debounce", status: "BLOCKED" })
       );
 
-      // 2. Segundo intento bloqueado a los 5s (dentro de la ventana de 15s): debe suprimirse por debounce
+      // 2. Segundo evento BLOCKED a los 5s (dentro de la ventana de 15s): debe suprimirse por debounce
       currentTime += 5000;
-      mockRedis.eval.mockResolvedValueOnce(["BLOCKED", "1200", "120", "BLOCKED", "BLOCKED"]);
-      await VendorCreditService.validateAndReserve("v-debounce", "s-1", 100);
+      await (VendorCreditService as any).emitCreditStatusChanged("v-debounce", 1200, 120, "BLOCKED");
       // Sigue siendo 1 llamada (suprimido)
       expect(SocketService.notifyVendorCreditStatusChanged).toHaveBeenCalledTimes(1);
 
@@ -607,14 +599,19 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
         expect.objectContaining({ vendedorId: "v-debounce", status: "NORMAL" })
       );
 
-      // 4. Inmediatamente después, si vuelve a exceder el tope, debe emitir BLOCKED de nuevo (no suprimido porque hubo liberación previa)
+      // 4. Inmediatamente después, si vuelve a BLOCKED, debe emitir BLOCKED de nuevo (no suprimido porque hubo liberación previa)
       currentTime += 1000;
-      mockRedis.eval.mockResolvedValueOnce(["BLOCKED", "1500", "150", "BLOCKED", "NORMAL"]);
-      await VendorCreditService.validateAndReserve("v-debounce", "s-1", 1000);
+      await (VendorCreditService as any).emitCreditStatusChanged("v-debounce", 1500, 150, "BLOCKED");
       expect(SocketService.notifyVendorCreditStatusChanged).toHaveBeenCalledTimes(3);
       expect(SocketService.notifyVendorCreditStatusChanged).toHaveBeenLastCalledWith(
         expect.objectContaining({ vendedorId: "v-debounce", status: "BLOCKED" })
       );
+
+      // 5. Un intento de reserva rechazado en validateAndReserve NUNCA debe emitir WebSocket (sin importar debounce)
+      currentTime += 100000;
+      mockRedis.eval.mockResolvedValueOnce(["BLOCKED", "1000", "100", "NORMAL", "NORMAL"]);
+      await VendorCreditService.validateAndReserve("v-debounce", "s-1", 500);
+      expect(SocketService.notifyVendorCreditStatusChanged).toHaveBeenCalledTimes(3);
 
       (Date.now as jest.Mock).mockRestore?.();
     });

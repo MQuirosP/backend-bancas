@@ -109,9 +109,20 @@ end
 if projected > limit then
   if blockMode == 1 then
     -- Modo Bloqueo estricto: NO reserva en open_by_sorteo.
-    -- BLOCKED refleja que el intento fue rechazado por alcanzar el límite de caja.
-    redis.call('hset', KEYS[1], 'status', 'BLOCKED')
-    return {'BLOCKED', tostring(projected), tostring(pct), 'BLOCKED', oldStatus}
+    -- El intento es rechazado porque superaría el límite de caja.
+    -- Retornamos el saldo real actual (base + open_total) sin el incremento rechazado.
+    local current_bal = math.floor((base + open_total) * 100 + 0.5) / 100
+    local current_pct = 0
+    if limit > 0 then
+      current_pct = math.floor(((current_bal / limit) * 100) * 100 + 0.5) / 100
+    end
+    -- Solo si el saldo real preexistente ya alcanzaba o superaba el límite, corresponde marcar BLOCKED en Redis
+    local effective_status = oldStatus
+    if current_bal >= limit then
+      effective_status = 'BLOCKED'
+      redis.call('hset', KEYS[1], 'status', 'BLOCKED')
+    end
+    return {'BLOCKED', tostring(current_bal), tostring(current_pct), effective_status, oldStatus}
   else
     -- Modo Alerta solamente: SÍ reserva pero marca estado
     redis.call('hincrbyfloat', KEYS[3], ARGV[1], inc)
@@ -615,7 +626,11 @@ export class VendorCreditService {
             },
           });
           const openTotalHydrated = Object.values(hydrated.openBySorteo).reduce((a, b) => a + b, 0);
-          const projected = Math.round((hydrated.baseBalance + openTotalHydrated + netAmount) * 100) / 100;
+          const currentBal = Math.round((hydrated.baseBalance + openTotalHydrated) * 100) / 100;
+          const currentPct = hydrated.limit && hydrated.limit > 0
+            ? Math.round(((currentBal / hydrated.limit) * 100) * 100) / 100
+            : 0;
+          const projected = Math.round((currentBal + netAmount) * 100) / 100;
           const percentage = hydrated.limit && hydrated.limit > 0
             ? Math.round(((projected / hydrated.limit) * 100) * 100) / 100
             : 0;
@@ -628,9 +643,9 @@ export class VendorCreditService {
           const finalCode: "OK" | "BLOCKED" = fallbackStatus === "BLOCKED" ? "BLOCKED" : "OK";
           return {
             code: finalCode,
-            projected,
-            percentage,
-            status: fallbackStatus,
+            projected: finalCode === "BLOCKED" ? currentBal : projected,
+            percentage: finalCode === "BLOCKED" ? currentPct : percentage,
+            status: finalCode === "BLOCKED" && currentBal < (hydrated.limit || 0) ? hydrated.status : fallbackStatus,
             limit: hydrated.limit,
           };
         }
@@ -657,13 +672,28 @@ export class VendorCreditService {
         if (lStr && lStr !== "-1") limit = parseFloat(lStr);
       } catch {}
 
-      // Emitir WebSocket ÚNICAMENTE ante transición de estado
+      // Si la reserva fue rechazada (BLOCKED):
+      // NO se reservó saldo en Redis ni se creará ticket en PostgreSQL.
+      // El saldo real NO cambió. Por lo tanto, ESTRICTAMENTE PROHIBIDO emitir
+      // broadcast por WebSocket: la respuesta HTTP (409) informará al cliente directamente.
+      // Emitir broadcast aquí causaría que la app muestre un saldo fantasma que nunca existió.
+      if (code === "BLOCKED") {
+        return {
+          code: "BLOCKED",
+          projected,
+          percentage,
+          status,
+          limit,
+        };
+      }
+
+      // Emitir WebSocket ÚNICAMENTE ante transición de estado en reservas exitosas ("OK")
       if (status !== oldStatus) {
         this.emitCreditStatusChanged(vendedorId, projected, percentage, status).catch(() => {});
       }
 
       return {
-        code: code as "OK" | "BLOCKED",
+        code: "OK",
         projected,
         percentage,
         status,
@@ -871,19 +901,20 @@ export class VendorCreditService {
       };
 
       if (newStatus === "BLOCKED") {
-        this.degradedCache.set(vendedorId, updatedCache);
-        if (newStatus !== oldStatus) {
-          this.emitCreditStatusChanged(vendedorId, projected, percentage, newStatus, {
-            limit,
-            bancaId,
-            ventanaId,
-          }).catch(() => {});
+        // En modo degradado, si el intento es rechazado, NO se añade delta local ni se aprueba la venta.
+        // Solo actualizamos el estado en caché si el saldo real preexistente ya alcanzaba o superaba el límite.
+        if (limit !== null && effectiveBalanceAtQuery >= limit) {
+          this.degradedCache.set(vendedorId, updatedCache);
         }
+        // NUNCA emitir broadcast por WebSocket: el saldo real no cambió y la respuesta HTTP informará al cliente.
+        const currentPct = limit && limit > 0
+          ? Math.round(((effectiveBalanceAtQuery / limit) * 100) * 100) / 100
+          : 0;
         return {
           code: "BLOCKED",
-          projected,
-          percentage,
-          status: newStatus,
+          projected: effectiveBalanceAtQuery,
+          percentage: currentPct,
+          status: limit !== null && effectiveBalanceAtQuery >= limit ? "BLOCKED" : oldStatus,
           limit,
           degraded: true,
         };
