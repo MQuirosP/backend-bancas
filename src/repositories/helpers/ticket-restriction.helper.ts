@@ -1,6 +1,6 @@
 import { ReportDimension } from '../../types/enums/report.enum';
 // src/repositories/helpers/ticket-restriction.helper.ts
-import { Prisma, TicketStatus, BetType, SorteoStatus } from '../../generated/prisma/client';
+import { Prisma, TicketStatus, BetType, SorteoStatus, Role } from '../../generated/prisma/client';
 import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";
@@ -1605,6 +1605,31 @@ export async function rehydrateRedisAccumulated(sorteoId: string, tx?: Prisma.Tr
       for (const [scopeId, totalAmt] of scopeTotalSales.entries()) {
         const totalSalesKey = `sorteo:${sorteoId}:scope:${scopeId}:total_sales`;
         pipeline.set(totalSalesKey, String(totalAmt), "EX", ttlSeconds);
+      }
+
+      // Sembrar atómicamente en 0 los scopes activos conocidos que no tengan ventas registradas aún
+      try {
+        const activeUsers = await client.user.findMany({
+          where: { role: Role.VENDEDOR, isActive: true },
+          select: { id: true, ventanaId: true, bancaId: true },
+        });
+        for (const u of activeUsers) {
+          if (u.id && !scopeTotalSales.has(u.id)) {
+            pipeline.set(`sorteo:${sorteoId}:scope:${u.id}:total_sales`, "0", "EX", ttlSeconds);
+          }
+          if (u.ventanaId && !scopeTotalSales.has(u.ventanaId)) {
+            pipeline.set(`sorteo:${sorteoId}:scope:${u.ventanaId}:total_sales`, "0", "EX", ttlSeconds);
+          }
+          if (u.bancaId && !scopeTotalSales.has(u.bancaId)) {
+            pipeline.set(`sorteo:${sorteoId}:scope:${u.bancaId}:total_sales`, "0", "EX", ttlSeconds);
+          }
+        }
+      } catch (scopeSeedErr: any) {
+        logger.warn({
+          layer: "redis-rehydrate",
+          action: "REHYDRATE_ACTIVE_SCOPES_SEED_WARN",
+          payload: { sorteoId, error: scopeSeedErr?.message },
+        });
       }
 
       // Guardar llave de control que marca el sorteo como hidratado

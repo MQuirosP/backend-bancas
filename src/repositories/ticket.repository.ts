@@ -205,9 +205,15 @@ export async function calculateDynamicLimit(
           if (redis) {
             try {
               const redisKey = `sorteo:${context.sorteoId}:scope:${scopeId}:total_sales`;
-              const redisVal = await redis.get(redisKey);
+              const hydratedKey = `sorteo:${context.sorteoId}:hydrated`;
+              const [redisVal, isHydrated] = await redis.mget(redisKey, hydratedKey);
               if (redisVal !== null && redisVal !== undefined) {
                 return parseFloat(redisVal) || 0;
+              }
+              if (isHydrated === "true") {
+                // Sorteo ya fue hidratado en Redis: si este scope no tiene acumulado registrado, sus ventas son 0.
+                redis.set(redisKey, "0", "EX", 43200).catch(() => {});
+                return 0;
               }
             } catch (err: any) {
               markRedisError("calculateDynamicLimit-redis-read");

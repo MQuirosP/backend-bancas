@@ -262,7 +262,6 @@ model Ticket {
   @@index([status, isWinner])
   @@index([businessDate, ventanaId], map: "idx_ticket_businessdate_ventana")
   @@index([bancaId, ventanaId, businessDate, status], map: "idx_ticket_dashboard_lookup", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true))"))
-  @@index([sorteoId, businessDate, isActive], map: "idx_ticket_sorteo_businessdate_active")
   @@index([businessDate, ventanaId, vendedorId], map: "idx_ticket_winners_perf", where: raw("((\"isWinner\" = true) AND (\"isActive\" = true) AND (\"deletedAt\" IS NULL))"))
   @@index([bancaId, businessDate], map: "idx_ticket_banca_businessdate_active", where: raw("((\"deletedAt\" IS NULL) AND (\"isActive\" = true) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))
   @@index([sorteoId, businessDate, isActive], map: "idx_ticket_sorteo_business_active", where: raw("((\"deletedAt\" IS NULL) AND (status <> 'CANCELLED'::\"TicketStatus\"))"))

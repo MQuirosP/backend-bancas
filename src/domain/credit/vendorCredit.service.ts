@@ -1444,6 +1444,7 @@ export class VendorCreditService {
           isActive: true,
           creditLimit: { not: null, gt: 0 },
         },
+        orderBy: { updatedAt: "desc" },
         select: { id: true },
       });
 
@@ -1453,9 +1454,9 @@ export class VendorCreditService {
         payload: { vendorCount: vendors.length },
       });
 
-      // Procesar vendedores en batches de 3 con delay entre batches para no saturar BD ni Event Loop
-      const CHUNK_SIZE = 3;
-      const CHUNK_DELAY_MS = 50;
+      // Procesar vendedores prioritariamente en batches de 10 con delay reducido a 10ms
+      const CHUNK_SIZE = 10;
+      const CHUNK_DELAY_MS = 10;
 
       for (let i = 0; i < vendors.length; i += CHUNK_SIZE) {
         const chunk = vendors.slice(i, i + CHUNK_SIZE);
