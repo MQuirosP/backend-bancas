@@ -8,6 +8,7 @@ import ActivityService from '../../core/activity.service';
 import { tz } from '../../utils/timezone';
 import { AppError } from '../../core/errors';
 import logger from '../../core/logger';
+import VendorCreditService from '../credit/vendorCredit.service';
 
 export interface TicketPreviewInfo {
   id: string;
@@ -366,7 +367,20 @@ export class TicketsOpsService {
       }
     }
 
-    // E. Registro en ActivityLog
+    // E. Re-sincronizar balances de crédito en Redis para vendedores afectados
+    for (const vId of affectedVendedores) {
+      try {
+        await VendorCreditService.updateBaseBalance(vId);
+      } catch (creditErr: any) {
+        logger.warn({
+          layer: 'ops',
+          action: 'CANCEL_TICKETS_CREDIT_UPDATE_WARN',
+          payload: { vendedorId: vId, error: creditErr?.message }
+        });
+      }
+    }
+
+    // F. Registro en ActivityLog
     await ActivityService.log({
       action: ActivityType.SYSTEM_ACTION,
       targetType: 'TICKET',
