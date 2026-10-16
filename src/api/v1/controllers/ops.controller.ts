@@ -9,6 +9,7 @@ import { AccountsService } from '../../../domain/accounts/accounts.service';
 import ActivityService from '../../../core/activity.service';
 import { TicketsOpsService } from '../../../domain/ticket/ticketsOps.service';
 import { VendorOpsService } from '../../../domain/accounts/vendorOps.service';
+import { RedisOpsService } from '../../../domain/cache/redisOps.service';
 import { SorteoStatus, ActivityType, Prisma } from '../../../generated/prisma/client';
 
 /**
@@ -591,6 +592,60 @@ export class OpsController {
         performedByUserId: 'CLI_SUPER_ADMIN',
       });
       res.json({ success: true, result });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista vendedores para el módulo de Redis (por banca o query)
+   */
+  static async listRedisVendors(req: Request, res: Response): Promise<void> {
+    try {
+      const { query, bancaId } = req.body;
+      const vendors = await RedisOpsService.listVendors(query, bancaId);
+      res.json({ success: true, vendors });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista las claves de Redis asociadas a un vendedor
+   */
+  static async listVendorRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { vendedorId } = req.body;
+      if (!vendedorId) {
+        res.status(400).json({ success: false, error: 'vendedorId es requerido' });
+        return;
+      }
+      const data = await RedisOpsService.listVendorKeys(vendedorId);
+      res.json({ success: true, ...data });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Elimina claves de Redis asociadas a un vendedor
+   */
+  static async deleteVendorRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { keys, vendedorId, deleteAll } = req.body;
+      if (!vendedorId && (!keys || keys.length === 0)) {
+        res.status(400).json({ success: false, error: 'Parámetros obligatorios incompletos' });
+        return;
+      }
+
+      if (deleteAll && vendedorId) {
+        const result = await RedisOpsService.deleteAllVendorKeys(vendedorId);
+        res.json({ success: true, ...result });
+        return;
+      }
+
+      const result = await RedisOpsService.deleteKeys(keys || [], vendedorId);
+      res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(err.statusCode || 500).json({ success: false, error: err.message });
     }

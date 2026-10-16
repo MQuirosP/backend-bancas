@@ -29,4 +29,9 @@ router.post('/vendor/audit', OpsController.getVendorAudit);
 router.post('/vendor/transfer', OpsController.transferVendor);
 router.post('/vendor/adjust-balance', OpsController.adjustVendorBalance);
 
+// Redis Keys Operations
+router.post('/redis/vendors', OpsController.listRedisVendors);
+router.post('/redis/vendor/keys', OpsController.listVendorRedisKeys);
+router.post('/redis/vendor/delete', OpsController.deleteVendorRedisKeys);
+
 export default router;

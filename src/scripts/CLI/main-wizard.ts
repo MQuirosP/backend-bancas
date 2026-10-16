@@ -10,6 +10,7 @@ import { runAcopioSalesRebuild } from './acopio-cli';
 import { runMonitorEvaluation } from './monitor-evaluation-cli';
 import { runTicketsWizard } from './tickets-cli';
 import { runVendorOpsWizard } from './vendor-ops-cli';
+import { runRedisKeysWizard } from './redis-keys-cli';
 
 /**
  * main-wizard.ts
@@ -78,9 +79,10 @@ async function main() {
     console.log(`  [6] 📡  Monitoreo en Tiempo Real de Sorteos y Terminales (Better Stack Logs)`);
     console.log(`  [7] 🎟️   Anulación de Tickets por Consecutivo (Soft-Delete & Resincronización)`);
     console.log(`  [8] 🔄  Traslado y Liquidación de Vendedores (Vendor Transfer & Balance Setup)`);
+    console.log(`  [9] 🧹  Gestión y Limpieza de Claves en Redis (Por Banca y Vendedor)`);
     console.log(`  [0] 🚪  Salir`);
 
-    const optionChoice = await ask(`\nOpción (0-8): `);
+    const optionChoice = await ask(`\nOpción (0-9): `);
 
     if (optionChoice === '0' || isBack(optionChoice)) {
       console.log(`\n👋  Saliendo de la Suite de Soporte.`);
@@ -132,6 +134,8 @@ async function main() {
       await ask(`\nPresione ENTER para continuar...`);
     } else if (optionChoice === '8') {
       await runVendorOpsWizard();
+    } else if (optionChoice === '9') {
+      await runRedisKeysWizard();
     } else {
       console.log(`❌  Opción no válida.`);
     }
