@@ -211,7 +211,7 @@ export const TicketService = {
 
       // 1. Master Promise.all (Fase 1): Carga paralela de todas las entidades independientes
       const t_core_start = performance.now();
-      const [actor, sorteo, ventanaWithBanca, listeroUser, targetVendedor] =
+      const [actor, sorteo, ventanaWithBanca, targetVendedor] =
         await Promise.all([
           CacheService.wrap(
             `user:${userId}`,
@@ -237,7 +237,7 @@ export const TicketService = {
                   }),
                 { context: "TicketService.create.actor" },
               ),
-            3600, // 1 hour TTL
+            86400, // 24 hours TTL (Event-Driven: invalidación por mutación de usuario)
             [`user:${userId}`],
           ),
           CacheService.wrap(
@@ -261,7 +261,7 @@ export const TicketService = {
                   }),
                 { context: "TicketService.create.sorteo" },
               ),
-            300, // 5 minutes TTL
+            86400, // 24 hours TTL (Event-Driven: invalidación al evaluar o cerrar sorteo)
             [`sorteo:${sorteoId}`],
           ),
           initialVentanaId
@@ -288,29 +288,7 @@ export const TicketService = {
                       }),
                     { context: "TicketService.create.ventana" },
                   ),
-                3600,
-                [`ventana:${initialVentanaId}`, `banca:${initialVentanaId}`],
-              )
-            : Promise.resolve(null),
-          initialVentanaId
-            ? CacheService.wrap(
-                `listero:${initialVentanaId}`,
-                () =>
-                  withConnectionRetry(
-                    () =>
-                      salesPrisma.user.findFirst({
-                        where: {
-                          role: Role.VENTANA,
-                          ventanaId: initialVentanaId,
-                          isActive: true,
-                          deletedAt: null,
-                        },
-                        select: { id: true, commissionPolicyJson: true },
-                        orderBy: { updatedAt: "desc" },
-                      }),
-                    { context: "TicketService.create.listero" },
-                  ),
-                3600,
+                86400, // 24 hours TTL (Event-Driven: invalidación al editar ventana/banca)
                 [`ventana:${initialVentanaId}`],
               )
             : Promise.resolve(null),
@@ -339,7 +317,7 @@ export const TicketService = {
                       }),
                     { context: "TicketService.create.targetVendedor" },
                   ),
-                3600,
+                86400, // 24 hours TTL (Event-Driven: invalidación por mutación de usuario)
                 [`user:${requestedVendedorId}`],
               )
             : Promise.resolve(null),
@@ -368,7 +346,6 @@ export const TicketService = {
       } catch {}
 
       let resolvedVentanaWithBanca = ventanaWithBanca;
-      let resolvedListeroUser = listeroUser;
 
       // Fallback si la ventanaId resuelta difiere de la inicial
       if (
@@ -376,54 +353,32 @@ export const TicketService = {
         resolvedVentanaWithBanca.id !== ventanaId
       ) {
         const t_fallback_start = performance.now();
-        [resolvedVentanaWithBanca, resolvedListeroUser] = await Promise.all([
-          CacheService.wrap(
-            `ventana:${ventanaId}`,
-            () =>
-              withConnectionRetry(
-                () =>
-                  salesPrisma.ventana.findUnique({
-                    where: { id: ventanaId },
-                    select: {
-                      id: true,
-                      bancaId: true,
-                      isActive: true,
-                      commissionPolicyJson: true,
-                      name: true,
-                      code: true,
-                      phone: true,
-                      settings: true,
-                      banca: {
-                        select: { id: true, commissionPolicyJson: true },
-                      },
+        resolvedVentanaWithBanca = await CacheService.wrap(
+          `ventana:${ventanaId}`,
+          () =>
+            withConnectionRetry(
+              () =>
+                salesPrisma.ventana.findUnique({
+                  where: { id: ventanaId },
+                  select: {
+                    id: true,
+                    bancaId: true,
+                    isActive: true,
+                    commissionPolicyJson: true,
+                    name: true,
+                    code: true,
+                    phone: true,
+                    settings: true,
+                    banca: {
+                      select: { id: true, commissionPolicyJson: true },
                     },
-                  }),
-                { context: "TicketService.create.ventana" },
-              ),
-            3600,
-            [`ventana:${ventanaId}`, `banca:${ventanaId}`],
-          ),
-          CacheService.wrap(
-            `listero:${ventanaId}`,
-            () =>
-              withConnectionRetry(
-                () =>
-                  salesPrisma.user.findFirst({
-                    where: {
-                      role: Role.VENTANA,
-                      ventanaId: ventanaId,
-                      isActive: true,
-                      deletedAt: null,
-                    },
-                    select: { id: true, commissionPolicyJson: true },
-                    orderBy: { updatedAt: "desc" },
-                  }),
-                { context: "TicketService.create.listero" },
-              ),
-            3600,
-            [`ventana:${ventanaId}`],
-          ),
-        ]);
+                  },
+                }),
+              { context: "TicketService.create.ventana" },
+            ),
+          86400, // 24 hours TTL (Event-Driven: invalidación al editar ventana/banca)
+          [`ventana:${ventanaId}`],
+        );
         try {
           if (timingCollector.prefetch_breakdown) {
             timingCollector.prefetch_breakdown.t_resolved_ventana =
@@ -584,7 +539,7 @@ export const TicketService = {
         vendedorToPass?.commissionPolicyJson ?? null,
         resolvedVentanaWithBanca?.commissionPolicyJson ?? null,
         resolvedVentanaWithBanca?.banca?.commissionPolicyJson ?? null,
-        resolvedListeroUser?.commissionPolicyJson ?? null,
+        null,
       );
       try {
         if (timingCollector.prefetch_breakdown) {

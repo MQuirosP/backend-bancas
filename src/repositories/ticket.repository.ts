@@ -43,7 +43,7 @@ import { VendorCreditService } from "../domain/credit/vendorCredit.service";
 export type { CreateTicketInput, CreateTicketOptions, TicketWarning };
 
 
-const RULES_CACHE_TTL_SECONDS = 300; // 5 minutos en Redis L2 (Zero-L1: sin memoria local por proceso)
+const RULES_CACHE_TTL_SECONDS = 86400; // 24 horas en Redis L2 (Event-Driven: invalidación por mutación de reglas)
 
 export function buildRulesCacheKey(params: {
   userId: string;
@@ -444,7 +444,7 @@ export async function resolveBaseMultiplierX(
         400
       );
     },
-    3600, // 1 hora en Redis (3600 segundos)
+    86400, // 24 horas en Redis (Event-Driven: invalidación por mutación de override/setting)
     [
       `user-override:${userId}`,
       `ventana-override:${ventanaId}`,

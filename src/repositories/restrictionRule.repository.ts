@@ -10,7 +10,7 @@ import { invalidateRestrictionRulesCache } from "./ticket.repository";
 import { bumpRestrictionsVersion } from "../utils/restrictionCompiledCache";
 import { CacheService, CacheEvents } from "../core/cache.service";
 
-const CUTOFF_CACHE_TTL_SECONDS = 7200; // 2 horas en Redis L2 (antes 300s)
+const CUTOFF_CACHE_TTL_SECONDS = 86400; // 24 horas en Redis L2 (Event-Driven: invalidación por mutación de cutoff)
 const CUTOFF_L1_TTL_MS = 30 * 60 * 1000; // 30 minutos en memoria local L1 (CacheService)
 const CUTOFF_LOCAL_RAM_TTL_MS = 60 * 1000; // 60 segundos TTL en RAM local pura
 
