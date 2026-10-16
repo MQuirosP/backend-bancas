@@ -35,12 +35,12 @@ async function fetchVentanas(bancaId: string): Promise<Array<{ id: string; name:
   return await VendorOpsService.listVentanas(bancaId);
 }
 
-async function searchVendorsApi(query: string): Promise<any[]> {
+async function searchVendorsApi(query?: string, bancaId?: string | null): Promise<any[]> {
   if (IS_RENDER) {
-    const res = await callOpsApi('/vendor/search', { query });
+    const res = await callOpsApi('/vendor/search', { query, bancaId });
     return res.vendors || [];
   }
-  return await VendorOpsService.searchVendors(query);
+  return await VendorOpsService.searchVendors(query, bancaId);
 }
 
 async function getVendorAuditApi(vendedorId: string): Promise<VendorAuditInfo> {
@@ -75,26 +75,66 @@ export async function runVendorOpsWizard() {
     console.log(`======================================================================`);
     console.log(`💡  ${colors.dim}Escriba "B" en cualquier momento para regresar al menú principal.${colors.reset}\n`);
 
-    const query = await ask(`1. Ingrese el nombre, usuario o código del vendedor a buscar\n   [ENTER para listar los primeros 50, B para volver]: `);
-    if (isBack(query)) return;
+    console.log(`⏳  Obteniendo lista de bancas activas...`);
+    let bancas: Array<{ id: string; name: string }> = [];
+    try {
+      bancas = await fetchBancas();
+    } catch (err: any) {
+      console.log(`❌  Error al obtener bancas: ${err.message}`);
+      await ask(`\nPresione ENTER para reintentar...`);
+      continue;
+    }
 
-    console.log(`\n⏳  Buscando vendedores...`);
+    console.log(`\n🏛️   ${colors.bold}SELECCIONE LA BANCA DEL VENDEDOR:${colors.reset}`);
+    bancas.forEach((b, idx) => {
+      console.log(`  [${idx + 1}] ${colors.bold}${b.name}${colors.reset} [ID: ${colors.dim}${b.id}${colors.reset}]`);
+    });
+    console.log(`  [S] 🔍  ${colors.brightYellow}Buscar Globalmente por Nombre, Código o Usuario${colors.reset}`);
+    console.log(`  [B] ⬅️   Volver al menú principal`);
+
+    const bancaChoice = await ask(`\nOpción (1-${bancas.length}, S para búsqueda global o B): `);
+    if (isBack(bancaChoice)) return;
+
+    let targetBancaId: string | null = null;
+    let targetBancaName: string | null = null;
+    let queryText = '';
+
+    if (bancaChoice.toLowerCase() === 's') {
+      const q = await ask(`\n🔍  Ingrese el nombre, usuario o código a buscar: `);
+      if (isBack(q) || !q.trim()) continue;
+      queryText = q.trim();
+    } else {
+      const bIdx = parseInt(bancaChoice, 10);
+      if (isNaN(bIdx) || bIdx < 1 || bIdx > bancas.length) {
+        console.log(`❌  Opción no válida.`);
+        await ask(`\nPresione ENTER para continuar...`);
+        continue;
+      }
+      targetBancaId = bancas[bIdx - 1].id;
+      targetBancaName = bancas[bIdx - 1].name;
+
+      const filterInput = await ask(`\nFiltrar vendedores en ${colors.bold}${targetBancaName}${colors.reset}\n[ENTER para listar todos, o escriba parte del nombre/código, B para volver]: `);
+      if (isBack(filterInput)) continue;
+      queryText = filterInput.trim();
+    }
+
+    console.log(`\n⏳  Consultando vendedores...`);
     let vendors: any[] = [];
     try {
-      vendors = await searchVendorsApi(query);
+      vendors = await searchVendorsApi(queryText, targetBancaId);
     } catch (err: any) {
-      console.log(`❌  Error al buscar vendedores: ${err.message}`);
+      console.log(`❌  Error al consultar vendedores: ${err.message}`);
       await ask(`\nPresione ENTER para continuar...`);
       continue;
     }
 
     if (vendors.length === 0) {
-      console.log(`❌  No se encontraron vendedores que coincidan con la búsqueda.`);
+      console.log(`❌  No se encontraron vendedores${targetBancaName ? ` en ${targetBancaName}` : ''}${queryText ? ` con el filtro "${queryText}"` : ''}.`);
       await ask(`\nPresione ENTER para reintentar...`);
       continue;
     }
 
-    console.log(`\n📋  ${colors.bold}VENDEDORES ENCONTRADOS (${vendors.length}):${colors.reset}`);
+    console.log(`\n📋  ${colors.bold}VENDEDORES ENCONTRADOS (${vendors.length})${targetBancaName ? ` EN ${targetBancaName}` : ''}:${colors.reset}`);
     console.log(`----------------------------------------------------------------------`);
     vendors.forEach((v, idx) => {
       const bName = v.banca?.name || `${colors.red}Sin Banca${colors.reset}`;
@@ -103,10 +143,10 @@ export async function runVendorOpsWizard() {
       console.log(`  [${idx + 1}] ${colors.bold}${v.name}${colors.reset} (@${v.username || 'sin_usuario'}) │ Código: ${colors.brightCyan}${v.code || 'N/A'}${colors.reset} │ Estado: ${status}`);
       console.log(`      Banca: ${colors.bold}${bName}${colors.reset} │ Listero/Ventana: ${colors.bold}${vName}${colors.reset} │ ID: ${colors.dim}${v.id}${colors.reset}`);
     });
-    console.log(`  [B] ⬅️  Volver`);
+    console.log(`  [B] ⬅️  Volver a la selección de banca`);
 
-    const selection = await ask(`\nSeleccione el número del vendedor (1-${vendors.length}): `);
-    if (isBack(selection)) return;
+    const selection = await ask(`\nSeleccione el número del vendedor (1-${vendors.length} o B): `);
+    if (isBack(selection)) continue;
 
     const sIdx = parseInt(selection, 10);
     if (isNaN(sIdx) || sIdx < 1 || sIdx > vendors.length) {
