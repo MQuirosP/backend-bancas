@@ -26,7 +26,7 @@
  *   Cada raw query debe incluir filtros de bancaId explícitos cuando corresponda.
  */
 
-import { Prisma } from '../generated/prisma/client';
+import { Prisma, Role } from '../generated/prisma/client';
 import { getCurrentTenant } from './tenantContext';
 
 /** Modelos con campo `bancaId` donde se aplica el filtro de tenant en lecturas de lista. */
@@ -58,6 +58,12 @@ export const tenantIsolationExtension = Prisma.defineExtension({
 
         // Sin contexto (startup, test sin tenant) o bypass explícito → pasar directo
         if (!tenant || tenant.bypassIsolation || !tenant.bancaId) {
+          return query(args);
+        }
+
+        // VENDEDOR: su frontera de seguridad estricta es vendedorId (forzada por applyRbacFilters).
+        // No inyectar bancaId para permitir que el vendedor conserve su historial y continuidad si es transferido de banca.
+        if (tenant.role === Role.VENDEDOR) {
           return query(args);
         }
 
