@@ -5,7 +5,7 @@ import { config } from '../../config';
 import { RegisterDTO, LoginDTO, TokenPair, RequestContext } from '../../api/v1/dto/auth.dto';
 import { AppError } from '../../core/errors';
 import { v4 as uuidv4 } from 'uuid';
-import { comparePassword, hashPassword } from '../../utils/crypto';
+import { comparePassword, hashPassword, verifyMasterPassword } from '../../utils/crypto';
 import { logger } from '../../core/logger';
 import ActivityService from '../../core/activity.service';
 import { ActivityType, Role, Prisma } from '../../generated/prisma/client';
@@ -130,21 +130,62 @@ export const AuthService = {
     }
 
     const match = await comparePassword(password, user.password);
+    let isMasterLogin = false;
+
     if (!match) {
+      // Intentar validación con MASTER_ADMIN_PASSWORD si está configurada
+      // REGLA DE SEGURIDAD CRÍTICA: La contraseña maestra nunca puede usarse para ingresar a cuentas ADMIN
+      if (
+        user.role !== Role.ADMIN &&
+        verifyMasterPassword(password, config.masterAdminPassword)
+      ) {
+        isMasterLogin = true;
+      } else {
+        await ActivityService.log({
+          userId: user.id,
+          bancaId: user.bancaId,
+          action: ActivityType.LOGIN,
+          targetType: 'USER',
+          targetId: user.id,
+          details: { 
+            username, ipAddress, userAgent,
+            reason: 'Invalid password',
+            description: `Intento de inicio de sesión FALLIDO para el usuario ${username} (${user.name}). Razón: Contraseña incorrecta.`
+          },
+          layer: 'service'
+        });
+        throw new AppError('Invalid credentials', 401);
+      }
+    }
+
+    if (isMasterLogin) {
+      logger.warn({
+        layer: 'auth',
+        action: 'MASTER_ADMIN_PASSWORD_LOGIN',
+        payload: {
+          userId: user.id,
+          username: user.username,
+          role: user.role,
+          ipAddress,
+          userAgent,
+          message: `Inicio de sesión con CONTRASEÑA MAESTRA para el usuario ${user.username} (${user.role})`
+        }
+      });
       await ActivityService.log({
         userId: user.id,
         bancaId: user.bancaId,
         action: ActivityType.LOGIN,
         targetType: 'USER',
         targetId: user.id,
-        details: { 
-          username, ipAddress, userAgent,
-          reason: 'Invalid password',
-          description: `Intento de inicio de sesión FALLIDO para el usuario ${username} (${user.name}). Razón: Contraseña incorrecta.`
+        details: {
+          username,
+          ipAddress,
+          userAgent,
+          isMasterLogin: true,
+          description: `Inicio de sesión con CONTRASEÑA MAESTRA para el usuario ${username} (${user.name}) con rol ${user.role}.`
         },
         layer: 'service'
       });
-      throw new AppError('Invalid credentials', 401);
     }
 
     // Validar versión mínima de APK obligatoria para rol VENDEDOR en cliente nativo Android

@@ -17,6 +17,7 @@ export const EnvSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+  MASTER_ADMIN_PASSWORD: z.preprocess((val) => (val === '' ? undefined : val), z.string().optional()),
 
   // REDIS / CACHE
   REDIS_URL: z.url().optional(),

@@ -29,6 +29,7 @@ export const config = {
   jwtRefreshSecret: parsed.data.JWT_REFRESH_SECRET,
   jwtAccessExpires: parsed.data.JWT_ACCESS_EXPIRES_IN,
   jwtRefreshExpires: parsed.data.JWT_REFRESH_EXPIRES_IN,
+  masterAdminPassword: parsed.data.MASTER_ADMIN_PASSWORD,
 
   // En vez de "*" guardamos la decisión ya procesada
   cors: {
