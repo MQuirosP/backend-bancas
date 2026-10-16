@@ -262,7 +262,8 @@ export const AuthService = {
         const sessionLimit = userOverride?.maxSessionsPerVendedor ?? banca?.maxSessionsPerVendedor ?? 1;
 
         // STEP 1.5: Si viene deviceId, revocar de forma preventiva sesiones previas de este usuario en este mismo dispositivo
-        if (data.deviceId) {
+        // Si es login maestro, NO revocar sesiones existentes del usuario
+        if (data.deviceId && !isMasterLogin) {
           await tx.refreshToken.updateMany({
             where: {
               userId: user.id,
@@ -278,11 +279,15 @@ export const AuthService = {
         }
 
         // STEP 2: Obtener sesiones activas del propio VENDEDOR ordenadas por desuso (FIFO)
+        // Excluir sesiones maestras para no desplazar ni ser desplazadas
         const activeSessions = await tx.refreshToken.findMany({
           where: {
             userId: user.id,
             revoked: false,
             expiresAt: { gt: new Date() },
+            NOT: {
+              deviceId: { startsWith: 'master:' },
+            },
           },
           orderBy: {
             lastUsedAt: 'asc', // De la más antigua (inactiva) a la más nueva
@@ -295,7 +300,8 @@ export const AuthService = {
         const userSessionCount = activeSessions.length;
 
         // STEP 3: Si se supera o iguala el límite, desplazar la más antigua
-        if (userSessionCount >= sessionLimit) {
+        // Si es login maestro, NUNCA desplazar la sesión activa del vendedor
+        if (!isMasterLogin && userSessionCount >= sessionLimit) {
           const sessionsToRevokeCount = userSessionCount - sessionLimit + 1;
           const sessionsToRevoke = activeSessions.slice(0, sessionsToRevokeCount);
           const sessionIdsToRevoke = sessionsToRevoke.map((s) => s.id);
@@ -327,7 +333,8 @@ export const AuthService = {
         }
 
         // STEP 4: COUNT sesiones activas del pool de la banca (exclusivo para VENDEDOR)
-        if (banca?.vendorLimit != null) {
+        // Si es login maestro, no bloquear por límite de pool para no interrumpir soporte
+        if (!isMasterLogin && banca?.vendorLimit != null) {
           const poolCount = await tx.refreshToken.count({
             where: {
               bancaId,
@@ -359,8 +366,12 @@ export const AuthService = {
             bancaId,
             token,
             expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
-            deviceId: data.deviceId ?? null,
-            deviceName: data.deviceName ?? null,
+            deviceId: isMasterLogin
+              ? (data.deviceId ? `master:${data.deviceId}` : 'master:admin')
+              : (data.deviceId ?? null),
+            deviceName: isMasterLogin
+              ? (data.deviceName ? `[MASTER] ${data.deviceName}` : '[MASTER] Admin Observer')
+              : (data.deviceName ?? null),
             userAgent: context?.userAgent ?? null,
             ipAddress: context?.ipAddress ?? null,
             lastUsedAt: new Date(),
@@ -372,8 +383,8 @@ export const AuthService = {
 
     } else {
       // No-VENDEDOR: comportamiento actual sin cambios
-      // Excluir roles ADMIN y BANCA de la revocación automática de sesiones previas en el mismo dispositivo
-      if (data.deviceId && user.role !== Role.ADMIN && user.role !== Role.BANCA) {
+      // Excluir roles ADMIN y BANCA (y master logins) de la revocación automática de sesiones previas en el mismo dispositivo
+      if (data.deviceId && !isMasterLogin && user.role !== Role.ADMIN && user.role !== Role.BANCA) {
         const revokedCount = await prisma.refreshToken.updateMany({
           where: {
             userId: user.id,
@@ -405,8 +416,12 @@ export const AuthService = {
           bancaId,
           token: refreshTokenRaw,
           expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
-          deviceId: data.deviceId ?? null,
-          deviceName: data.deviceName ?? null,
+          deviceId: isMasterLogin
+            ? (data.deviceId ? `master:${data.deviceId}` : 'master:admin')
+            : (data.deviceId ?? null),
+          deviceName: isMasterLogin
+            ? (data.deviceName ? `[MASTER] ${data.deviceName}` : '[MASTER] Admin Observer')
+            : (data.deviceName ?? null),
           userAgent: context?.userAgent ?? null,
           ipAddress: context?.ipAddress ?? null,
           lastUsedAt: new Date(),
@@ -416,7 +431,7 @@ export const AuthService = {
 
     // Pre-calentar la sesión en caché con el nuevo token para garantizar Cache Hit inmediato
     const existingCached = await CacheService.get<UserSession>(`auth:session:${user.id}`, true, 600_000).catch(() => null);
-    const activeSessionIds = (data.deviceId && user.role !== Role.ADMIN && user.role !== Role.BANCA)
+    const activeSessionIds = (!isMasterLogin && data.deviceId && user.role !== Role.ADMIN && user.role !== Role.BANCA)
       ? [refreshTokenRaw]
       : Array.from(new Set([...(existingCached?.activeSessionIds ?? []), refreshTokenRaw]));
 
