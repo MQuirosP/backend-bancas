@@ -2925,10 +2925,11 @@ gs."hour24" ASC
                 const totalBalance = totalSales - totalPrizes - totalCommission;
                 const totalRemainingBalance = totalBalance - totalCollected + totalPaid;
 
-                // El acumulado real del día (antes de AccountStatement) es el del último evento de ese día.
-                // Como eventsDelDia ya está ordenado cronológicamente, el último evento tiene el closing balance.
-                const lastEvent = eventsDelDia.length > 0 ? eventsDelDia[eventsDelDia.length - 1] : null;
-                const dynamicAccumulated = lastEvent ? lastEvent.accumulated : 0;
+                // El acumulado real de cierre del día es el del evento más reciente (mayor chronologicalIndex)
+                const closingEvent = eventsDelDia.length > 0
+                  ? eventsDelDia.reduce((max, e) => ((e.chronologicalIndex || 0) > (max.chronologicalIndex || 0) ? e : max), eventsDelDia[0])
+                  : null;
+                const dynamicAccumulated = closingEvent ? closingEvent.accumulated : 0;
 
                 const dayTotals = {
                   totalSales,
@@ -2942,7 +2943,7 @@ gs."hour24" ASC
                   totalBalance,
                   totalRemainingBalance,
                   totalSubtotal: totalRemainingBalance,
-                  accumulated: dynamicAccumulated, // Se inicializa con el calculado (fallback si falta en AccountStatement)
+                  accumulated: dynamicAccumulated, // Se inicializa con el calculado del evento de cierre
                 };
 
                 //  ACTUALIZADO: Formatear todos los eventos (sorteos + movimientos)
@@ -3016,18 +3017,15 @@ gs."hour24" ASC
             }
 
             // Asignar accumulated a cada día desde AccountStatement.
-            //  FIX: Para hoy (día activo), si AccountStatement aún no tiene el acumulado
-            //  actualizado (valor 0 o ausente), mantener el valor ya calculado dinámicamente
-            //  desde el event flow (initialAccumulatedForRange + subtotales del día).
+            // Para días pasados (< hoy), el valor de DB es la fuente de verdad definitiva (incluso si es 0).
+            // Para hoy, si la DB tiene un valor != 0 se usa, si no, se mantiene el dynamicAccumulated.
             const todayStr = crDateService.dateUTCToCRString(new Date());
             for (const day of daysArray) {
               const fromDb = accumulatedByDate.get(day.date);
-              if (fromDb !== undefined && fromDb !== 0) {
-                // Hay valor guardado en DB y no es 0 → usar el de DB (fuente de verdad)
+              const isPastDay = day.date < todayStr;
+              if (fromDb !== undefined && (isPastDay || fromDb !== 0)) {
                 day.dayTotals.accumulated = fromDb;
               }
-              // Si fromDb === 0 o undefined, mantenemos el dynamicAccumulated que fue 
-              // calculado dinámicamente de forma matemática sumando todos los eventos.
             }
 
             // Ocultar días anteriores al reset únicamente para el vendedor si ignoreReset no está activo
