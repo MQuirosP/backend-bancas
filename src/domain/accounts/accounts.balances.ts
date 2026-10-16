@@ -156,9 +156,7 @@ export async function calculatePreviousMonthBalanceFromSource(
 
         if (filters.vendedorId) {
             paymentsWhere.vendedorId = filters.vendedorId;
-            if (filters.bancaId) {
-                paymentsWhere.bancaId = filters.bancaId;
-            }
+            // Para dimensión vendedor con ID específico, la continuidad financiera le pertenece al vendedor
         } else if (filters.ventanaId) {
             paymentsWhere.ventanaId = filters.ventanaId;
             if (filters.bancaId) {
@@ -250,7 +248,8 @@ export async function getPreviousMonthFinalBalance(
         if (dimension === "vendedor") {
             if (vendedorId) {
                 where.vendedorId = vendedorId;
-                if (bancaId) where.bancaId = bancaId;
+                // Para dimensión vendedor con ID específico, la continuidad financiera le pertenece al vendedor
+                // (no se filtra por bancaId para no omitir meses activos en otra banca ni revivir saldos zombies del pasado)
             } else {
                 isConsolidated = true;
                 if (ventanaId) where.ventanaId = ventanaId;

@@ -261,7 +261,7 @@ export async function getMonthlyRemainingBalance(
 
     if (dimension === "vendedor" && vendedorId) {
         where.vendedorId = vendedorId;
-        if (bancaId) where.bancaId = bancaId;
+        // Para vendedor específico no filtramos por bancaId para preservar la continuidad histórica
     } else if (dimension === "ventana" && ventanaId) {
         where.ventanaId = ventanaId;
         where.vendedorId = null; // Statement consolidado de ventana
@@ -584,7 +584,8 @@ export const AccountsService = {
         };
 
         // Filtro por bancaId si se especifica en los filtros
-        if (bancaId) {
+        // Para vendedor individual (dimension === "vendedor" y vendedorId presente), la línea temporal del vendedor es continua
+        if (bancaId && !(dimension === "vendedor" && vendedorId)) {
             where.bancaId = bancaId;
         }
 
@@ -849,7 +850,7 @@ export const AccountsService = {
                 const prevStmt = await prisma.accountStatement.findFirst({
                     where: {
                         date: dayBefore,
-                        ...(dimension === "vendedor" && vendedorId ? { vendedorId, ...(bancaId ? { bancaId } : {}) } : {}),
+                        ...(dimension === "vendedor" && vendedorId ? { vendedorId } : {}),
                         ...(dimension === "ventana" && ventanaId ? { ventanaId, vendedorId: null, ...(bancaId ? { bancaId } : {}) } : {}),
                         ...(dimension === "banca" && bancaId ? { bancaId, ventanaId: null, vendedorId: null } : {}),
                     },
@@ -1184,9 +1185,9 @@ export const AccountsService = {
                     } else {
                         // Para otras dimensiones (ventana, vendedor), usar findByDate
                         dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
-                            ventanaId: targetVentanaId,
+                            ventanaId: filters.dimension === "vendedor" ? undefined : targetVentanaId,
                             vendedorId: targetVendedorId,
-                        });
+                        }, tx);
                     }
 
                     if (!dbStatement) {
@@ -1199,7 +1200,7 @@ export const AccountsService = {
 
                         const anyStatementInMonth = await tx.accountStatement.findFirst({
                             where: {
-                                date: { gte: monthStartUTC, lte: monthEndUTC },
+                                date: { gte: monthStartUTC, lte: previousDayDate },
                                 ...(filters.dimension === "vendedor" && targetVendedorId ? { vendedorId: targetVendedorId } : {}),
                                 ...(filters.dimension === "ventana" && targetVentanaId ? { ventanaId: targetVentanaId, vendedorId: null } : {}),
                                 ...(filters.dimension === "banca" && targetBancaId ? { bancaId: targetBancaId, ventanaId: null, vendedorId: null } : {}),
@@ -1275,7 +1276,7 @@ export const AccountsService = {
                                     });
                                 } else {
                                     dbStatement = await AccountStatementRepository.findByDate(previousDayDate, {
-                                        ventanaId: targetVentanaId,
+                                        ventanaId: filters.dimension === "vendedor" ? undefined : targetVentanaId,
                                         vendedorId: targetVendedorId,
                                     }, tx);
                                 }
