@@ -4,6 +4,7 @@ import { CacheService } from '../../core/cache.service';
 import logger from '../../core/logger';
 import { Role } from '../../generated/prisma/client';
 import { AppError } from '../../core/errors';
+import { config } from '../../config';
 
 export interface RedisKeyItem {
   key: string;            // Clave sin prefijo (ej: "auth:session:uuid")
@@ -66,19 +67,45 @@ export function categorizeRedisKey(key: string): { category: RedisKeyCategory; d
 }
 
 export class RedisOpsService {
+  private static directClient: any = null;
+
   /**
-   * Garantiza que el cliente Redis esté conectado y disponible
+   * Garantiza un cliente Redis conectado con timeout generoso para CLI y Render
    */
   private static async getReadyClient() {
-    let redis = getRedisClient();
-    if (!isRedisAvailable() || !redis) {
-      await initRedisClient();
-      redis = getRedisClient();
+    // 1. Si ya hay un cliente general disponible en el servidor, reutilizarlo
+    const existing = getRedisClient();
+    if (existing && isRedisAvailable()) {
+      return existing;
     }
-    if (!redis) {
-      throw new AppError('El servicio de Redis no está disponible o no está configurado.', 503, 'REDIS_UNAVAILABLE');
+
+    // 2. Si ya instanciamos un cliente directo en esta sesión CLI y sigue activo
+    if (this.directClient && this.directClient.status === 'ready') {
+      return this.directClient;
     }
-    return redis;
+
+    // 3. Obtener URL de Redis de .env.local o .env
+    const redisUrl = process.env.REDIS_URL || config.redis.url;
+    if (!redisUrl) {
+      throw new AppError('REDIS_URL no está configurado en las variables de entorno (.env o .env.local).', 503, 'REDIS_NOT_CONFIGURED');
+    }
+
+    // 4. Instanciar cliente directo sin prefijo forzado para visibilidad total de prod: y local:
+    const Redis = (await import('ioredis')).default;
+    this.directClient = new Redis(redisUrl, {
+      password: process.env.REDIS_TOKEN || config.redis.token || undefined,
+      connectTimeout: 15000,
+      lazyConnect: true,
+      maxRetriesPerRequest: 2,
+    });
+
+    try {
+      await this.directClient.connect();
+      return this.directClient;
+    } catch (err: any) {
+      this.directClient = null;
+      throw new AppError(`No se pudo conectar a Redis (${err.message}). Verifique la conexión a internet y el REDIS_URL.`, 503, 'REDIS_CONNECTION_FAILED');
+    }
   }
 
   /**
@@ -221,32 +248,35 @@ export class RedisOpsService {
       } while (cursor !== '0');
     }
 
-    // Normalizar claves (remover el prefijo si ioredis lo incluyó)
+    // Normalizar claves (remover prefijos prod: / local: para visualización amigable)
     const cleanKeyMap = new Map<string, string>(); // cleanKey -> rawKey
     for (const rawKey of Array.from(rawFoundKeys)) {
       let cleanKey = rawKey;
       if (keyPrefix && rawKey.startsWith(keyPrefix)) {
         cleanKey = rawKey.slice(keyPrefix.length);
+      } else if (rawKey.startsWith('prod:')) {
+        cleanKey = rawKey.slice(5);
+      } else if (rawKey.startsWith('local:')) {
+        cleanKey = rawKey.slice(6);
       }
       cleanKeyMap.set(cleanKey, rawKey);
     }
 
-    const cleanKeys = Array.from(cleanKeyMap.keys());
     const items: RedisKeyItem[] = [];
+    const entries = Array.from(cleanKeyMap.entries());
 
-    if (cleanKeys.length > 0) {
-      // Pipeline para obtener tipo y TTL de todas las claves en 1 solo round-trip
+    if (entries.length > 0) {
+      // Pipeline para obtener tipo y TTL de todas las claves en 1 solo round-trip usando la clave real en Redis
       const pipeline = redis.pipeline();
-      for (const k of cleanKeys) {
-        pipeline.type(k);
-        pipeline.ttl(k);
+      for (const [, rawKey] of entries) {
+        pipeline.type(rawKey);
+        pipeline.ttl(rawKey);
       }
       const results = await pipeline.exec();
 
       if (results) {
-        for (let i = 0; i < cleanKeys.length; i++) {
-          const cleanKey = cleanKeys[i];
-          const rawKey = cleanKeyMap.get(cleanKey) || cleanKey;
+        for (let i = 0; i < entries.length; i++) {
+          const [cleanKey, rawKey] = entries[i];
           const typeErr = results[i * 2]?.[0];
           const typeVal = results[i * 2]?.[1] as string || 'unknown';
           const ttlErr = results[i * 2 + 1]?.[0];
@@ -299,17 +329,29 @@ export class RedisOpsService {
     }
 
     const redis = await this.getReadyClient();
-    const keyPrefix = (redis as any).options?.keyPrefix || '';
 
-    // Normalizar claves asegurando no duplicar prefijos
-    const cleanKeys = keys.map((k) => (keyPrefix && k.startsWith(keyPrefix) ? k.slice(keyPrefix.length) : k));
+    // Normalizar variantes de claves para garantizar borrado tanto con prod: como con local: y raw
+    const allKeysToUnlink = new Set<string>();
+    for (const k of keys) {
+      allKeysToUnlink.add(k);
+      if (k.startsWith('prod:')) {
+        allKeysToUnlink.add(k.slice(5));
+      } else if (k.startsWith('local:')) {
+        allKeysToUnlink.add(k.slice(6));
+      } else {
+        allKeysToUnlink.add(`prod:${k}`);
+        allKeysToUnlink.add(`local:${k}`);
+      }
+    }
+
+    const unlinkedTargets = Array.from(allKeysToUnlink);
 
     // Borrado no bloqueante con UNLINK en lotes
     const BATCH_SIZE = 100;
     let totalUnlinked = 0;
 
-    for (let i = 0; i < cleanKeys.length; i += BATCH_SIZE) {
-      const batch = cleanKeys.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < unlinkedTargets.length; i += BATCH_SIZE) {
+      const batch = unlinkedTargets.slice(i, i + BATCH_SIZE);
       const unlinked = await redis.unlink(...batch);
       totalUnlinked += unlinked;
 
@@ -330,15 +372,15 @@ export class RedisOpsService {
       action: 'REDIS_KEYS_DELETED_MANUAL',
       payload: {
         vendedorId,
-        keysCount: cleanKeys.length,
+        keysCount: unlinkedTargets.length,
         unlinkedCount: totalUnlinked,
-        sampleKeys: cleanKeys.slice(0, 5),
+        sampleKeys: unlinkedTargets.slice(0, 5),
       },
     });
 
     return {
       deletedCount: totalUnlinked,
-      deletedKeys: cleanKeys,
+      deletedKeys: unlinkedTargets,
     };
   }
 

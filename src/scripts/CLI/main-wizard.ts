@@ -1,4 +1,13 @@
-import 'dotenv/config';
+import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
+
+// Prioridad: .env.local (desarrollo local), luego .env
+const envLocalPath = path.resolve(process.cwd(), '.env.local');
+if (fs.existsSync(envLocalPath)) {
+  dotenv.config({ path: envLocalPath });
+}
+dotenv.config();
 import { ask, isBack, rl, clearScreen } from './helpers';
 import prisma from '../../core/prismaClient';
 import { crDateService } from '../../utils/crDateService';
