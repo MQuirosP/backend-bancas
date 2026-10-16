@@ -419,7 +419,7 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
         "200",
         "1",
         "NORMAL",
-        "43200",
+        "86400",
         "s-1",
         "100"
       );

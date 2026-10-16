@@ -46,7 +46,7 @@ export interface CreditStatusResponse {
   truncated?: boolean;
 }
 
-const DEFAULT_TTL_SECONDS = 43200; // 12 horas
+const DEFAULT_TTL_SECONDS = 86400; // 24 horas (cubre la jornada operativa completa)
 const REDIS_COMMAND_TIMEOUT_MS = 250; // Timeout estricto de comando Redis
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ end
 local threshold = tonumber(redis.call('hget', KEYS[1], 'threshold')) or 80
 local blockMode = tonumber(redis.call('hget', KEYS[1], 'blockMode')) or 1
 local oldStatus = redis.call('hget', KEYS[1], 'status') or 'NORMAL'
-local ttl = tonumber(ARGV[3]) or 43200
+local ttl = tonumber(ARGV[3]) or 86400
 
 -- Caso 1: Vendedor sin límite (sentinela -1): NO reserva nada en open_by_sorteo
 if limit == -1 then
@@ -122,6 +122,9 @@ if projected > limit then
       effective_status = 'BLOCKED'
       redis.call('hset', KEYS[1], 'status', 'BLOCKED')
     end
+    redis.call('expire', KEYS[1], ttl)
+    redis.call('expire', KEYS[2], ttl)
+    redis.call('expire', KEYS[3], ttl)
     return {'BLOCKED', tostring(current_bal), tostring(current_pct), effective_status, oldStatus}
   else
     -- Modo Alerta solamente: SÍ reserva pero marca estado
@@ -165,7 +168,7 @@ return {'OK', tostring(projected), tostring(pct), 'NORMAL', oldStatus}
  * ARGV[5..]: sorteoId_1, amt_1, sorteoId_2, amt_2...
  */
 export const ATOMIC_UPDATE_BASE_AND_OPEN_LUA = `
-local ttl = tonumber(ARGV[4]) or 43200
+local ttl = tonumber(ARGV[4]) or 86400
 local newBase = ARGV[1]
 local pairCount = tonumber(ARGV[2]) or 0
 local newStatus = ARGV[3]
@@ -1098,20 +1101,26 @@ export class VendorCreditService {
     let totalOpen = 0;
     let projected = 0;
 
-    // Vendedores con tope configurado (>0): cargar balances y ventas abiertas reales desde BD
+    // Vendedores con tope configurado (>0): cargar balances y ventas abiertas reales desde BD en paralelo
     if (hasLimit) {
-      // 2. Obtener saldo base desde el último AccountStatement con date <= hoy
       const todayCRStr = tz.toDateStr();
       const todayDateUTC = tz.parse(todayCRStr);
+      const daysWindow = config.creditLimit.openSalesDaysWindow || 2;
+      const windowDateUTC = new Date(todayDateUTC.getTime() - daysWindow * 24 * 60 * 60 * 1000);
+      const windowDateStr = tz.toDateStr(windowDateUTC);
 
-      const lastStatement = await prisma.accountStatement.findFirst({
-        where: {
-          vendedorId,
-          date: { lte: todayDateUTC },
-        },
-        orderBy: { date: "desc" },
-        select: { accumulatedBalance: true, date: true },
-      });
+      // 2. Consulta concurrente a AccountStatement y fetchOpenSales
+      const [lastStatement, openSales] = await Promise.all([
+        prisma.accountStatement.findFirst({
+          where: {
+            vendedorId,
+            date: { lte: todayDateUTC },
+          },
+          orderBy: { date: "desc" },
+          select: { accumulatedBalance: true, date: true },
+        }),
+        this.fetchOpenSales(vendedorId, windowDateStr),
+      ]);
 
       if (lastStatement) {
         baseBalance = lastStatement.accumulatedBalance ?? 0;
@@ -1122,14 +1131,6 @@ export class VendorCreditService {
           baseBalance = 0;
         }
       }
-
-      // 3. Ventana acotada de días para ventas abiertas (businessDate >= hoy - N días en zona Costa Rica)
-      const daysWindow = config.creditLimit.openSalesDaysWindow || 2;
-      const windowDateUTC = new Date(todayDateUTC.getTime() - daysWindow * 24 * 60 * 60 * 1000);
-      const windowDateStr = tz.toDateStr(windowDateUTC);
-
-      // 4. Obtener ventas netas abiertas sin correlated subquery por ticket
-      const openSales = await this.fetchOpenSales(vendedorId, windowDateStr);
 
       for (const row of openSales) {
         const val = parseFloat(String(row.netAmount)) || 0;
@@ -1260,18 +1261,24 @@ export class VendorCreditService {
       const threshold = vendor.creditAlertThreshold ?? 80;
       const blockMode = vendor.creditBlockMode ?? true;
 
-      // 2. Leer el último AccountStatement con date <= hoy
+      // 2. Consulta concurrente a AccountStatement y fetchOpenSales
       const todayCRStr = tz.toDateStr();
       const todayDateUTC = tz.parse(todayCRStr);
+      const daysWindow = config.creditLimit.openSalesDaysWindow || 2;
+      const windowDateUTC = new Date(todayDateUTC.getTime() - daysWindow * 24 * 60 * 60 * 1000);
+      const windowDateStr = tz.toDateStr(windowDateUTC);
 
-      const lastStatement = await prisma.accountStatement.findFirst({
-        where: {
-          vendedorId,
-          date: { lte: todayDateUTC },
-        },
-        orderBy: { date: "desc" },
-        select: { accumulatedBalance: true, date: true },
-      });
+      const [lastStatement, openSales] = await Promise.all([
+        prisma.accountStatement.findFirst({
+          where: {
+            vendedorId,
+            date: { lte: todayDateUTC },
+          },
+          orderBy: { date: "desc" },
+          select: { accumulatedBalance: true, date: true },
+        }),
+        this.fetchOpenSales(vendedorId, windowDateStr),
+      ]);
 
       let baseBalance = 0;
       if (lastStatement) {
@@ -1281,14 +1288,6 @@ export class VendorCreditService {
           baseBalance = 0;
         }
       }
-
-      // 3. Ventana acotada de días para ventas abiertas (businessDate >= hoy - N días en zona Costa Rica)
-      const daysWindow = config.creditLimit.openSalesDaysWindow || 2;
-      const windowDateUTC = new Date(todayDateUTC.getTime() - daysWindow * 24 * 60 * 60 * 1000);
-      const windowDateStr = tz.toDateStr(windowDateUTC);
-
-      // 4. Recalcular ventas abiertas no consolidadas desde BD con agregación directa
-      const openSales = await this.fetchOpenSales(vendedorId, windowDateStr);
 
       const openPairs: string[] = [];
       let totalOpen = 0;
@@ -1734,6 +1733,14 @@ export class VendorCreditService {
 
               const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
               const updatedAt = cfgMap.updatedAt || new Date().toISOString();
+
+              // Touch-on-Read: Renovar TTL de 24h en segundo plano ante actividad activa del vendedor
+              redis.pipeline()
+                .expire(cfg, DEFAULT_TTL_SECONDS)
+                .expire(base, DEFAULT_TTL_SECONDS)
+                .expire(open, DEFAULT_TTL_SECONDS)
+                .exec()
+                .catch(() => {});
 
               return {
                 enabled: true,
