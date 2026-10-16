@@ -9,6 +9,7 @@ import { runSorteosWizard } from './sorteos-cli';
 import { runAcopioSalesRebuild } from './acopio-cli';
 import { runMonitorEvaluation } from './monitor-evaluation-cli';
 import { runTicketsWizard } from './tickets-cli';
+import { runVendorOpsWizard } from './vendor-ops-cli';
 
 /**
  * main-wizard.ts
@@ -76,9 +77,10 @@ async function main() {
     console.log(`  [5] 🧮  Re-Agregación de Acopio de Ventas (DailyNumberSales)`);
     console.log(`  [6] 📡  Monitoreo en Tiempo Real de Sorteos y Terminales (Better Stack Logs)`);
     console.log(`  [7] 🎟️   Anulación de Tickets por Consecutivo (Soft-Delete & Resincronización)`);
+    console.log(`  [8] 🔄  Traslado y Liquidación de Vendedores (Vendor Transfer & Balance Setup)`);
     console.log(`  [0] 🚪  Salir`);
 
-    const optionChoice = await ask(`\nOpción (0-7): `);
+    const optionChoice = await ask(`\nOpción (0-8): `);
 
     if (optionChoice === '0' || isBack(optionChoice)) {
       console.log(`\n👋  Saliendo de la Suite de Soporte.`);
@@ -128,6 +130,8 @@ async function main() {
     } else if (optionChoice === '7') {
       await runTicketsWizard();
       await ask(`\nPresione ENTER para continuar...`);
+    } else if (optionChoice === '8') {
+      await runVendorOpsWizard();
     } else {
       console.log(`❌  Opción no válida.`);
     }

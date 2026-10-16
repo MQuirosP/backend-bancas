@@ -8,6 +8,7 @@ import { DailyNumberSalesService } from '../../../domain/sorteo/dailyNumberSales
 import { AccountsService } from '../../../domain/accounts/accounts.service';
 import ActivityService from '../../../core/activity.service';
 import { TicketsOpsService } from '../../../domain/ticket/ticketsOps.service';
+import { VendorOpsService } from '../../../domain/accounts/vendorOps.service';
 import { SorteoStatus, ActivityType, Prisma } from '../../../generated/prisma/client';
 
 /**
@@ -482,6 +483,114 @@ export class OpsController {
         forceWithPayments: Boolean(forceWithPayments)
       });
       res.json(result);
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista bancas activas
+   */
+  static async listBancas(req: Request, res: Response): Promise<void> {
+    try {
+      const bancas = await VendorOpsService.listBancas();
+      res.json({ success: true, bancas });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista ventanas de una banca
+   */
+  static async listVentanas(req: Request, res: Response): Promise<void> {
+    try {
+      const { bancaId } = req.body;
+      if (!bancaId) {
+        res.status(400).json({ success: false, error: 'bancaId es requerido' });
+        return;
+      }
+      const ventanas = await VendorOpsService.listVentanas(bancaId);
+      res.json({ success: true, ventanas });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Busca vendedores por texto o banca
+   */
+  static async searchVendors(req: Request, res: Response): Promise<void> {
+    try {
+      const { query, bancaId } = req.body;
+      const vendors = await VendorOpsService.searchVendors(query, bancaId);
+      res.json({ success: true, vendors });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Auditoría y posición de saldo de un vendedor
+   */
+  static async getVendorAudit(req: Request, res: Response): Promise<void> {
+    try {
+      const { vendedorId } = req.body;
+      if (!vendedorId) {
+        res.status(400).json({ success: false, error: 'vendedorId es requerido' });
+        return;
+      }
+      const audit = await VendorOpsService.getVendorAudit(vendedorId);
+      res.json({ success: true, audit });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Traslado de vendedor entre bancas / ventanas
+   */
+  static async transferVendor(req: Request, res: Response): Promise<void> {
+    try {
+      const { vendedorId, targetBancaId, targetVentanaId, balanceMode, customBalance, resetOriginBalance, notes } = req.body;
+      if (!vendedorId || !targetBancaId || !targetVentanaId || !balanceMode) {
+        res.status(400).json({ success: false, error: 'Parámetros obligatorios incompletos' });
+        return;
+      }
+      const result = await VendorOpsService.transferVendor({
+        vendedorId,
+        targetBancaId,
+        targetVentanaId,
+        balanceMode,
+        customBalance: customBalance !== undefined && customBalance !== null && customBalance !== '' ? Number(customBalance) : undefined,
+        resetOriginBalance: Boolean(resetOriginBalance),
+        notes,
+        performedByUserId: 'CLI_SUPER_ADMIN',
+      });
+      res.json({ success: true, result });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Ajuste directo de saldo de partida de un vendedor en una banca
+   */
+  static async adjustVendorBalance(req: Request, res: Response): Promise<void> {
+    try {
+      const { vendedorId, bancaId, targetBalance, reason } = req.body;
+      if (!vendedorId || !bancaId || targetBalance === undefined) {
+        res.status(400).json({ success: false, error: 'Parámetros obligatorios incompletos' });
+        return;
+      }
+      const result = await VendorOpsService.adjustBalance({
+        vendedorId,
+        bancaId,
+        targetBalance: Number(targetBalance),
+        reason,
+        performedByUserId: 'CLI_SUPER_ADMIN',
+      });
+      res.json({ success: true, result });
     } catch (err: any) {
       res.status(err.statusCode || 500).json({ success: false, error: err.message });
     }

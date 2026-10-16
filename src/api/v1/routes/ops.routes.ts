@@ -22,5 +22,11 @@ router.post('/statements/fix', OpsController.fixStatements);
 router.post('/acopio/rebuild', OpsController.auditAndRebuildAcopio);
 router.post('/tickets/preview', OpsController.previewTickets);
 router.post('/tickets/cancel', OpsController.cancelTickets);
+router.post('/vendor/bancas', OpsController.listBancas);
+router.post('/vendor/ventanas', OpsController.listVentanas);
+router.post('/vendor/search', OpsController.searchVendors);
+router.post('/vendor/audit', OpsController.getVendorAudit);
+router.post('/vendor/transfer', OpsController.transferVendor);
+router.post('/vendor/adjust-balance', OpsController.adjustVendorBalance);
 
 export default router;
