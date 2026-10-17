@@ -10,6 +10,17 @@ import { AppError } from "../../../core/errors";
 
 import { IdempotencyService } from "../../../domain/ticket/idempotency.service";
 
+function sendTicketResponse(res: Response, ticketResult: any, status = 200) {
+  if (res.headersSent) return;
+  const { creditInfo, warnings, ...ticketData } = (ticketResult || {}) as any;
+  return res.status(status).json({
+    success: true,
+    data: ticketData,
+    ...(warnings ? { warnings } : {}),
+    ...(creditInfo ? { creditInfo } : {}),
+  });
+}
+
 export const TicketController = {
   async create(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;
@@ -32,7 +43,7 @@ export const TicketController = {
             action: result.status === 'DB_HIT' ? 'IDEMPOTENCY_DB_HIT' : 'IDEMPOTENCY_HIT',
             payload: { clientRequestId, source: result.status === 'DB_HIT' ? 'DB' : 'Redis' },
           });
-          return success(res, result.cachedData);
+          return sendTicketResponse(res, result.cachedData);
 
         case 'CONFLICT':
         case 'DB_CONFLICT':
@@ -90,7 +101,7 @@ export const TicketController = {
         await IdempotencyService.commit(clientRequestId, ownerId, ticketResult, payloadHash);
       }
 
-      return success(res, ticketResult);
+      return sendTicketResponse(res, ticketResult);
 
     } catch (err: any) {
       // 4. P2002 Auto-Repair (duplicate idempotencyKey en DB)
@@ -101,7 +112,7 @@ export const TicketController = {
           );
           if (recovered) {
             if (ownerId) await IdempotencyService.rollback(clientRequestId, ownerId);
-            return success(res, recovered);
+            return sendTicketResponse(res, recovered);
           }
         } catch (repairErr) {
           req.logger?.error({ layer: 'controller', action: 'RECOVERY_FAILED', payload: { error: (repairErr as Error).message } });

@@ -179,14 +179,17 @@ describeOrSkip("HTTP E2E: Control de Crédito y Fallback Escalonado (Supertest)"
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.data.creditInfo).toBeDefined();
-    expect(res.body.data.creditInfo.limit).toBe(100000);
-    expect(res.body.data.creditInfo.effectiveBalance).toBe(90000);
-    expect(res.body.data.creditInfo.percentageUsed).toBe(90);
-    expect(res.body.data.creditInfo.status).toBe("WARNING");
+    expect(res.body.data.id).toBeDefined();
+    expect(res.body.data.creditInfo).toBeUndefined();
+    expect(res.body.data.warnings).toBeUndefined();
+    expect(res.body.creditInfo).toBeDefined();
+    expect(res.body.creditInfo.limit).toBe(100000);
+    expect(res.body.creditInfo.effectiveBalance).toBe(90000);
+    expect(res.body.creditInfo.percentageUsed).toBe(90);
+    expect(res.body.creditInfo.status).toBe("WARNING");
 
     // Verificar warning incluido en la respuesta
-    const warnings = res.body.data.warnings || [];
+    const warnings = res.body.warnings || [];
     const creditWarning = warnings.find((w: any) => w.code === "CREDIT_LIMIT_WARNING");
     expect(creditWarning).toBeDefined();
     expect(creditWarning.status).toBe("WARNING");
@@ -277,7 +280,7 @@ describeOrSkip("HTTP E2E: Control de Crédito y Fallback Escalonado (Supertest)"
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    const warnings = res.body.data.warnings || [];
+    const warnings = res.body.warnings || [];
     const warning = warnings.find((w: any) => w.code === "CREDIT_LIMIT_WARNING");
     expect(warning).toBeDefined();
     expect(warning.status).toBe("EXCEEDED_ALERT_ONLY");
@@ -335,7 +338,7 @@ describeOrSkip("HTTP E2E: Control de Crédito y Fallback Escalonado (Supertest)"
       });
 
     expect(ticketRes.status).toBe(200);
-    expect(ticketRes.body.data.creditInfo.limit).toBe(300000);
+    expect(ticketRes.body.creditInfo.limit).toBe(300000);
   });
 
   describe("Fallback Escalonado (Redis no disponible / cliente terminal)", () => {
@@ -401,8 +404,8 @@ describeOrSkip("HTTP E2E: Control de Crédito y Fallback Escalonado (Supertest)"
         });
 
       expect(t1.status).toBe(200);
-      expect(t1.body.data.creditInfo.degraded).toBe(true);
-      const bal1 = t1.body.data.creditInfo.effectiveBalance;
+      expect(t1.body.creditInfo.degraded).toBe(true);
+      const bal1 = t1.body.creditInfo.effectiveBalance;
 
       // Segundo ticket inmediato dentro de la ventana de TTL (3s)
       const t2 = await request(app)
@@ -419,8 +422,8 @@ describeOrSkip("HTTP E2E: Control de Crédito y Fallback Escalonado (Supertest)"
         });
 
       expect(t2.status).toBe(200);
-      expect(t2.body.data.creditInfo.degraded).toBe(true);
-      const bal2 = t2.body.data.creditInfo.effectiveBalance;
+      expect(t2.body.creditInfo.degraded).toBe(true);
+      const bal2 = t2.body.creditInfo.effectiveBalance;
 
       // El segundo saldo debe haber acumulado exactamente los 10,000 adicionales del delta en memoria
       expect(bal2).toBe(bal1 + 10000);
@@ -478,8 +481,8 @@ describeOrSkip("HTTP E2E: Control de Crédito y Fallback Escalonado (Supertest)"
 
       expect(res.status).toBe(200);
       // Con Redis arriba, degraded ya no debe ser true
-      expect(res.body.data.creditInfo.degraded).toBeUndefined();
-      expect(res.body.data.creditInfo.effectiveBalance).toBeGreaterThan(0);
+      expect(res.body.creditInfo.degraded).toBeUndefined();
+      expect(res.body.creditInfo.effectiveBalance).toBeGreaterThan(0);
     });
   });
 });
