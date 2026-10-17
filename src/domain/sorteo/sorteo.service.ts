@@ -2214,12 +2214,26 @@ gs."hour24" ASC
 
                     dayData.sorteos = decoratedEvents.map((item) => item.event);
 
-                    // El acumulado de cierre del día corresponde al evento más reciente (mayor chronologicalIndex)
+                    // ── REGLA 4 AGENTS.md: AccountStatement es la fuente de verdad contable ──
+                    // El campo dayData.dayTotals.accumulated ya fue extraído directamente de AccountStatement por
+                    // la función SQL compilada (fn_get_evaluated_summaries_batch).
+                    // Para evitar discrepancias entre la vista colapsada (summaryOnly=true) y la expandida (false):
+                    // 1. Si no hay reset administrativo y la DB tiene saldo, se respeta inmutablemente AccountStatement.
+                    // 2. Si hay resetAt activo, se toma el saldo post-reset del closingEvent (mayor chronologicalIndex).
+                    // 3. Si AccountStatement viene en 0 o vacío (día activo sin evaluar), fallback al closingEvent.
+                    const dbAccumulated = Number(dayData.dayTotals.accumulated) || 0;
                     const closingEvent = decoratedEvents.reduce((max, item) =>
                       ((item.event.chronologicalIndex || 0) > (max.event.chronologicalIndex || 0) ? item : max),
                       decoratedEvents[0]
                     );
-                    dayData.dayTotals.accumulated = closingEvent.event.accumulated;
+
+                    if (resetAt) {
+                      dayData.dayTotals.accumulated = closingEvent.event.accumulated;
+                    } else if (dbAccumulated !== 0) {
+                      dayData.dayTotals.accumulated = dbAccumulated;
+                    } else {
+                      dayData.dayTotals.accumulated = closingEvent.event.accumulated;
+                    }
                     fullPayload = { ...fullPayload, data: [dayData] };
                   } else if (initialAccumulated !== 0) {
                     // Si no hay sorteos hoy pero hay saldo acumulado previo, reflejarlo
@@ -3541,13 +3555,21 @@ gs."hour24" ASC
 
               dayData.sorteos = decoratedEvents.map((item) => item.event);
 
-              // El acumulado de cierre del día corresponde al evento más reciente (mayor chronologicalIndex)
+              // ── REGLA 4 AGENTS.md: Respetar AccountStatement como autoridad contable ──
               if (decoratedEvents.length > 0) {
+                const dbAccumulated = Number(dayData.dayTotals.accumulated) || 0;
                 const closingEvent = decoratedEvents.reduce((max, item) =>
                   ((item.event.chronologicalIndex || 0) > (max.event.chronologicalIndex || 0) ? item : max),
                   decoratedEvents[0]
                 );
-                dayData.dayTotals.accumulated = closingEvent.event.accumulated;
+
+                if (resetAt) {
+                  dayData.dayTotals.accumulated = closingEvent.event.accumulated;
+                } else if (dbAccumulated !== 0) {
+                  dayData.dayTotals.accumulated = dbAccumulated;
+                } else {
+                  dayData.dayTotals.accumulated = closingEvent.event.accumulated;
+                }
               }
               fullPayload = { ...fullPayload, data: [dayData] };
             }
