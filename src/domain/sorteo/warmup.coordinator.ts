@@ -59,20 +59,17 @@ export class WarmupCoordinator {
   }
 
   /**
-   * Encola el warmup y broadcast en background de forma coalescida.
-   * Garantiza que el broadcast ocurra ÚNICAMENTE tras calentar L1/L2,
-   * o mediante fallback si el warmup falla, sin retrasar el response HTTP 200.
+   * Encola el warmup en background de forma coalescida por banca.
+   * Ejecutado completamente desacoplado del broadcast y del ciclo HTTP.
    */
-  static scheduleWarmupAndBroadcast(
+  static scheduleWarmup(
     sorteoId: string,
-    bancaId: string | null | undefined,
-    broadcastPayload: any
+    bancaId?: string | null
   ): void {
     const bancaKey = bancaId || "global";
     const state = this.getState(bancaKey);
 
     state.pendingSorteos.add(sorteoId);
-    state.pendingBroadcasts.push({ sorteoId, payload: broadcastPayload });
 
     // Si no está corriendo y no hay un cooldown activo, disparar ciclo en el próximo tick cooperativo
     if (!state.isRunning && !state.cooldownTimeout) {
@@ -80,6 +77,30 @@ export class WarmupCoordinator {
         this.processNext(bancaKey, 0);
       });
     }
+  }
+
+  /**
+   * Encola el warmup y emite el broadcast de inmediato si se provee, sin retención síncrona.
+   */
+  static scheduleWarmupAndBroadcast(
+    sorteoId: string,
+    bancaId: string | null | undefined,
+    broadcastPayload?: any
+  ): void {
+    if (broadcastPayload && broadcastPayload.bancaId) {
+      try {
+        SocketService.notifySorteoEvaluated(broadcastPayload);
+        SocketService.notifyDashboardUpdated({ bancaId: broadcastPayload.bancaId });
+      } catch (wsErr: any) {
+        logger.warn({
+          layer: "coordinator",
+          action: "WARMUP_IMMEDIATE_SOCKET_EMIT_WARN",
+          payload: { sorteoId, error: wsErr?.message || String(wsErr) },
+        });
+      }
+    }
+
+    this.scheduleWarmup(sorteoId, bancaId);
   }
 
   /**
