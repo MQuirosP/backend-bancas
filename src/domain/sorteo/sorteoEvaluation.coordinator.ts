@@ -14,6 +14,40 @@ import { runAsGlobalJob } from "../../core/tenantContext";
 const EVALUABLE_STATES = new Set<SorteoStatus>([SorteoStatus.OPEN]);
 
 export class SorteoEvaluationCoordinator {
+  private static nextBroadcastTime = 0;
+
+  /**
+   * Programa el warmup y broadcast con micro-espaciado deliberado (50ms - 150ms)
+   * entre sorteos consecutivos o múltiples salas/bancas para romper la sincronización del golpe HTTP.
+   */
+  private static scheduleStaggeredBroadcast(
+    sorteoId: string,
+    bancaId: string | null,
+    broadcastPayload: any
+  ): void {
+    const now = Date.now();
+    // Micro-delay deliberado no bloqueante entre 50ms y 150ms
+    const jitter = Math.floor(Math.random() * 101) + 50;
+    const scheduledTime = Math.max(now, SorteoEvaluationCoordinator.nextBroadcastTime) + jitter;
+    SorteoEvaluationCoordinator.nextBroadcastTime = scheduledTime;
+
+    const delayMs = Math.max(0, scheduledTime - now);
+
+    setTimeout(() => {
+      import("./warmup.coordinator")
+        .then(({ WarmupCoordinator }) => {
+          WarmupCoordinator.scheduleWarmupAndBroadcast(sorteoId, bancaId, broadcastPayload);
+        })
+        .catch((err) => {
+          logger.error({
+            layer: "coordinator",
+            action: "WARMUP_DISPATCH_BACKGROUND_ERROR",
+            payload: { sorteoId, bancaId, error: err?.message || String(err) },
+          });
+        });
+    }, delayMs);
+  }
+
   /**
    * Valida las reglas de negocio previas a la evaluación
    */
@@ -103,6 +137,9 @@ export class SorteoEvaluationCoordinator {
         evaluatedSorteo?.bancaId ||
         existingSorteo?.bancaId ||
         null;
+
+      const affectedBancas = new Set<string>();
+
     // 1. Sincronización de Cuentas (Nativo en PostgreSQL vía fn_sync_sorteo_statements)
     try {
       logger.info({
@@ -119,6 +156,14 @@ export class SorteoEvaluationCoordinator {
 
       const syncOutput = syncResultRaw?.[0]?.fn_sync_sorteo_statements;
       const syncDuration = Date.now() - syncStart;
+
+      if (Array.isArray(syncOutput?.statements)) {
+        for (const s of syncOutput.statements) {
+          if (s.dimension === "banca" && s.entityId) {
+            affectedBancas.add(s.entityId);
+          }
+        }
+      }
 
       // Reconciliar saldos y desmarcar sorteo de evaluación en el módulo de crédito INMEDIATAMENTE
       // tras el commit contable de fn_sync_sorteo_statements y ANTES de fn_sync_sorteo_multipliers_summary
@@ -313,9 +358,10 @@ export class SorteoEvaluationCoordinator {
       });
     }
 
-    // 5. Despachar Warmup coalescido + WebSocket Broadcast en Background (Fire-and-Forget controlado)
+    // 5. Despachar Warmup coalescido + WebSocket Broadcast en Background con Micro-Espaciado (Jitter / Staggering)
     // El ciclo contable y transaccional concluyó con éxito. Despachamos el warmup L1/L2 para que prepare la caché
-    // y emita los eventos de socket una vez caliente, sin suspender el response HTTP 200 de la evaluación.
+    // y emita los eventos de socket una vez caliente, introduciendo micro-delay (50ms-150ms) entre sorteos/bancas
+    // para romper la sincronización exacta del golpe HTTP de las terminales.
     const socketBroadcastPayload = {
       sorteoId: id,
       sorteoNombre: existingSorteo?.name || existingSorteo?.nombre || 'Sorteo',
@@ -327,17 +373,23 @@ export class SorteoEvaluationCoordinator {
       evaluatedAt: new Date().toISOString(),
     };
 
-    import("./warmup.coordinator")
-      .then(({ WarmupCoordinator }) => {
-        WarmupCoordinator.scheduleWarmupAndBroadcast(id, targetBancaId, socketBroadcastPayload);
-      })
-      .catch((err) => {
-        logger.error({
-          layer: "coordinator",
-          action: "WARMUP_DISPATCH_BACKGROUND_ERROR",
-          payload: { sorteoId: id, error: err?.message || String(err) },
-        });
-      });
+    // Cascada de bancas a notificar (soporte multi-banca o mono-banca)
+    const targetBancas: (string | null)[] = [];
+    if (targetBancaId) {
+      targetBancas.push(targetBancaId);
+    } else if (affectedBancas.size > 0) {
+      targetBancas.push(...Array.from(affectedBancas));
+    } else {
+      targetBancas.push(null);
+    }
+
+    for (const bId of targetBancas) {
+      const payload = {
+        ...socketBroadcastPayload,
+        bancaId: bId,
+      };
+      SorteoEvaluationCoordinator.scheduleStaggeredBroadcast(id, bId, payload);
+    }
     });
   }
 }

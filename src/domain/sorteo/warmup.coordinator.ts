@@ -269,7 +269,9 @@ export class WarmupCoordinator {
   }
 
   /**
-   * Emite de forma segura todos los WebSocket broadcasts acumulados para la banca.
+   * Emite de forma segura todos los WebSocket broadcasts acumulados para la banca,
+   * aplicando micro-espaciado deliberado (50ms - 150ms) entre sorteos para evitar
+   * que se disparen en el mismo tick síncrono de Node.js.
    */
   private static emitPendingBroadcasts(state: BancaWarmupState): void {
     if (!state.pendingBroadcasts || state.pendingBroadcasts.length === 0) {
@@ -279,21 +281,24 @@ export class WarmupCoordinator {
     const broadcastsToEmit = [...state.pendingBroadcasts];
     state.pendingBroadcasts = [];
 
-    for (const { payload } of broadcastsToEmit) {
-      try {
-        SocketService.notifySorteoEvaluated(payload);
-        SocketService.notifyDashboardUpdated({ bancaId: payload.bancaId });
-      } catch (wsErr: any) {
-        logger.warn({
-          layer: "coordinator",
-          action: "WARMUP_SOCKET_EMIT_WARN",
-          payload: {
-            sorteoId: payload?.sorteoId,
-            error: wsErr?.message || String(wsErr),
-          },
-        });
-      }
-    }
+    broadcastsToEmit.forEach(({ payload }, index) => {
+      const staggerDelay = index * (Math.floor(Math.random() * 101) + 50); // 50ms - 150ms
+      setTimeout(() => {
+        try {
+          SocketService.notifySorteoEvaluated(payload);
+          SocketService.notifyDashboardUpdated({ bancaId: payload.bancaId });
+        } catch (wsErr: any) {
+          logger.warn({
+            layer: "coordinator",
+            action: "WARMUP_SOCKET_EMIT_WARN",
+            payload: {
+              sorteoId: payload?.sorteoId,
+              error: wsErr?.message || String(wsErr),
+            },
+          });
+        }
+      }, staggerDelay);
+    });
   }
 
   /**

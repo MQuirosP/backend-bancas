@@ -7,6 +7,19 @@ import logger from "../../../core/logger";
 import { isConnectionError } from "../../../core/withConnectionRetry";
 import { error as errorResponse } from "../../../utils/responses";
 
+interface CachedEvaluatedSummary {
+  data: any;
+  expiresAt: number;
+}
+
+const EVALUATED_SUMMARY_RAM_CACHE_TTL_MS = 5000; // 5s TTL en memoria local (absorbe la estampida post-broadcast)
+const evaluatedSummaryRamCache = new Map<string, CachedEvaluatedSummary>();
+const evaluatedSummaryInFlight = new Map<string, Promise<any>>();
+
+export function clearEvaluatedSummaryRamCache(): void {
+  evaluatedSummaryRamCache.clear();
+}
+
 export const SorteoController = {
   async create(req: AuthenticatedRequest, res: Response) {
     const bancaId = req.bancaContext?.bancaId ?? undefined;
@@ -276,22 +289,66 @@ export const SorteoController = {
     const isSummaryOnlyRequested =
       summaryOnly === 'true' || summaryOnly === true || summaryOnly === '1';
 
+    const userRole = req.user!.role;
+    const activeBancaId = req.bancaContext?.bancaId || req.user!.bancaId || 'none';
+    const finalIgnoreReset = canIgnoreReset && ignoreReset === 'true';
+
+    // Generar clave de consulta coalescida para request deduplication y RAM caching
+    const coalescingKey = `${userRole}:${vendedorId}:${activeBancaId}:${date}:${fromDate || ''}:${toDate || ''}:${scope || 'mine'}:${loteriaId || ''}:${status || ''}:${isActiveBool}:${isSummaryOnlyRequested}:${finalIgnoreReset}`;
+
+    const now = Date.now();
+
+    // 1. Short-Lived RAM Cache Hit (5s TTL): Responder de inmediato (0ms DB, 0ms Redis, 0ms I/O)
+    const cached = evaluatedSummaryRamCache.get(coalescingKey);
+    if (cached && cached.expiresAt > now) {
+      return res.json({ success: true, ...cached.data });
+    }
+
     try {
-      const result = await SorteoService.evaluatedSummary(
-        {
-          date,
-          fromDate,
-          toDate,
-          scope: scope || 'mine',
-          loteriaId,
-          status,
-          isActive: isActiveBool,
-          summaryOnly: isSummaryOnlyRequested,
-          userRole: req.user!.role,
-          ignoreReset: canIgnoreReset && ignoreReset === 'true',
-        },
-        vendedorId
-      );
+      // 2. Request Coalescing (SingleFlight / In-Flight Promise Sharing)
+      let inFlight = evaluatedSummaryInFlight.get(coalescingKey);
+      if (!inFlight) {
+        inFlight = (async () => {
+          try {
+            const result = await SorteoService.evaluatedSummary(
+              {
+                date,
+                fromDate,
+                toDate,
+                scope: scope || 'mine',
+                loteriaId,
+                status,
+                isActive: isActiveBool,
+                summaryOnly: isSummaryOnlyRequested,
+                userRole,
+                ignoreReset: finalIgnoreReset,
+              },
+              vendedorId
+            );
+
+            // Control de tamaño de RAM Cache
+            if (evaluatedSummaryRamCache.size > 500) {
+              const currentTime = Date.now();
+              for (const [key, entry] of evaluatedSummaryRamCache.entries()) {
+                if (entry.expiresAt <= currentTime) evaluatedSummaryRamCache.delete(key);
+              }
+            }
+
+            evaluatedSummaryRamCache.set(coalescingKey, {
+              data: result,
+              expiresAt: Date.now() + EVALUATED_SUMMARY_RAM_CACHE_TTL_MS,
+            });
+
+            return result;
+          } finally {
+            evaluatedSummaryInFlight.delete(coalescingKey);
+          }
+        })();
+
+        evaluatedSummaryInFlight.set(coalescingKey, inFlight);
+      }
+
+      const result = await inFlight;
       return res.json({ success: true, ...result });
     } catch (error: any) {
       const isConnErr =
