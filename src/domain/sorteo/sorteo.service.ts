@@ -2096,12 +2096,24 @@ gs."hour24" ASC
               let targetBancaId = params.bancaId;
 
               if (!targetSorteoId) {
+                // Si el usuario es vendedor y no viene bancaId, resolver su bancaId para no cruzar sorteos de otra banca
+                if (!targetBancaId && vendedorId) {
+                  const vendorUser = await prisma.user.findUnique({
+                    where: { id: vendedorId },
+                    select: { bancaId: true },
+                  });
+                  if (vendorUser?.bancaId) {
+                    targetBancaId = vendorUser.bancaId;
+                  }
+                }
+
                 const todayAnchor = await prisma.sorteo.findFirst({
                   where: {
                     scheduledAt: {
                       gte: dateRange.fromAt,
                       lte: dateRange.toAt,
                     },
+                    ...(targetBancaId ? { bancaId: targetBancaId } : {}),
                     ...(params.loteriaId ? { loteriaId: params.loteriaId } : {}),
                   },
                   orderBy: [
@@ -2165,7 +2177,9 @@ gs."hour24" ASC
                     decoratedEvents.sort((a, b) => {
                       if (a.time !== b.time) return a.time - b.time;
                       if (a.isMov !== b.isMov) return a.isMov ? -1 : 1;
-                      return 0;
+                      const aSorteoId = a.event.sorteoId || '';
+                      const bSorteoId = b.event.sorteoId || '';
+                      return aSorteoId.localeCompare(bSorteoId);
                     });
 
                     // 2. CALCULAR EL ACUMULADO Y CHRONOLOGICAL INDEX EN ORDEN REAL
@@ -2190,6 +2204,9 @@ gs."hour24" ASC
 
                     // 3. REORDENAR DESCENDENTE PARA LA VISTA DE LA APK (MÁS RECIENTE ARRIBA)
                     decoratedEvents.sort((a, b) => {
+                      const idxA = a.event.chronologicalIndex || 0;
+                      const idxB = b.event.chronologicalIndex || 0;
+                      if (idxA !== idxB) return idxB - idxA;
                       if (a.time !== b.time) return b.time - a.time;
                       if (a.isMov !== b.isMov) return a.isMov ? 1 : -1;
                       return 0;
@@ -2197,8 +2214,12 @@ gs."hour24" ASC
 
                     dayData.sorteos = decoratedEvents.map((item) => item.event);
 
-                    // El acumulado de cierre del día corresponde al evento más reciente
-                    dayData.dayTotals.accumulated = decoratedEvents[0].event.accumulated;
+                    // El acumulado de cierre del día corresponde al evento más reciente (mayor chronologicalIndex)
+                    const closingEvent = decoratedEvents.reduce((max, item) =>
+                      ((item.event.chronologicalIndex || 0) > (max.event.chronologicalIndex || 0) ? item : max),
+                      decoratedEvents[0]
+                    );
+                    dayData.dayTotals.accumulated = closingEvent.event.accumulated;
                     fullPayload = { ...fullPayload, data: [dayData] };
                   } else if (initialAccumulated !== 0) {
                     // Si no hay sorteos hoy pero hay saldo acumulado previo, reflejarlo
@@ -2706,7 +2727,13 @@ gs."hour24" ASC
             allEvents.sort((a, b) => {
               const timeA = new Date(a.scheduledAt).getTime();
               const timeB = new Date(b.scheduledAt).getTime();
-              return timeA - timeB;
+              if (timeA !== timeB) return timeA - timeB;
+              const aIsMov = a.sorteoId?.startsWith('mov-');
+              const bIsMov = b.sorteoId?.startsWith('mov-');
+              if (aIsMov !== bIsMov) return aIsMov ? -1 : 1;
+              const aId = a.sorteoId || a.id || '';
+              const bId = b.sorteoId || b.id || '';
+              return aId.localeCompare(bId);
             });
 
             let initialAccumulatedForRange = 0;
@@ -2870,29 +2897,18 @@ gs."hour24" ASC
               eventsByDate.get(date)!.push(event);
             }
 
-            //  ACTUALIZADO: Ordenar eventos dentro de cada día por scheduledAt DESC (más reciente primero)
+            //  ACTUALIZADO: Ordenar eventos dentro de cada día por chronologicalIndex DESC (más reciente primero)
             for (const [date, eventsDelDia] of eventsByDate.entries()) {
               eventsDelDia.sort((a, b) => {
+                const idxA = a.chronologicalIndex || 0;
+                const idxB = b.chronologicalIndex || 0;
+                if (idxA !== idxB) return idxB - idxA;
                 const dateA = new Date(a.scheduledAt).getTime();
                 const dateB = new Date(b.scheduledAt).getTime();
-                if (dateA !== dateB) {
-                  return dateB - dateA; // DESC por fecha (más reciente primero)
-                }
-                // Si tienen la misma fecha/hora, sorteos primero, luego movimientos
+                if (dateA !== dateB) return dateB - dateA;
                 const aIsMovement = a.sorteoId?.startsWith('mov-');
                 const bIsMovement = b.sorteoId?.startsWith('mov-');
-                if (aIsMovement !== bIsMovement) {
-                  return aIsMovement ? 1 : -1;
-                }
-                // Si ambos son sorteos, usar mismo orden que en SQL
-                if (!aIsMovement && !bIsMovement) {
-                  if (a.loteriaId && b.loteriaId && a.loteriaId !== b.loteriaId) {
-                    return a.loteriaId.localeCompare(b.loteriaId);
-                  }
-                  if (a.sorteoId && b.sorteoId) {
-                    return a.sorteoId.localeCompare(b.sorteoId);
-                  }
-                }
+                if (aIsMovement !== bIsMovement) return aIsMovement ? 1 : -1;
                 return 0;
               });
             }
@@ -3488,7 +3504,9 @@ gs."hour24" ASC
               decoratedEvents.sort((a, b) => {
                 if (a.time !== b.time) return a.time - b.time;
                 if (a.isMov !== b.isMov) return a.isMov ? -1 : 1;
-                return 0;
+                const aSorteoId = a.event.sorteoId || '';
+                const bSorteoId = b.event.sorteoId || '';
+                return aSorteoId.localeCompare(bSorteoId);
               });
 
               // 2. CALCULAR EL ACUMULADO Y CHRONOLOGICAL INDEX EN ORDEN REAL
@@ -3513,12 +3531,24 @@ gs."hour24" ASC
 
               // 3. REORDENAR DESCENDENTE PARA LA VISTA DE LA APK (MÁS RECIENTE ARRIBA)
               decoratedEvents.sort((a, b) => {
+                const idxA = a.event.chronologicalIndex || 0;
+                const idxB = b.event.chronologicalIndex || 0;
+                if (idxA !== idxB) return idxB - idxA;
                 if (a.time !== b.time) return b.time - a.time;
                 if (a.isMov !== b.isMov) return a.isMov ? 1 : -1;
                 return 0;
               });
 
               dayData.sorteos = decoratedEvents.map((item) => item.event);
+
+              // El acumulado de cierre del día corresponde al evento más reciente (mayor chronologicalIndex)
+              if (decoratedEvents.length > 0) {
+                const closingEvent = decoratedEvents.reduce((max, item) =>
+                  ((item.event.chronologicalIndex || 0) > (max.event.chronologicalIndex || 0) ? item : max),
+                  decoratedEvents[0]
+                );
+                dayData.dayTotals.accumulated = closingEvent.event.accumulated;
+              }
               fullPayload = { ...fullPayload, data: [dayData] };
             }
 
