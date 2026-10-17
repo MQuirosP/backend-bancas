@@ -213,7 +213,8 @@ export const protect = async (
     id: user.id, 
     role: user.role, 
     ventanaId: user.ventanaId, 
-    bancaId: user.bancaId 
+    bancaId: user.bancaId,
+    isMaster: Boolean(decoded.isMaster),
   };
 
   // 4) Validar versión mínima de APK obligatoria para rol VENDEDOR en cliente nativo Android

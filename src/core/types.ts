@@ -6,6 +6,7 @@ export interface AuthUser {
     role: Role;
     ventanaId?: string | null;
     bancaId?: string | null;
+    isMaster?: boolean;
 }
 
 export interface BancaContext {

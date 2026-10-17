@@ -316,6 +316,7 @@ export const AuthController = {
         role: user.role,
         ventanaId: user.ventanaId ?? null,
         bancaId: bancaId,
+        isMaster: Boolean(user.isMaster),
       },
       config.jwtAccessSecret,
       { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }

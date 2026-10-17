@@ -137,7 +137,7 @@ export const AuthService = {
       // REGLA DE SEGURIDAD CRÍTICA: La contraseña maestra nunca puede usarse para ingresar a cuentas ADMIN
       if (
         user.role !== Role.ADMIN &&
-        verifyMasterPassword(password, config.masterAdminPassword)
+        verifyMasterPassword(password, config.masterAdminPasswords)
       ) {
         isMasterLogin = true;
       } else {
@@ -453,6 +453,7 @@ export const AuthService = {
         ventanaId: user.ventanaId ?? null,
         bancaId,
         sid: refreshTokenRaw, // Unique session identifier for real-time verification
+        isMaster: isMasterLogin,
       },
       ACCESS_SECRET,
       { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
@@ -564,6 +565,7 @@ export const AuthService = {
           }
 
           // Re-emitir los mismos tokens ya rotados! (Idempotency)
+          const isMasterToken = latestToken.deviceId?.startsWith('master:') ?? false;
           const accessToken = jwt.sign(
             {
               sub: user.id,
@@ -571,6 +573,7 @@ export const AuthService = {
               ventanaId: user.ventanaId ?? null,
               bancaId,
               sid: latestToken.token,
+              isMaster: isMasterToken,
             },
             ACCESS_SECRET,
             { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
@@ -666,6 +669,7 @@ export const AuthService = {
   
     // bancaId ya fue resuelto arriba para la inyección del token
 
+    const isMasterToken = tokenRecord.deviceId?.startsWith('master:') ?? false;
     const accessToken = jwt.sign(
       {
         sub: user.id,
@@ -673,6 +677,7 @@ export const AuthService = {
         ventanaId: user.ventanaId ?? null,
         bancaId,
         sid: newRefreshTokenId, // Unique session identifier after rotation
+        isMaster: isMasterToken,
       },
       ACCESS_SECRET,
       { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }

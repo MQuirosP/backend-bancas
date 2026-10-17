@@ -21,6 +21,16 @@ if (!parsed.success) {
 
 const { allowAll, list } = parseCorsOrigins(parsed.data.CORS_ORIGIN)
 
+const masterAdminPasswords = parsed.data.MASTER_ADMIN_PASSWORD
+  ? Array.from(
+      new Set(
+        parsed.data.MASTER_ADMIN_PASSWORD.split(',')
+          .map((p) => p.trim())
+          .filter((p) => p.length >= 8)
+      )
+    )
+  : [];
+
 export const config = {
   nodeEnv: parsed.data.NODE_ENV,
   port: parsed.data.PORT ? Number(parsed.data.PORT) : 4000,
@@ -30,6 +40,7 @@ export const config = {
   jwtAccessExpires: parsed.data.JWT_ACCESS_EXPIRES_IN,
   jwtRefreshExpires: parsed.data.JWT_REFRESH_EXPIRES_IN,
   masterAdminPassword: parsed.data.MASTER_ADMIN_PASSWORD,
+  masterAdminPasswords,
 
   // En vez de "*" guardamos la decisión ya procesada
   cors: {
