@@ -2,7 +2,6 @@ import { Prisma, TicketStatus } from "../../../generated/prisma/client";
 import { salesPrisma } from "../../../core/prismaClient";
 import { AppError } from "../../../core/errors";
 import logger from "../../../core/logger";
-import { DailyNumberSalesService } from "../../sorteo/dailyNumberSales.service";
 import {
   CreateTicketInput,
   CreateTicketOptions,

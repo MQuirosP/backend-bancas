@@ -15,6 +15,7 @@ import { warmupConnection } from '../core/connectionWarmup'
 import { SocketService } from '../core/socket.service'
 import { resourceMonitorService } from '../core/resourceMonitor.service'
 import { WorkerService } from '../api/v1/services/worker.service'
+import { ActivityLogBuffer } from '../core/activityLogBuffer'
 
 const server = http.createServer(app)
 
@@ -185,7 +186,11 @@ const gracefulShutdown = async (signal: string) => {
         resolve()
       })
     })
-    logger.info({ layer: 'server', action: 'SERVER_CLOSED' })
+    // Drenar buffer de logs de auditoría pendientes antes de desconectar Prisma
+    try {
+      await ActivityLogBuffer.flush()
+      logger.info({ layer: 'server', action: 'ACTIVITY_LOG_BUFFER_FLUSHED' })
+    } catch (e) {}
 
     // 2. Paso 2: prisma.$disconnect() para cerrar el pool hacia Supabase
     if ((global as any).__prismaDirect) {

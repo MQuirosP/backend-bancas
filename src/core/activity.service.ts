@@ -1,6 +1,7 @@
 import prisma from './prismaClient';
 import logger from './logger';
 import { ActivityType, Prisma } from '../generated/prisma/client';
+import { ActivityLogBuffer } from './activityLogBuffer';
 
 export type ActivityPayload = {
   userId?: string | null;
@@ -21,7 +22,7 @@ function normalizeDetails(details: ActivityPayload['details']) {
 }
 
 async function resolveBancaId(
-  tx: Prisma.TransactionClient,
+  tx: Prisma.TransactionClient | typeof prisma,
   userId: string | null,
   targetType: string | null,
   targetId: string | null
@@ -105,20 +106,17 @@ export const ActivityService = {
     let resolvedBancaId = payload.bancaId || null;
 
     try {
-      await prisma.$transaction(async (tx) => {
-        if (!resolvedBancaId) {
-          resolvedBancaId = await resolveBancaId(tx, userId, targetType, targetId);
-        }
-        await tx.activityLog.create({
-          data: {
-            userId,
-            bancaId: resolvedBancaId,
-            action,
-            targetType,
-            targetId,
-            details: normalizeDetails(details),
-          },
-        });
+      if (!resolvedBancaId) {
+        resolvedBancaId = await resolveBancaId(prisma, userId, targetType, targetId);
+      }
+
+      ActivityLogBuffer.push({
+        userId,
+        bancaId: resolvedBancaId,
+        action,
+        targetType,
+        targetId,
+        details: normalizeDetails(details),
       });
     } catch (err) {
       logger.error({

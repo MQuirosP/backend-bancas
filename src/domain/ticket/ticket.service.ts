@@ -639,24 +639,22 @@ export const TicketService = {
         )
         .join(", ");
 
-      // ActivityLog desacoplado en cola acotada (concurrencia limitada y reintento ante timeout de pool)
-      BackgroundTaskQueue.enqueue("ActivityService.logTicketCreate", () =>
-        ActivityService.log({
-          userId,
-          bancaId: resolvedVentanaWithBanca.bancaId,
-          action: ActivityType.TICKET_CREATE,
-          targetType: "TICKET",
-          targetId: ticket.id,
-          details: {
-            ticketNumber: ticket.ticketNumber,
-            totalAmount: ticket.totalAmount,
-            jugadas: jugadasCount,
-            description: `Ticket #${ticket.ticketNumber} creado por [${effectiveVendedorId}] - ${vendedorToPass?.name || "N/A"} para ${sorteo.loteria.name} - ${TicketPrintService.formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt)} por un monto de ₡${ticket.totalAmount.toLocaleString()}. Jugadas: [${jugadasSummary}]`,
-          },
-          requestId,
-          layer: "service",
-        })
-      );
+      // ActivityLog desacoplado en memoria vía ActivityLogBuffer (cero impacto en pool de venta)
+      ActivityService.log({
+        userId,
+        bancaId: resolvedVentanaWithBanca.bancaId,
+        action: ActivityType.TICKET_CREATE,
+        targetType: "TICKET",
+        targetId: ticket.id,
+        details: {
+          ticketNumber: ticket.ticketNumber,
+          totalAmount: ticket.totalAmount,
+          jugadas: jugadasCount,
+          description: `Ticket #${ticket.ticketNumber} creado por [${effectiveVendedorId}] - ${vendedorToPass?.name || "N/A"} para ${sorteo.loteria.name} - ${TicketPrintService.formatSorteoNameWithTime(sorteo.name, sorteo.scheduledAt)} por un monto de ₡${ticket.totalAmount.toLocaleString()}. Jugadas: [${jugadasSummary}]`,
+        },
+        requestId,
+        layer: "service",
+      });
 
       logger.info({
         layer: "service",

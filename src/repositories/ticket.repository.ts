@@ -15,8 +15,6 @@ import { v4 as uuidv4 } from "uuid";
 import { resolveNumbersToValidate, validateMaxTotalForNumbers, validateRulesInParallel, ScopeCache, calculateAccumulatedByNumbersAndScope, calculateAccumulatedForMultipleScopes, acquireLock, releaseLock } from "./helpers/ticket-restriction.helper";
 import { getRedisClient, getRedisSalesClient, isRedisAvailable, isRedisSalesAvailable, markRedisError } from "../core/redisClient";
 import { CacheService } from "../core/cache.service";
-import { BackgroundTaskQueue } from "../utils/concurrency";
-import { DailyNumberSalesService } from "../domain/sorteo/dailyNumberSales.service";
 import {
   CreateTicketInput,
   CreateTicketOptions,
@@ -874,10 +872,9 @@ export const TicketRepository = {
       const ticket = TicketResponseBuilder.build(txResult, data, userId, options);
       await TicketRedisAccumulator.increment(ticket, txResult.sorteoScheduledAt, options);
 
-      // Acopio asíncrono para Data Warehousing en DailyNumberSales (cola acotada y reintento exclusivo ante timeout de pool)
-      BackgroundTaskQueue.enqueue("DailyNumberSales.incrementFromTicket", () =>
-        DailyNumberSalesService.incrementFromTicket(txResult.createdTicketId)
-      );
+      // NOTA ARQUITECTÓNICA (Regla 7 AGENTS.md): DailyNumberSalesService.incrementFromTicket
+      // fue desacoplado del ciclo de venta para eliminar la contención por RowExclusiveLock (349 ms).
+      // El acopio se consolida exclusivamente en bloque al cierre/evaluación del sorteo.
 
       return { ticket, warnings: txResult.warnings, creditInfo };
     } finally {
@@ -1277,9 +1274,9 @@ export const TicketRepository = {
           },
         });
 
-        // 5) Decremento incremental en DailyNumberSales (atómico)
-        await DailyNumberSalesService.decrementFromTicket(id, tx);
-
+        // NOTA ARQUITECTÓNICA (Regla 7 AGENTS.md):
+        // DailyNumberSales es acopio exclusivo de sorteos EVALUATED. Al estar el sorteo OPEN,
+        // el ticket nunca ingresó a DailyNumberSales, por lo que no requiere decremento interactivo.
         return cancelled;
       },
       {
@@ -1518,9 +1515,9 @@ export const TicketRepository = {
           },
         });
 
-        // 6) Incremento incremental en DailyNumberSales (atómico)
-        await DailyNumberSalesService.incrementFromTicket(id, tx);
-
+        // NOTA ARQUITECTÓNICA (Regla 7 AGENTS.md):
+        // Al restaurar un ticket de sorteo OPEN, permanece en Jugada activa y se consolidará
+        // en DailyNumberSales exclusivamente al evaluar el sorteo en bloque.
         return restored;
       },
       {

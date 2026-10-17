@@ -75,19 +75,69 @@ export class DailyNumberSalesService {
   }
 
   /**
-   * REFACTORIZADO (Fase 2 - Agregación Incremental):
-   * Las agregaciones se mantienen en tiempo real por evento de ticket (0ms al cierre).
-   * Este método omite el barrido masivo durante la evaluación del sorteo.
+   * Agrega las ventas por número para reporte histórico de Data Warehousing en DailyNumberSales.
+   * Ejecutado exclusivamente durante el flujo de evaluación / cierre del sorteo en background (Regla 7 AGENTS.md).
+   * Realiza un UPSERT atómico en una sola sentencia SQL evitando barridos fragmentados o bloqueos interactivos.
    */
   static async aggregateSorteoSales(sorteoId: string): Promise<void> {
     logger.info({
       layer: "service",
-      action: "DAILY_NUMBER_SALES_AGGREGATION_INCREMENTAL_SKIPPED",
-      payload: {
-        sorteoId,
-        reason: "DailyNumberSales is maintained in real-time via incremental ticket events (0ms disk sweep)."
-      },
+      action: "DAILY_NUMBER_SALES_AGGREGATION_START",
+      payload: { sorteoId },
     });
+
+    try {
+      await prisma.$executeRaw`
+        INSERT INTO "DailyNumberSales" (
+          "id", "businessDate", "bancaId", "ventanaId", "vendedorId", "loteriaId", "sorteoId",
+          "number", "type", "totalAmount", "ticketsCount", "jugadasCount"
+        )
+        SELECT
+          gen_random_uuid(),
+          t."businessDate",
+          COALESCE(t."bancaId", 'da3545ac-fb10-4674-a345-6b66c9f89146'::uuid),
+          t."ventanaId",
+          t."vendedorId",
+          t."loteriaId",
+          t."sorteoId",
+          j.number,
+          j.type,
+          COALESCE(SUM(j.amount), 0)::double precision,
+          COUNT(DISTINCT j."ticketId")::integer,
+          COUNT(j.id)::integer
+        FROM "Jugada" j
+        INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        WHERE t."sorteoId" = ${sorteoId}::uuid
+          AND t."deletedAt" IS NULL
+          AND t."isActive" = true
+          AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND j."isActive" = true
+        GROUP BY t."businessDate", t."bancaId", t."ventanaId", t."vendedorId", t."loteriaId", t."sorteoId", j.number, j.type
+        ON CONFLICT ("businessDate", "sorteoId", "vendedorId", "number", "type")
+        DO UPDATE SET
+          "totalAmount" = EXCLUDED."totalAmount",
+          "ticketsCount" = EXCLUDED."ticketsCount",
+          "jugadasCount" = EXCLUDED."jugadasCount",
+          "bancaId" = EXCLUDED."bancaId",
+          "ventanaId" = EXCLUDED."ventanaId",
+          "loteriaId" = EXCLUDED."loteriaId";
+      `;
+
+      logger.info({
+        layer: "service",
+        action: "DAILY_NUMBER_SALES_AGGREGATION_SUCCESS",
+        payload: { sorteoId },
+      });
+    } catch (err: any) {
+      logger.error({
+        layer: "service",
+        action: "DAILY_NUMBER_SALES_AGGREGATION_ERROR",
+        payload: { sorteoId, error: err?.message || String(err) },
+      });
+      throw err;
+    }
   }
 
   /**
@@ -131,6 +181,8 @@ export class DailyNumberSalesService {
           AND t."isActive" = true
           AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
           AND j."deletedAt" IS NULL
+          AND j."isExcluded" = false
+          AND j."isActive" = true
         GROUP BY t."businessDate", t."bancaId", t."ventanaId", t."vendedorId", t."loteriaId", t."sorteoId", j.number, j.type
       `;
     }, {
