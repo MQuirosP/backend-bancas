@@ -10,7 +10,7 @@
 
 | Componente | Proveedor / Tier | Especificaciones de Hardware | Configuración Relevante |
 | :--- | :--- | :--- | :--- |
-| **API Backend** | Render — **Starter** | 0.5 vCPU (compartido), 512 MB RAM | `NODE_OPTIONS=--max-old-space-size=200`, `MAX_CONCURRENT_REQUESTS=100`, `EVENT_LOOP_LAG_THRESHOLD_MS=2000` |
+| **API Backend** | Render — **Starter** | 0.5 vCPU (compartido), 512 MB RAM | `node --max-old-space-size=350 --max-semi-space-size=32 dist/index.js`, `MAX_CONCURRENT_REQUESTS=100`, `EVENT_LOOP_LAG_THRESHOLD_MS=2000` |
 | **Base de Datos** | Supabase — **Small** | 1 vCPU (dedicado), 2 GB RAM | PgBouncer Pool Size = 50 conexiones, Prisma `connection_limit=20` |
 | **Caché / Broker** | Upstash — **Serverless Redis** | Latencia ~15ms con TLS | `CACHE_ENABLED=true`, Híbrido L1 (RAM Node.js) + L2 (Upstash Redis) |
 
