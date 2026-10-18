@@ -12,11 +12,10 @@ export class DailyNumberSalesService {
     const client = tx || prisma;
     await client.$executeRaw`
       INSERT INTO "DailyNumberSales" (
-        "id", "businessDate", "bancaId", "ventanaId", "vendedorId", "loteriaId", "sorteoId",
+        "businessDate", "bancaId", "ventanaId", "vendedorId", "loteriaId", "sorteoId",
         "number", "type", "totalAmount", "ticketsCount", "jugadasCount"
       )
       SELECT
-        gen_random_uuid(),
         t."businessDate",
         COALESCE(t."bancaId", 'da3545ac-fb10-4674-a345-6b66c9f89146'::uuid),
         t."ventanaId",
@@ -89,11 +88,10 @@ export class DailyNumberSalesService {
     try {
       await prisma.$executeRaw`
         INSERT INTO "DailyNumberSales" (
-          "id", "businessDate", "bancaId", "ventanaId", "vendedorId", "loteriaId", "sorteoId",
+          "businessDate", "bancaId", "ventanaId", "vendedorId", "loteriaId", "sorteoId",
           "number", "type", "totalAmount", "ticketsCount", "jugadasCount"
         )
         SELECT
-          gen_random_uuid(),
           t."businessDate",
           COALESCE(t."bancaId", 'da3545ac-fb10-4674-a345-6b66c9f89146'::uuid),
           t."ventanaId",
@@ -158,11 +156,10 @@ export class DailyNumberSalesService {
 
       await tx.$executeRaw`
         INSERT INTO "DailyNumberSales" (
-          "id", "businessDate", "bancaId", "ventanaId", "vendedorId", "loteriaId", "sorteoId",
+          "businessDate", "bancaId", "ventanaId", "vendedorId", "loteriaId", "sorteoId",
           "number", "type", "totalAmount", "ticketsCount", "jugadasCount"
         )
         SELECT
-          gen_random_uuid() as "id",
           t."businessDate",
           COALESCE(t."bancaId", 'da3545ac-fb10-4674-a345-6b66c9f89146'::uuid) as "bancaId",
           t."ventanaId",
