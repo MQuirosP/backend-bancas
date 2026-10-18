@@ -174,9 +174,10 @@ class DedicatedWorkerRunner {
 }
 
 // ============================================================================
-// TRABAJADORES SEGREGADOS: Hilos dedicados independientes para Tickets vs PDFs
+// TRABAJADORES SEGREGADOS: Hilos dedicados independientes para Tickets, Listas y PDFs
 // ============================================================================
 const ticketWorker = new DedicatedWorkerRunner('ticket-render');
+const listWorker = new DedicatedWorkerRunner('list-render');
 const pdfWorker = new DedicatedWorkerRunner('pdf-converter');
 
 /**
@@ -198,13 +199,14 @@ export async function generateTicketImage(ticketData: any, options: any = {}): P
 }
 
 /**
- * Genera imágenes PNG directamente desde los datos de listas en el Worker Thread nativo de Canvas.
+ * Genera imágenes PNG directamente desde los datos de listas en su Worker Thread exclusivo (list-render).
+ * Totalmente aislado del hilo de venta de tickets para garantizar visibilidad y cero contención.
  */
 export async function generateListImages(
   listData: any,
   options: any = {}
 ): Promise<Array<{ page: number; buffer: Buffer }>> {
-  const pages = await ticketWorker.execute<Array<{ page: number; buffer: any }>>(
+  const pages = await listWorker.execute<Array<{ page: number; buffer: any }>>(
     'GENERATE_LIST_IMAGE',
     { listData, options }
   );
@@ -261,8 +263,22 @@ export async function warmupWorkers(): Promise<void> {
     },
   };
 
+  const dummyList = {
+    meta: {
+      vendedorName: 'WARMUP',
+      totalAmount: 0,
+      totalAmountByNumber: 0,
+      totalAmountByReventado: 0,
+      sorteoDigits: 2,
+    },
+    numbers: [],
+  };
+
   try {
-    await generateTicketImage(dummyTicket, { width: 220, scale: 2 });
+    await Promise.all([
+      generateTicketImage(dummyTicket, { width: 220, scale: 2 }),
+      generateListImages(dummyList, { sorteoDigits: 2 }),
+    ]);
     isWarmedUp = true;
     logger.info({
       layer: 'worker-service',

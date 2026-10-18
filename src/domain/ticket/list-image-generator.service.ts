@@ -219,7 +219,7 @@ export async function generateListImagePages(
   const sorteoDigits = options.sorteoDigits ?? data.meta.sorteoDigits ?? 2;
   const padLength = sorteoDigits;
   const maxNumber = sorteoDigits === 3 ? 999 : 99;
-  const scale = options.scale ?? 2;
+  const scale = options.scale ?? 1.5;
 
   // Mapa de números indexado
   const numbersMap = new Map<string, { amountByNumber: number; amountByReventado: number }>();
