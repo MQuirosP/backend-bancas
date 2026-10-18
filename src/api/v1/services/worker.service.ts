@@ -61,10 +61,10 @@ class DedicatedWorkerRunner {
             type: currentTask.type,
             durationMs: duration,
             queueRemaining: this.queue.length,
-            resultSize: data.pngPages?.length || data.imageBuffer?.length || 0,
+            resultSize: data.listPages?.length || data.pngPages?.length || data.imageBuffer?.length || 0,
           },
         });
-        currentTask.resolve(data.pngPages || data.imageBuffer);
+        currentTask.resolve(data.listPages || data.pngPages || data.imageBuffer);
       } else {
         logger.error({
           layer: 'worker-service',
@@ -198,6 +198,23 @@ export async function generateTicketImage(ticketData: any, options: any = {}): P
 }
 
 /**
+ * Genera imágenes PNG directamente desde los datos de listas en el Worker Thread nativo de Canvas.
+ */
+export async function generateListImages(
+  listData: any,
+  options: any = {}
+): Promise<Array<{ page: number; buffer: Buffer }>> {
+  const pages = await ticketWorker.execute<Array<{ page: number; buffer: any }>>(
+    'GENERATE_LIST_IMAGE',
+    { listData, options }
+  );
+  return (pages || []).map((p) => ({
+    page: p.page,
+    buffer: Buffer.isBuffer(p.buffer) ? p.buffer : Buffer.from(p.buffer),
+  }));
+}
+
+/**
  * Precalienta el isolate de V8 y las dependencias Cairo / Canvas de forma anticipada.
  */
 let isWarmedUp = false;
@@ -267,5 +284,6 @@ export async function warmupWorkers(): Promise<void> {
 export const WorkerService = {
   convertPdfToPng,
   generateTicketImage,
+  generateListImages,
   warmupWorkers,
 };

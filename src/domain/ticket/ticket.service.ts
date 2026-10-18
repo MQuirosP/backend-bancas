@@ -32,7 +32,6 @@ import {
   normalizeDateCR,
 } from "../../utils/datetime";
 import { getCRLocalComponents } from "../../utils/businessDate";
-import { PDFDocument } from "pdf-lib";
 import { ConcurrencyManager, BackgroundTaskQueue } from "../../utils/concurrency";
 import { CacheService } from "../../core/cache.service";
 import crypto from "crypto";
@@ -1981,9 +1980,8 @@ export const TicketService = {
         throw new AppError("Solo se admite format='png' en batch", 400);
       }
 
-      const { generateNumbersSummaryPDF } =
-        await import("../../api/v1/services/pdf-generator.service");
-      const { convertPdfToPng } = await import("../../api/v1/services/worker.service");
+      const { generateListImages } =
+        await import("../../api/v1/services/worker.service");
 
       const pages: Array<{
         page: number;
@@ -2014,8 +2012,8 @@ export const TicketService = {
             userId,
           );
 
-          // Generar PDF por multiplicador
-          const pdfBuffer = await generateNumbersSummaryPDF({
+          // Generar PNG directo por multiplicador (Cairo Canvas en Worker nativo)
+          const listPages = await generateListImages({
             meta: {
               ...result.meta,
               multiplierName: multiplier.name,
@@ -2023,36 +2021,21 @@ export const TicketService = {
             numbers: result.data,
           });
 
-          const doc = await PDFDocument.load(pdfBuffer);
-          const pageCount = doc.getPageCount();
-
-          // Convertir todas las páginas a PNG usando Worker
-          const pngPages = await convertPdfToPng(new Uint8Array(pdfBuffer), {
-            pagesToProcess: Array.from({ length: pageCount }, (_, i) => i + 1),
-          });
-
-          if (!pngPages || pngPages.length === 0) {
+          if (!listPages || listPages.length === 0) {
             throw new AppError(
               `No se pudo generar PNG para el multiplicador ${multiplier.name}`,
               422,
             );
           }
 
-          return pngPages
-            .filter((p) => p && p.content)
-            .map((p, idx) => {
-              const buffer = Buffer.from(p.content);
-              if (!buffer) return null;
-              return {
-                page: idx,
-                filename: `lista-${multiplier.name || multiplier.valueX || "mult"}-${idx + 1}.png`,
-                image: buffer.toString("base64"),
-                multiplierId: multiplier.id,
-                multiplierName: multiplier.name,
-                multiplierValue: multiplier.valueX,
-              };
-            })
-            .filter(Boolean) as any[];
+          return listPages.map((p) => ({
+            page: p.page,
+            filename: `lista-${multiplier.name || multiplier.valueX || "mult"}-${p.page + 1}.png`,
+            image: p.buffer.toString("base64"),
+            multiplierId: multiplier.id,
+            multiplierName: multiplier.name,
+            multiplierValue: multiplier.valueX,
+          }));
         });
 
         // 3. Esperar a que todos los multiplicadores del chunk terminen

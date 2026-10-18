@@ -1,8 +1,6 @@
-// src/api/v1/services/pdf-generator.service.ts
 import PDFDocument from 'pdfkit';
 import { Readable } from 'stream';
 import logger from '../../../core/logger';
-import { ResilienceService } from '../../../core/resilience.service';
 
 interface NumbersSummaryData {
   meta: {
@@ -348,8 +346,8 @@ async function generateNumbersSummaryPDFInternal(data: NumbersSummaryData): Prom
 }
 
 /**
- * Genera un PDF con la lista de números 00-99 (Envuelto en Circuit Breaker)
+ * Genera un PDF con la lista de números 00-99
  */
 export async function generateNumbersSummaryPDF(data: NumbersSummaryData): Promise<Buffer> {
-  return ResilienceService.runPrisma(() => generateNumbersSummaryPDFInternal(data));
+  return generateNumbersSummaryPDFInternal(data);
 }

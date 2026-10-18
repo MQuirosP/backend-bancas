@@ -41,6 +41,16 @@ parentPort.on('message', async (data) => {
       return;
     }
 
+    if (type === 'GENERATE_LIST_IMAGE') {
+      const { generateListImagePages } = await import('../domain/ticket/list-image-generator.service');
+      const pages = await generateListImagePages(data.listData, options);
+      parentPort?.postMessage({
+        success: true,
+        listPages: pages,
+      });
+      return;
+    }
+
     // Default: PDF to PNG conversion
     const { pdfToPng } = await import('pdf-to-png-converter');
     
