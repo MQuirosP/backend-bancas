@@ -9,6 +9,10 @@ import { v4 as uuidv4 } from 'uuid';
 // Configurar toobusy-js
 toobusy.maxLag(config.hardening.eventLoopLagThresholdMs);
 
+// Cooldown para evitar ráfagas masivas de logs en stdout durante una misma pausa del event loop
+let lastEventLoopLagLoggedAt = 0;
+const EVENT_LOOP_LAG_LOG_COOLDOWN_MS = 2000;
+
 /**
  * Middleware de Admission Control Global y Circuit Breakers
  */
@@ -19,14 +23,18 @@ export const resilienceMiddleware = (req: Request, res: Response, next: NextFunc
     }
 
     // 1. Monitoreo de Saturación del Event Loop (toobusy)
-    // Se mantiene como observabilidad (warning log) para Better Stack / APM,
+    // Se mantiene como observabilidad (warning log) para Better Stack / APM con debounce de 2s,
     // pero NO se rechaza la petición con 503 para no interrumpir a vendedores por micro-pausas transitorias.
     if (toobusy()) {
-        logger.warn({
-            layer: 'middleware',
-            action: 'EVENT_LOOP_LAG_WARNING',
-            payload: { lag: toobusy.lag(), thresholdMs: config.hardening.eventLoopLagThresholdMs }
-        });
+        const now = Date.now();
+        if (now - lastEventLoopLagLoggedAt >= EVENT_LOOP_LAG_LOG_COOLDOWN_MS) {
+            lastEventLoopLagLoggedAt = now;
+            logger.warn({
+                layer: 'middleware',
+                action: 'EVENT_LOOP_LAG_WARNING',
+                payload: { lag: toobusy.lag(), thresholdMs: config.hardening.eventLoopLagThresholdMs }
+            });
+        }
     }
 
     // 2. Admission Control (Máximo de requests concurrentes)
