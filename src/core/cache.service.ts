@@ -430,7 +430,7 @@ export class CacheService {
                 }
                 await pipeline.exec();
                 
-                logger.info({
+                logger.debug({
                     layer: 'cache',
                     action: 'INVALIDATE_TAG',
                     payload: { tag, keysCount: keys.length }

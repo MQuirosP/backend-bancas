@@ -240,7 +240,7 @@ export class TicketPersistenceService {
     // NOTA: DailyNumberSalesService.incrementFromTicket fue desacoplado de la transacción interactiva
     // y se despacha post-commit de forma asíncrona para no retener conexiones ni bloquear filas.
 
-    logger.info({
+    logger.debug({
       layer: "repository",
       action: "TICKET_FOLIO_DIAG",
       payload: {

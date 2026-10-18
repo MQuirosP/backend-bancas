@@ -501,7 +501,7 @@ const SorteoRepository = {
   }) {
     const { loteriaId, page, pageSize, status, search, isActive, includeDeleted, dateFrom, dateTo, lastId, lastScheduledAt, role, userId, ventanaId, bancaId } = params;
 
-    logger.info({
+    logger.debug({
       layer: "repository",
       action: "SORTEO_LIST_PARAMS",
       payload: {
@@ -534,7 +534,7 @@ const SorteoRepository = {
         : {}),
     };
 
-    logger.info({
+    logger.debug({
       layer: "repository",
       action: "SORTEO_LIST_WHERE",
       payload: {

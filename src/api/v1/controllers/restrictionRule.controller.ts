@@ -62,7 +62,7 @@ export const RestrictionRuleController = {
       query.listeroBancaId = req.bancaContext?.bancaId || req.user!.bancaId;
     }
 
-    req.logger?.info({
+    req.logger?.debug({
       layer: "controller",
       action: "RESTRICTION_LIST_DEBUG",
       payload: { query, userIdParam: query.userId }
@@ -70,7 +70,7 @@ export const RestrictionRuleController = {
 
     const result = await RestrictionRuleService.list(query);
 
-    req.logger?.info({
+    req.logger?.debug({
       layer: "controller",
       action: "RESTRICTION_LIST_RESULT",
       payload: {
@@ -146,7 +146,7 @@ export const RestrictionRuleController = {
     const { vendedorId, sorteoId } = req.query as any;
 
     // Log para debugging
-    req.logger?.info({
+    req.logger?.debug({
       layer: "controller",
       action: "RESTRICTIONS_ME_REQUEST",
       payload: {
@@ -263,7 +263,7 @@ export const RestrictionRuleController = {
       sorteoId
     );
 
-    req.logger?.info({
+    req.logger?.debug({
       layer: "controller",
       action: "RESTRICTIONS_ME_RESULT",
       payload: {

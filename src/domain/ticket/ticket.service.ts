@@ -695,8 +695,8 @@ export const TicketService = {
 
         const slowThreshold = config.slowTicketMs || 500;
 
-        // Registro info con solo t_total por request para cálculo de percentiles
-        logger.info({
+        // Registro debug con solo t_total por request para cálculo de percentiles
+        logger.debug({
           layer: "service",
           action: "ticket_request_timing",
           userId,

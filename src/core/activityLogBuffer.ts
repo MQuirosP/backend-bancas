@@ -124,7 +124,7 @@ export class ActivityLogBuffer {
           skipDuplicates: true,
         });
 
-        logger.info({
+        logger.debug({
           layer: 'activity-buffer',
           action: 'BATCH_FLUSH_SUCCESS',
           payload: { count: mappedBatch.length, remainingInBuffer: this.buffer.length },

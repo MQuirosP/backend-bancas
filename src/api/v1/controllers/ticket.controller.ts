@@ -267,7 +267,7 @@ export const TicketController = {
       filters.userId = effectiveFilters.vendedorId;
       delete filters.vendedorId;
 
-      req.logger?.info({
+      req.logger?.debug({
         layer: "controller",
         action: "TICKET_LIST_VENDEDOR_MAPPING",
         payload: {
@@ -380,7 +380,7 @@ export const TicketController = {
     const me = req.user!;
 
     // Log para debugging
-    req.logger?.info({
+    req.logger?.debug({
       layer: "controller",
       action: "TICKET_NUMBERS_SUMMARY_REQUEST",
       payload: {
@@ -453,7 +453,7 @@ export const TicketController = {
       dateRange = resolveDateRange(date || "today", fromDate, toDate);
     }
 
-    req.logger?.info({
+    req.logger?.debug({
       layer: "controller",
       action: "TICKET_NUMBERS_SUMMARY_PARAMS",
       payload: {

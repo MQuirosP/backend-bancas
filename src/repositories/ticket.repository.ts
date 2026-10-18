@@ -732,7 +732,7 @@ export const TicketRepository = {
           const seqStr = rpcResult.ticketNumber ? rpcResult.ticketNumber.split("-")[1] : null;
           const seqForLog = seqStr ? parseInt(seqStr, 10) || null : null;
 
-          logger.info({
+          logger.debug({
             layer: "repository",
             action: "TICKET_FOLIO_DIAG",
             payload: {

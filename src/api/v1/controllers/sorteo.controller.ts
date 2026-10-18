@@ -132,7 +132,7 @@ export const SorteoController = {
     const toDate = typeof req.query.toDate === "string" ? req.query.toDate : undefined;
 
     // DEBUG: Log parámetros recibidos
-    req.logger?.info({
+    req.logger?.debug({
       layer: "controller",
       action: "SORTEO_LIST_DEBUG",
       payload: {
@@ -156,7 +156,7 @@ export const SorteoController = {
       dateFromResolved = dateRange.fromAt;
       dateToResolved = dateRange.toAt;
 
-      req.logger?.info({
+      req.logger?.debug({
         layer: "controller",
         action: "SORTEO_LIST_DATE_RESOLVED",
         payload: {
@@ -174,7 +174,7 @@ export const SorteoController = {
       : undefined;
 
     // DEBUG: Log bancaId
-    req.logger?.info({
+    req.logger?.debug({
       layer: "controller",
       action: "SORTEO_LIST_BANCA_ID",
       payload: {
@@ -205,7 +205,7 @@ export const SorteoController = {
     // Type guard para verificar si tiene paginación
     const hasPagination = !result.meta.grouped && 'page' in result.meta;
 
-    req.logger?.info({
+    req.logger?.debug({
       layer: "controller",
       action: "SORTEO_LIST_RESULT",
       payload: {
