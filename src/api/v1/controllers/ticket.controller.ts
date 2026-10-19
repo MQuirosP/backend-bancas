@@ -95,13 +95,22 @@ export const TicketController = {
         req.user?.ventanaId
       );
 
-      // 3. Commit Atómico (Lua: Update Cache + Release Lock)
+      // 3. Responder de inmediato al cliente HTTP (Fast-Path)
+      const response = sendTicketResponse(res, ticketResult);
+
+      // 4. Commit Atómico desacoplado en background (Lua: Update Cache + Release Lock)
       // Si ownerId es '' (DB_FALLBACK), commit es no-op seguro.
       if (clientRequestId) {
-        await IdempotencyService.commit(clientRequestId, ownerId, ticketResult, payloadHash);
+        IdempotencyService.commit(clientRequestId, ownerId, ticketResult, payloadHash).catch((commitErr) => {
+          req.logger?.warn({
+            layer: 'controller',
+            action: 'IDEMPOTENCY_ASYNC_COMMIT_ERROR',
+            payload: { clientRequestId, error: commitErr?.message || String(commitErr) },
+          });
+        });
       }
 
-      return sendTicketResponse(res, ticketResult);
+      return response;
 
     } catch (err: any) {
       // 4. P2002 Auto-Repair (duplicate idempotencyKey en DB)

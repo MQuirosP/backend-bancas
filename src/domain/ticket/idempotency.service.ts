@@ -1,4 +1,4 @@
-import { getRedisClient, isRedisAvailable } from '../../core/redisClient';
+import { getRedisSalesClient, isRedisSalesAvailable } from '../../core/redisClient';
 import logger from '../../core/logger';
 import crypto from 'crypto';
 import { salesPrisma } from '../../core/prismaClient';
@@ -142,10 +142,10 @@ export class IdempotencyService {
     ownerId: string;
     cachedData?: any;
   }> {
-    const redis = getRedisClient();
+    const redis = getRedisSalesClient();
 
-    // ── Camino Redis ──────────────────────────────────────────────────────
-    if (isRedisAvailable() && redis) {
+    // ── Camino Redis Fast-Path ────────────────────────────────────────────
+    if (isRedisSalesAvailable() && redis) {
       const lockKey = `idemp:lock:${key}`;
       const resKey  = `idemp:res:${key}`;
       const ownerId = crypto.randomUUID();
@@ -203,7 +203,7 @@ export class IdempotencyService {
   // Si Redis no está disponible, el unique constraint de DB garantiza idempotencia.
   // ────────────────────────────────────────────────────────────────────────
   static async commit(key: string, ownerId: string, data: any, payloadHash: string): Promise<void> {
-    const redis = getRedisClient();
+    const redis = getRedisSalesClient();
     if (!redis) return; // Sin Redis → DB unique constraint es la garantía
 
     const lockKey = `idemp:lock:${key}`;
@@ -244,7 +244,7 @@ export class IdempotencyService {
   static async rollback(key: string, ownerId: string): Promise<void> {
     if (!ownerId) return; // DB_FALLBACK / DB_HIT → no hay lock Redis que liberar
 
-    const redis = getRedisClient();
+    const redis = getRedisSalesClient();
     if (!redis) return;
 
     const lockKey = `idemp:lock:${key}`;
@@ -272,9 +272,9 @@ export class IdempotencyService {
   // ────────────────────────────────────────────────────────────────────────
   static async autoRepair(key: string, payloadHash: string, fetcher: () => Promise<any>): Promise<any> {
     // Si Redis no está disponible, ir directamente a la DB
-    if (!isRedisAvailable()) return await fetcher();
+    if (!isRedisSalesAvailable()) return await fetcher();
 
-    const redis = getRedisClient();
+    const redis = getRedisSalesClient();
     if (!redis) return await fetcher();
 
     const resKey = `idemp:res:${key}`;

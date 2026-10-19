@@ -270,7 +270,6 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
         accumulatedBalance: 200,
         date: new Date(),
       });
-      (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]);
 
       const result = await VendorCreditService.validateAndReserve("v-1", "s-1", 500);
 
@@ -291,7 +290,6 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
         bancaId: "b-1",
       });
       (prisma.accountStatement.findFirst as jest.Mock).mockResolvedValueOnce(null);
-      (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]);
 
       const result = await VendorCreditService.validateAndReserve("v-1", "s-1", 500);
 
@@ -300,7 +298,7 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
       expect(markRedisError).toHaveBeenCalled();
     });
 
-    it("enters degraded mode when Redis check command exceeds 250ms timeout", async () => {
+    it("enters degraded mode when Redis check command exceeds 150ms timeout", async () => {
       mockRedis.eval.mockImplementationOnce(
         () => new Promise((resolve) => setTimeout(resolve, 350))
       );
@@ -314,7 +312,6 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
         bancaId: "b-1",
       });
       (prisma.accountStatement.findFirst as jest.Mock).mockResolvedValueOnce(null);
-      (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]);
 
       const result = await VendorCreditService.validateAndReserve("v-1", "s-1", 500);
 
@@ -346,7 +343,6 @@ describe("Bloque B: VendorCreditService & Redis Integration", () => {
         bancaId: "b-1",
       });
       (prisma.accountStatement.findFirst as jest.Mock).mockResolvedValueOnce(null);
-      (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]);
 
       const result = await VendorCreditService.validateAndReserve("v-1", "s-1", 500);
 

@@ -47,7 +47,7 @@ export interface CreditStatusResponse {
 }
 
 const DEFAULT_TTL_SECONDS = 86400; // 24 horas (cubre la jornada operativa completa)
-const REDIS_COMMAND_TIMEOUT_MS = 250; // Timeout estricto de comando Redis
+const REDIS_COMMAND_TIMEOUT_MS = 150; // Timeout defensivo estricto de comando Redis Fast-Path
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCRIPTS LUA ATÓMICOS
@@ -214,14 +214,18 @@ return 'OK'
 `;
 
 /**
- * Helper con timeout defensivo para promesas asíncronas.
+ * Helper con timeout defensivo para promesas asíncronas con limpieza de temporizador.
  */
 function withTimeout<T>(promise: Promise<T>, ms: number, errCode: string): Promise<T> {
+  let timer: NodeJS.Timeout;
   return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(errCode)), ms)
-    ),
+    promise.then((res) => {
+      clearTimeout(timer);
+      return res;
+    }),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(errCode)), ms);
+    }),
   ]);
 }
 
@@ -761,20 +765,34 @@ export class VendorCreditService {
 
         try {
           const dbCalculation = async () => {
-            // 1. Obtener vendedor desde pool general (NUNCA salesPrisma)
-            const vendor = await prisma.user.findUnique({
-              where: { id: vendedorId },
-              select: {
-                id: true,
-                creditLimit: true,
-                creditAlertThreshold: true,
-                creditBlockMode: true,
-                settings: true,
-                ventanaId: true,
-                bancaId: true,
-                ventana: { select: { bancaId: true } },
-              },
-            });
+            // 1 & 2. Lectura atómica concurrente en paralelo sobre índices primarios (vendor + accountStatement)
+            // Eliminando por completo fetchOpenSales() que ejecutaba agregaciones masivas en PostgreSQL.
+            const todayCRStr = tz.toDateStr();
+            const todayDateUTC = tz.parse(todayCRStr);
+
+            const [vendor, lastStatement] = await Promise.all([
+              prisma.user.findUnique({
+                where: { id: vendedorId },
+                select: {
+                  id: true,
+                  creditLimit: true,
+                  creditAlertThreshold: true,
+                  creditBlockMode: true,
+                  settings: true,
+                  ventanaId: true,
+                  bancaId: true,
+                  ventana: { select: { bancaId: true } },
+                },
+              }),
+              prisma.accountStatement.findFirst({
+                where: {
+                  vendedorId,
+                  date: { lte: todayDateUTC },
+                },
+                orderBy: { date: "desc" },
+                select: { accumulatedBalance: true, date: true },
+              }),
+            ]);
 
             if (!vendor) {
               throw new Error(`Vendor ${vendedorId} not found during degraded credit check`);
@@ -786,19 +804,6 @@ export class VendorCreditService {
             bancaId = vendor.bancaId || vendor.ventana?.bancaId || null;
             ventanaId = vendor.ventanaId || null;
 
-            // 2. Obtener saldo base desde AccountStatement
-            const todayCRStr = tz.toDateStr();
-            const todayDateUTC = tz.parse(todayCRStr);
-
-            const lastStatement = await prisma.accountStatement.findFirst({
-              where: {
-                vendedorId,
-                date: { lte: todayDateUTC },
-              },
-              orderBy: { date: "desc" },
-              select: { accumulatedBalance: true, date: true },
-            });
-
             let calculatedBase = 0;
             if (lastStatement) {
               calculatedBase = lastStatement.accumulatedBalance ?? 0;
@@ -808,17 +813,11 @@ export class VendorCreditService {
               }
             }
 
-            // 3. Ventas abiertas de sorteos no consolidados
-            const daysWindow = config.creditLimit.openSalesDaysWindow || 2;
-            const windowDateUTC = new Date(todayDateUTC.getTime() - daysWindow * 24 * 60 * 60 * 1000);
-            const windowDateStr = tz.toDateStr(windowDateUTC);
-
-            const openSales = await this.fetchOpenSales(vendedorId, windowDateStr);
-            let calculatedOpen = 0;
-            for (const row of openSales) {
-              const val = parseFloat(String(row.netAmount)) || 0;
-              if (val > 0) calculatedOpen += val;
-            }
+            // OPTIMIZACIÓN CRÍTICA (Fase 2): NUNCA ejecutar fetchOpenSales() en el checkout.
+            // La agregación histórica masiva (SUM + JOIN de tickets y jugadas) satura la base
+            // de datos durante la venta. En modo degradado nos basamos en el saldo acumulado
+            // más el delta local en proceso de las ventas aprobadas recientemente.
+            const calculatedOpen = cached?.openSalesTotal ?? 0;
 
             return {
               calculatedBase,
@@ -967,9 +966,9 @@ export class VendorCreditService {
       }
     }
 
-    if (!config.creditLimit.enabled || !isRedisAvailable()) return;
+    if (!config.creditLimit.enabled || !isRedisSalesAvailable()) return;
 
-    const redis = getRedisClient();
+    const redis = getRedisSalesClient();
     if (!redis) return;
 
     const { open } = this.getKeys(vendedorId);

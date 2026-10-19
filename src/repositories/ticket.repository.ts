@@ -870,7 +870,8 @@ export const TicketRepository = {
       }
 
       const ticket = TicketResponseBuilder.build(txResult, data, userId, options);
-      await TicketRedisAccumulator.increment(ticket, txResult.sorteoScheduledAt, options);
+      // Desacoplado asíncrono no bloqueante post-commit para eliminar latencia en fast-path
+      TicketRedisAccumulator.incrementAsync(ticket, txResult.sorteoScheduledAt, options);
 
       // NOTA ARQUITECTÓNICA (Regla 7 AGENTS.md): DailyNumberSalesService.incrementFromTicket
       // fue desacoplado del ciclo de venta para eliminar la contención por RowExclusiveLock (349 ms).
@@ -879,7 +880,14 @@ export const TicketRepository = {
       return { ticket, warnings: txResult.warnings, creditInfo };
     } finally {
       if (lock) {
-        await TicketConcurrencyManager.release(lock);
+        // Desacoplado en segundo plano: no retiene la respuesta HTTP al cliente
+        TicketConcurrencyManager.release(lock).catch((err) => {
+          logger.warn({
+            layer: "repository",
+            action: "TICKET_RELEASE_LOCK_ERROR",
+            payload: { lockKey: lock?.lockKey, error: err?.message || String(err) },
+          });
+        });
       }
     }
   },

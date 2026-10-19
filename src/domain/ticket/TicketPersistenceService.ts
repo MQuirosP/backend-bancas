@@ -26,8 +26,8 @@ export const TicketPersistenceService = {
         options
       );
       
-      // Invalidar datos y acumulados de ventas del vendedor sin desalojar su perfil autenticado (tag user:*)
-      await CacheService.invalidateTag(`user-sales:${effectiveVendedorId}`).catch(() => {});
+      // Invalidar datos y acumulados de ventas del vendedor sin desalojar su perfil autenticado (tag user:*) de forma desacoplada
+      CacheService.invalidateTag(`user-sales:${effectiveVendedorId}`).catch(() => {});
       
       return { ticket, warnings, creditInfo };
     } catch (err: any) {

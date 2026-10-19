@@ -42,6 +42,7 @@ import { TicketPersistenceService } from "./TicketPersistenceService";
 import { mmToPixels } from "../../utils/printDimensions";
 
 const CUTOFF_GRACE_MS = 1000;
+const L1_TTL_ENTITY_MS = 300_000; // 5 minutos en memoria de proceso (L1) respaldado por invalidación reactiva
 // Updated: Added clienteNombre field support
 
 // In-flight deduplication para getNumbersSummaryFilterOptions
@@ -238,6 +239,8 @@ export const TicketService = {
               ),
             86400, // 24 hours TTL (Event-Driven: invalidación por mutación de usuario)
             [`user:${userId}`],
+            true, // useL1 = true (Micro-caché L1 en RAM de proceso)
+            L1_TTL_ENTITY_MS,
           ),
           CacheService.wrap(
             `sorteo:${sorteoId}`,
@@ -262,6 +265,8 @@ export const TicketService = {
               ),
             86400, // 24 hours TTL (Event-Driven: invalidación al evaluar o cerrar sorteo)
             [`sorteo:${sorteoId}`],
+            true, // useL1 = true (Micro-caché L1 en RAM de proceso)
+            L1_TTL_ENTITY_MS,
           ),
           initialVentanaId
             ? CacheService.wrap(
@@ -289,6 +294,8 @@ export const TicketService = {
                   ),
                 86400, // 24 hours TTL (Event-Driven: invalidación al editar ventana/banca)
                 [`ventana:${initialVentanaId}`],
+                true, // useL1 = true (Micro-caché L1 en RAM de proceso)
+                L1_TTL_ENTITY_MS,
               )
             : Promise.resolve(null),
           requestedVendedorId && requestedVendedorId !== userId
@@ -318,6 +325,8 @@ export const TicketService = {
                   ),
                 86400, // 24 hours TTL (Event-Driven: invalidación por mutación de usuario)
                 [`user:${requestedVendedorId}`],
+                true, // useL1 = true (Micro-caché L1 en RAM de proceso)
+                L1_TTL_ENTITY_MS,
               )
             : Promise.resolve(null),
         ]);
@@ -377,6 +386,8 @@ export const TicketService = {
             ),
           86400, // 24 hours TTL (Event-Driven: invalidación al editar ventana/banca)
           [`ventana:${ventanaId}`],
+          true, // useL1 = true (Micro-caché L1 en RAM de proceso)
+          L1_TTL_ENTITY_MS,
         );
         try {
           if (timingCollector.prefetch_breakdown) {
