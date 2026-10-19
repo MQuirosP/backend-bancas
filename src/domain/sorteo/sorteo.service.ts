@@ -1113,7 +1113,9 @@ const SorteoService = {
           };
         },
         60, // TTL 60 segundos (invalidación reactiva instantánea por WebSocket)
-        tags
+        tags,
+        true, // useL1: true (absorbe estampidas en 0.5 vCPU de Render sin tocar red)
+        8_000 // 8s TTL en memoria RAM
       );
     }
 

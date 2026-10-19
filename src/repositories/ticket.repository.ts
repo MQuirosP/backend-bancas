@@ -37,9 +37,13 @@ import { config } from "../config";
 import { bumpRestrictionsVersion } from "../utils/restrictionCompiledCache";
 import { appendSalesCounterOps } from "../utils/sorteoSalesCounters";
 import { VendorCreditService } from "../domain/credit/vendorCredit.service";
+import { SingleFlight } from "../utils/concurrency";
 
 export type { CreateTicketInput, CreateTicketOptions, TicketWarning };
 
+// Micro-caché L1 en RAM (4s) y coalescing para saldos de validación por sorteo/vendedor
+const sorteoBalancesL1Cache = new Map<string, { data: Record<string, { remaining: number; limit: number; accumulated: number }>; expiresAt: number }>();
+const SORTEO_BALANCES_L1_TTL_MS = 4000;
 
 const RULES_CACHE_TTL_SECONDS = 86400; // 24 horas en Redis L2 (Event-Driven: invalidación por mutación de reglas)
 
@@ -1562,34 +1566,52 @@ export const TicketRepository = {
   }): Promise<Record<string, { remaining: number; limit: number; accumulated: number }>> {
     const { sorteoId, vendedorId, bancaId, actorRole } = params;
 
-    return await withConnectionRetry(async () => {
-      // 1. Obtener contexto del vendedor (ventanaId, bancaId real)
-      // OPTIMIZACIÓN: Cache 300s — el contexto de ventana/banca de un vendedor cambia muy raramente
-      const user = await CacheService.wrap(
-        `user:ctx:${vendedorId}`,
-        () => prisma.user.findUnique({
-          where: { id: vendedorId },
-          select: { id: true, ventanaId: true, role: true, ventana: { select: { bancaId: true } } },
-        }),
-        300,
-        [`user:${vendedorId}`]
-      );
+    const cacheKey = `${sorteoId}:${vendedorId}:${actorRole || 'NONE'}`;
+    const nowMs = Date.now();
+    const cached = sorteoBalancesL1Cache.get(cacheKey);
+    if (cached && cached.expiresAt > nowMs) {
+      return cached.data;
+    }
 
-      if (!user || !user.ventanaId) return {};
+    return await SingleFlight.do(cacheKey, async () => {
+      const doubleCheck = sorteoBalancesL1Cache.get(cacheKey);
+      if (doubleCheck && doubleCheck.expiresAt > Date.now()) {
+        return doubleCheck.data;
+      }
 
-      const effectiveBancaId = user.ventana?.bancaId || bancaId;
-      if (!effectiveBancaId) return {};
+      const calculated = await withConnectionRetry(async () => {
+        // 1. Obtener contexto del vendedor (ventanaId, bancaId real)
+        // OPTIMIZACIÓN: Cache 300s en Redis + 60s en RAM local
+        const user = await CacheService.wrap(
+          `user:ctx:${vendedorId}`,
+          () => prisma.user.findUnique({
+            where: { id: vendedorId },
+            select: { id: true, ventanaId: true, role: true, ventana: { select: { bancaId: true } } },
+          }),
+          300,
+          [`user:${vendedorId}`],
+          true,
+          60_000
+        );
 
-      // 2. Obtener sorteo y su lotería
-      // OPTIMIZACIÓN: Cache 1h — los metadatos de un sorteo (digits, loteriaId) no cambian
-      const sorteo = await CacheService.wrap(
-        `sorteo:meta:${sorteoId}`,
-        () => prisma.sorteo.findUnique({
-          where: { id: sorteoId },
-          select: { id: true, loteriaId: true, scheduledAt: true, digits: true },
-        }),
-        3600
-      );
+        if (!user || !user.ventanaId) return {};
+
+        const effectiveBancaId = user.ventana?.bancaId || bancaId;
+        if (!effectiveBancaId) return {};
+
+        // 2. Obtener sorteo y su lotería
+        // OPTIMIZACIÓN: Cache 1h en Redis + 60s en RAM local
+        const sorteo = await CacheService.wrap(
+          `sorteo:meta:${sorteoId}`,
+          () => prisma.sorteo.findUnique({
+            where: { id: sorteoId },
+            select: { id: true, loteriaId: true, scheduledAt: true, digits: true },
+          }),
+          3600,
+          [`sorteo:${sorteoId}`],
+          true,
+          60_000
+        );
 
       if (!sorteo) return {};
 
@@ -1764,7 +1786,15 @@ export const TicketRepository = {
         }
       }
       return balances;
-    }, { context: 'TicketRepository.getSorteoBalances' });
+      }, { context: 'TicketRepository.getSorteoBalances' });
+
+      sorteoBalancesL1Cache.set(cacheKey, {
+        data: calculated,
+        expiresAt: Date.now() + SORTEO_BALANCES_L1_TTL_MS,
+      });
+
+      return calculated;
+    });
   },
 };
 

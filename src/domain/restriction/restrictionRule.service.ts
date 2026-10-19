@@ -16,6 +16,13 @@ import {
   bumpRestrictionsVersion,
   getOrSetRestrictionsListCache,
 } from "../../utils/restrictionCompiledCache";
+import { CacheService } from "../../core/cache.service";
+import { ConcurrencyManager, SingleFlight } from "../../utils/concurrency";
+
+// Micro-caché L1 en RAM (5s) y coalescing para balances precalculados por vendedor/sorteo
+const vendorBalancesL1Cache = new Map<string, { data: Record<string, Record<string, { remaining: number; limit: number; accumulated: number }>>; expiresAt: number }>();
+const VENDOR_BALANCES_L1_TTL_MS = 5000;
+
 
 /**
  * Normaliza y valida el campo number
@@ -929,31 +936,56 @@ export const RestrictionRuleService = {
     const filteredGeneral = compiled.general;
     const filteredVendorSpecific = compiled.vendorSpecific;
 
-    // Pre-calcular balances por regla si viene sorteoId
-    const numberBalancesByRule: Record<string, Record<string, { remaining: number; limit: number; accumulated: number }>> = {};
+    // Pre-calcular balances por regla si viene sorteoId con micro-cache L1 y SingleFlight
+    let numberBalancesByRule: Record<string, Record<string, { remaining: number; limit: number; accumulated: number }>> = {};
 
     if (sorteoId) {
-      try {
-        const sorteo = await prisma.sorteo.findUnique({
-          where: { id: sorteoId },
-          select: { id: true, loteriaId: true, scheduledAt: true, digits: true }
-        });
+      const balanceCacheKey = `${vendorId}:${sorteoId}`;
+      const cached = vendorBalancesL1Cache.get(balanceCacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        numberBalancesByRule = cached.data;
+      } else {
+        numberBalancesByRule = await SingleFlight.do(balanceCacheKey, async () => {
+          const doubleCheck = vendorBalancesL1Cache.get(balanceCacheKey);
+          if (doubleCheck && doubleCheck.expiresAt > Date.now()) {
+            return doubleCheck.data;
+          }
 
-        if (sorteo) {
-          const { calculateAccumulatedByNumbersAndScope, resolveNumbersToValidate } = require("../../repositories/helpers/ticket-restriction.helper");
-          const { calculateDynamicLimit } = require("../../repositories/ticket.repository");
+          const balancesCalculated: Record<string, Record<string, { remaining: number; limit: number; accumulated: number }>> = {};
+          try {
+            const sorteo = await CacheService.wrap(
+              `sorteo:meta:${sorteoId}`,
+              () => prisma.sorteo.findUnique({
+                where: { id: sorteoId },
+                select: { id: true, loteriaId: true, scheduledAt: true, digits: true }
+              }),
+              3600,
+              [`sorteo:${sorteoId}`],
+              true,
+              60_000
+            );
 
-          const now = new Date();
-          const allRules = [...filteredGeneral, ...filteredVendorSpecific];
+            if (sorteo) {
+              const { calculateAccumulatedByNumbersAndScope, resolveNumbersToValidate } = require("../../repositories/helpers/ticket-restriction.helper");
+              const { calculateDynamicLimit } = require("../../repositories/ticket.repository");
 
-          await Promise.all(
-            allRules.map(async (rule) => {
-              if (rule.maxTotal == null && rule.baseAmount == null && rule.salesPercentage == null) {
-                return;
-              }
+              const now = new Date();
+              const allRules = [...filteredGeneral, ...filteredVendorSpecific];
 
-              const ruleNumbers = resolveNumbersToValidate(rule, now);
-              if (ruleNumbers && ruleNumbers.length > 0) {
+              // ScopeCache compartido para deduplicar acumulados y totales de venta entre reglas del mismo alcance
+              const scopeCache = {
+                salesTotals: new Map<string, number>(),
+                numberTotals: new Map<string, Map<string, number>>(),
+              };
+
+              const applicableRules = allRules.filter(
+                (rule) => rule.maxTotal != null || rule.baseAmount != null || rule.salesPercentage != null
+              );
+
+              const tasks = applicableRules.map((rule) => async () => {
+                const ruleNumbers = resolveNumbersToValidate(rule, now);
+                if (!ruleNumbers || ruleNumbers.length === 0) return;
+
                 const scopeType = rule.appliesToVendedor || rule.userId ? 'USER' : rule.ventanaId ? 'VENTANA' : 'BANCA';
                 const scopeId = scopeType === 'USER' ? vendorId : scopeType === 'VENTANA' ? (rule.ventanaId || ventanaId || "") : (rule.bancaId || bancaId);
 
@@ -961,7 +993,8 @@ export const RestrictionRuleService = {
                   numbers: ruleNumbers,
                   scopeType,
                   scopeId,
-                  sorteoId
+                  sorteoId,
+                  cache: scopeCache as any
                 });
 
                 let dynamicLimit = Infinity;
@@ -978,7 +1011,8 @@ export const RestrictionRuleService = {
                     ventanaId: ventanaId || "",
                     bancaId,
                     sorteoId,
-                    at: now
+                    at: now,
+                    cache: scopeCache as any
                   });
                 }
 
@@ -997,13 +1031,22 @@ export const RestrictionRuleService = {
                     accumulated
                   };
                 }
-                numberBalancesByRule[rule.id] = balances;
-              }
-            })
-          );
-        }
-      } catch (err: any) {
-        console.error("Error pre-calculating balances for active restrictions:", err.message);
+                balancesCalculated[rule.id] = balances;
+              });
+
+              // Limitar a máximo 3 consultas paralelas para proteger el pool de DB y evitar congelamiento de libuv
+              await ConcurrencyManager.runLimited(tasks, { limit: 3 });
+            }
+          } catch (err: any) {
+            console.error("Error pre-calculating balances for active restrictions:", err.message);
+          }
+
+          vendorBalancesL1Cache.set(balanceCacheKey, {
+            data: balancesCalculated,
+            expiresAt: Date.now() + VENDOR_BALANCES_L1_TTL_MS
+          });
+          return balancesCalculated;
+        });
       }
     }
 
