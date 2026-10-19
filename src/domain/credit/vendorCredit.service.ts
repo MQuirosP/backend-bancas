@@ -1840,7 +1840,21 @@ export class VendorCreditService {
         }
 
         if (baseVal === null) {
-          toHydrate.push(v);
+          if (!v.creditLimit || v.creditLimit <= 0) {
+            items.push({
+              vendedorId: v.id,
+              creditLimit: null,
+              effectiveBalance: 0,
+              percentageUsed: 0,
+              status: "NORMAL",
+              updatedAt: v.updatedAt.toISOString(),
+            });
+            setImmediate(() => {
+              this.hydrate(v.id).catch(() => {});
+            });
+          } else {
+            toHydrate.push(v);
+          }
         } else {
           const baseNum = parseFloat(baseVal) || 0;
           const openTotal = Object.values(openMap || {}).reduce(
@@ -1958,6 +1972,9 @@ export class VendorCreditService {
     targetId: string,
     activeBancaId?: string | null
   ): Promise<CreditStatusResponse> {
+    let openMap: Record<string, string> = {};
+    let cachedBaseVal: string | null | undefined = undefined;
+
     const redis = getRedisSalesClient();
     if (redis && isRedisSalesAvailable()) {
       try {
@@ -1970,7 +1987,8 @@ export class VendorCreditService {
 
         const cfgMap = (results?.[0]?.[1] as Record<string, string>) || {};
         const baseVal = results?.[1]?.[1] as string | null | undefined;
-        const openMap = (results?.[2]?.[1] as Record<string, string>) || {};
+        cachedBaseVal = baseVal;
+        openMap = (results?.[2]?.[1] as Record<string, string>) || {};
 
         // Si el hash cfg y el base existen en Redis (cache hit)
         if (
@@ -2083,6 +2101,7 @@ export class VendorCreditService {
         creditAlertThreshold: true,
         creditBlockMode: true,
         updatedAt: true,
+        settings: true,
       },
     });
 
@@ -2090,19 +2109,76 @@ export class VendorCreditService {
       return { enabled: true, items: [] };
     }
 
-    // Rehidratar en Redis mediante inFlightHydrations
-    const h = await this.hydrate(vendor.id);
-    const totalOpen = Object.values(h.openBySorteo).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0);
-    const effectiveBalance = Math.round((h.baseBalance + totalOpen) * 100) / 100;
     const limit = vendor.creditLimit && vendor.creditLimit > 0 ? vendor.creditLimit : null;
+
+    // Si el vendedor no tiene límite configurado, responder de inmediato sin tocar balances
+    if (!limit) {
+      setImmediate(() => {
+        this.hydrate(vendor.id).catch(() => {});
+      });
+
+      return {
+        enabled: true,
+        items: [
+          {
+            vendedorId: vendor.id,
+            creditLimit: null,
+            effectiveBalance: 0,
+            percentageUsed: 0,
+            status: "NORMAL",
+            updatedAt: vendor.updatedAt.toISOString(),
+          },
+        ],
+      };
+    }
+
+    // LECTURA PUNTUAL POR ÍNDICE (PK/Date):
+    // Jamás invocar fetchOpenSales ni agregaciones sobre Ticket/Jugada de forma síncrona en el request HTTP
+    let baseBalance = 0;
+    if (cachedBaseVal !== null && cachedBaseVal !== undefined) {
+      baseBalance = parseFloat(cachedBaseVal) || 0;
+    } else {
+      const lastStatement = await prisma.accountStatement.findFirst({
+        where: { vendedorId: vendor.id },
+        orderBy: { date: "desc" },
+        select: { accumulatedBalance: true, date: true },
+      });
+
+      if (lastStatement) {
+        baseBalance = lastStatement.accumulatedBalance ?? 0;
+        const resetAt = (vendor.settings as any)?.balanceResetAt;
+        if (resetAt && lastStatement.date && new Date(lastStatement.date).getTime() < new Date(resetAt).getTime()) {
+          baseBalance = 0;
+        }
+      }
+    }
+
+    let openTotal = 0;
+    if (openMap && typeof openMap === "object") {
+      openTotal = Object.values(openMap).reduce(
+        (acc: number, val: any) => acc + (parseFloat(val) || 0),
+        0
+      );
+    }
+
+    const effectiveBalance = Math.round((baseBalance + openTotal) * 100) / 100;
     const threshold = vendor.creditAlertThreshold ?? 80;
     const blockMode = vendor.creditBlockMode ?? true;
 
-    const percentageUsed = limit && limit > 0
-      ? Math.round(((effectiveBalance / limit) * 100) * 100) / 100
-      : 0;
-
+    const percentageUsed = Math.round(((effectiveBalance / limit) * 100) * 100) / 100;
     const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
+
+    // Despachar reconstrucción e hidratación profunda en segundo plano con setImmediate
+    // para repoblar Redis con fetchOpenSales sin penalizar la latencia del request
+    setImmediate(() => {
+      this.hydrate(vendor.id).catch((hydrErr: any) => {
+        logger.warn({
+          layer: "credit",
+          action: "ASYNC_HYDRATE_BACKGROUND_WARN",
+          payload: { vendedorId: vendor.id, error: hydrErr?.message || String(hydrErr) },
+        });
+      });
+    });
 
     return {
       enabled: true,

@@ -138,6 +138,7 @@ export class SorteoEvaluationCoordinator {
         null;
 
       const affectedBancas = new Set<string>();
+      const affectedVendedores = new Set<string>();
       let syncOutput: any = null;
 
       // 1. Sincronización de Cuentas (Nativo en PostgreSQL vía fn_sync_sorteo_statements)
@@ -161,6 +162,8 @@ export class SorteoEvaluationCoordinator {
           for (const s of syncOutput.statements) {
             if (s.dimension === "banca" && s.entityId) {
               affectedBancas.add(s.entityId);
+            } else if (s.dimension === "vendedor" && s.entityId) {
+              affectedVendedores.add(s.entityId);
             }
           }
         }
@@ -233,7 +236,9 @@ export class SorteoEvaluationCoordinator {
       // =========================================================================
       try {
         const { clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
-        clearStatusMeRamCache();
+        for (const vId of affectedVendedores) {
+          clearStatusMeRamCache(vId);
+        }
       } catch (_) {}
 
       try {
