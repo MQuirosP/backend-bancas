@@ -226,8 +226,45 @@ export class SorteoEvaluationCoordinator {
       }
 
       // =========================================================================
-      // ⚡ 1. EMISIÓN INMEDIATA DEL WEBSOCKET BROADCAST (< 200ms)
-      // Despachado de inmediato sin esperar warmups, rollups ni escaneos contables.
+      // ⚡ 1. PRECALENTAMIENTO DE RESÚMENES (WARMUP BEFORE BROADCAST)
+      // Se precalientan los resúmenes evaluados en Redis ANTES de emitir el broadcast
+      // para garantizar que cuando las terminales consulten caigan en Cache Hit (< 15ms).
+      // Timeout defensivo de 2,500ms para garantizar que el broadcast jamás quede retenido.
+      // =========================================================================
+      try {
+        const { clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
+        clearStatusMeRamCache();
+      } catch (_) {}
+
+      try {
+        const { WarmupCoordinator } = await import("./warmup.coordinator");
+        const warmupPromises = targetBancas.map(async (bId) => {
+          try {
+            await WarmupCoordinator.executeWarmup(id, bId, true);
+          } catch (warmupErr: any) {
+            logger.warn({
+              layer: "coordinator",
+              action: "WARMUP_BEFORE_BROADCAST_WARN",
+              payload: { sorteoId: id, bancaId: bId, error: warmupErr?.message || String(warmupErr) },
+            });
+          }
+        });
+
+        await Promise.race([
+          Promise.all(warmupPromises),
+          new Promise((resolve) => setTimeout(resolve, 2500)),
+        ]);
+      } catch (err: any) {
+        logger.warn({
+          layer: "coordinator",
+          action: "WARMUP_BEFORE_BROADCAST_UNEXPECTED_ERROR",
+          payload: { sorteoId: id, error: err?.message || String(err) },
+        });
+      }
+
+      // =========================================================================
+      // ⚡ 2. EMISIÓN DEL WEBSOCKET BROADCAST
+      // Despachado únicamente cuando la caché L2 ya está caliente y los saldos reconciliados.
       // =========================================================================
       for (const bId of targetBancas) {
         if (bId) {
@@ -242,9 +279,9 @@ export class SorteoEvaluationCoordinator {
       }
 
       // =========================================================================
-      // 🚀 2. DESACOPLAMIENTO DE TAREAS SECUNDARIAS A SEGUNDO PLANO (BACKGROUND)
-      // Rollups, analítica histórica, invalidaciones y Warmup se ejecutan fuera
-      // de la ruta crítica del Event Loop mediante setImmediate cooperativo.
+      // 🚀 3. DESACOPLAMIENTO DE TAREAS SECUNDARIAS A SEGUNDO PLANO (BACKGROUND)
+      // Rollups, analítica histórica, invalidaciones no conflictivas y auditoría
+      // se ejecutan fuera de la ruta crítica del Event Loop mediante setImmediate cooperativo.
       // =========================================================================
       setImmediate(() => {
         runAsGlobalJob(async () => {
@@ -412,7 +449,7 @@ export class SorteoEvaluationCoordinator {
       await CacheService.invalidateTag(`sorteo:${id}`).catch(() => {});
       await CacheService.invalidateTag('dashboard').catch(() => {});
       await CacheService.invalidateTag('cierre').catch(() => {});
-      await CacheService.invalidateTag('report:summary').catch(() => {});
+      // NOTA: NO invalidar 'report:summary' aquí para no purgar el warmup precalentado en L2
     } catch (cacheErr: any) {
       logger.error({
         layer: "coordinator",
@@ -440,20 +477,6 @@ export class SorteoEvaluationCoordinator {
         layer: "coordinator",
         action: "ACTIVITY_LOG_ERROR",
         payload: { sorteoId: id, error: actErr?.message || String(actErr) },
-      });
-    }
-
-    // F. Precalentamiento (Warmup) desacoplado en background
-    try {
-      const { WarmupCoordinator } = await import("./warmup.coordinator");
-      for (const bId of targetBancas) {
-        WarmupCoordinator.scheduleWarmup(id, bId);
-      }
-    } catch (warmupErr: any) {
-      logger.error({
-        layer: "coordinator",
-        action: "WARMUP_TRIGGER_BACKGROUND_ERROR",
-        payload: { sorteoId: id, error: warmupErr?.message || String(warmupErr) },
       });
     }
   }

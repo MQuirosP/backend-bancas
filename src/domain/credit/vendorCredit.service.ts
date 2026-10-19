@@ -254,6 +254,9 @@ export class VendorCreditService {
     return this.inFlightHydrations;
   }
 
+  // Mapa de coalescencia en memoria para consultas mono-ID de crédito (SingleFlight en /status/me)
+  private static singleStatusInFlight = new Map<string, Promise<CreditStatusResponse>>();
+
   // Contador global de eventos fail-open
   private static failOpenCounter = 0;
 
@@ -1332,6 +1335,11 @@ export class VendorCreditService {
         action: "BASE_BALANCE_REFRESHED",
         payload: { vendedorId, baseBalance, totalOpen, projected, oldStatus, newStatus },
       });
+
+      try {
+        const { clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
+        clearStatusMeRamCache(vendedorId);
+      } catch (_) {}
     } catch (err: any) {
       markRedisError("VendorCreditService.updateBaseBalance");
       logger.error({
@@ -1665,7 +1673,7 @@ export class VendorCreditService {
     const { activeBancaId, requestedVendedorIds } = options;
     const isSpecificList = Array.isArray(requestedVendedorIds) && requestedVendedorIds.length > 0;
 
-    // OPTIMIZACIÓN REDIS-FIRST (Caso mono-ID, ej: /api/v1/credit/status/me)
+    // OPTIMIZACIÓN REDIS-FIRST Y SINGLEFLIGHT (Caso mono-ID, ej: /api/v1/credit/status/me)
     if (isSpecificList && requestedVendedorIds.length === 1) {
       const targetId = requestedVendedorIds[0];
 
@@ -1674,96 +1682,22 @@ export class VendorCreditService {
         return { enabled: true, items: [] };
       }
 
-      const redis = getRedisSalesClient();
-      if (redis && isRedisSalesAvailable()) {
-        try {
-          const { cfg, base, open } = this.getKeys(targetId);
-          const pipeline = redis.pipeline();
-          pipeline.hgetall(cfg);
-          pipeline.get(base);
-          pipeline.hgetall(open);
-          const results = await pipeline.exec();
-
-          const cfgMap = (results?.[0]?.[1] as Record<string, string>) || {};
-          const baseVal = results?.[1]?.[1] as string | null | undefined;
-          const openMap = (results?.[2]?.[1] as Record<string, string>) || {};
-
-          // Si el hash cfg y el base existen en Redis (cache hit)
-          if (
-            cfgMap &&
-            Object.keys(cfgMap).length > 0 &&
-            cfgMap.limit !== undefined &&
-            baseVal !== null &&
-            baseVal !== undefined
-          ) {
-            // Si el vendedor fue marcado inactivo en Redis, retornar vacío
-            if (cfgMap.isActive === "0") {
-              return { enabled: true, items: [] };
-            }
-
-            // Validar RBAC según relaciones en cfgMap
-            if (actor.role === Role.VENTANA && cfgMap.ventanaId && cfgMap.ventanaId !== actor.ventanaId) {
-              return { enabled: true, items: [] };
-            }
-            if (actor.role === Role.ADMIN && activeBancaId && cfgMap.bancaId && cfgMap.bancaId !== activeBancaId) {
-              return { enabled: true, items: [] };
-            }
-
-            const canServeBanca =
-              actor.role !== Role.BANCA ||
-              (actor.bancaId && cfgMap.bancaId === actor.bancaId);
-
-            if (canServeBanca) {
-              const rawLimit = parseFloat(cfgMap.limit);
-              const limit = !isNaN(rawLimit) && rawLimit > 0 ? rawLimit : null;
-              const threshold = parseFloat(cfgMap.threshold) || 80;
-              const blockMode = cfgMap.blockMode !== "0";
-
-              const baseNum = parseFloat(baseVal || "0") || 0;
-              const openTotal = Object.values(openMap || {}).reduce(
-                (acc: number, val: any) => acc + (parseFloat(val) || 0),
-                0
-              );
-              const effectiveBalance = Math.round((baseNum + openTotal) * 100) / 100;
-              const percentageUsed =
-                limit && limit > 0
-                  ? Math.round(((effectiveBalance / limit) * 100) * 100) / 100
-                  : 0;
-
-              const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
-              const updatedAt = cfgMap.updatedAt || new Date().toISOString();
-
-              // Touch-on-Read: Renovar TTL de 24h en segundo plano ante actividad activa del vendedor
-              redis.pipeline()
-                .expire(cfg, DEFAULT_TTL_SECONDS)
-                .expire(base, DEFAULT_TTL_SECONDS)
-                .expire(open, DEFAULT_TTL_SECONDS)
-                .exec()
-                .catch(() => {});
-
-              return {
-                enabled: true,
-                items: [
-                  {
-                    vendedorId: targetId,
-                    creditLimit: limit,
-                    effectiveBalance,
-                    percentageUsed,
-                    status,
-                    updatedAt,
-                  },
-                ],
-              };
-            }
-          }
-        } catch (err: any) {
-          logger.warn({
-            layer: "credit",
-            action: "GET_VENDOR_CREDIT_STATUS_REDIS_FIRST_WARN",
-            payload: { targetId, error: err?.message || String(err) },
-          });
-        }
+      const inFlightKey = `${actor.id}:${targetId}:${actor.role}:${activeBancaId || ""}`;
+      const inFlight = this.singleStatusInFlight.get(inFlightKey);
+      if (inFlight) {
+        return inFlight;
       }
+
+      const statusPromise = (async () => {
+        try {
+          return await this.resolveSingleVendorStatus(actor, targetId, activeBancaId);
+        } finally {
+          this.singleStatusInFlight.delete(inFlightKey);
+        }
+      })();
+
+      this.singleStatusInFlight.set(inFlightKey, statusPromise);
+      return statusPromise;
     }
 
     // Si es consulta general por alcance (sin IDs específicos), verificar caché en memoria (2.5s)
@@ -2012,6 +1946,177 @@ export class VendorCreditService {
     }
 
     return response;
+  }
+
+  /**
+   * Resuelve el estado de crédito para un único vendedor (ej: /api/v1/credit/status/me).
+   * Intenta primero Redis Fast-Path en L2 (0 ms / < 5 ms). Si hay Cache Miss o Redis no responde,
+   * consulta PostgreSQL puntualmente por ID y rehidrata en Redis protegiendo la DB.
+   */
+  private static async resolveSingleVendorStatus(
+    actor: { id: string; role: Role; bancaId?: string | null; ventanaId?: string | null },
+    targetId: string,
+    activeBancaId?: string | null
+  ): Promise<CreditStatusResponse> {
+    const redis = getRedisSalesClient();
+    if (redis && isRedisSalesAvailable()) {
+      try {
+        const { cfg, base, open } = this.getKeys(targetId);
+        const pipeline = redis.pipeline();
+        pipeline.hgetall(cfg);
+        pipeline.get(base);
+        pipeline.hgetall(open);
+        const results = await pipeline.exec();
+
+        const cfgMap = (results?.[0]?.[1] as Record<string, string>) || {};
+        const baseVal = results?.[1]?.[1] as string | null | undefined;
+        const openMap = (results?.[2]?.[1] as Record<string, string>) || {};
+
+        // Si el hash cfg y el base existen en Redis (cache hit)
+        if (
+          cfgMap &&
+          Object.keys(cfgMap).length > 0 &&
+          cfgMap.limit !== undefined &&
+          baseVal !== null &&
+          baseVal !== undefined
+        ) {
+          // Si el vendedor fue marcado inactivo en Redis, retornar vacío
+          if (cfgMap.isActive === "0") {
+            return { enabled: true, items: [] };
+          }
+
+          // Validar RBAC según relaciones en cfgMap
+          if (actor.role === Role.VENTANA && cfgMap.ventanaId && cfgMap.ventanaId !== actor.ventanaId) {
+            return { enabled: true, items: [] };
+          }
+          if (actor.role === Role.ADMIN && activeBancaId && cfgMap.bancaId && cfgMap.bancaId !== activeBancaId) {
+            return { enabled: true, items: [] };
+          }
+
+          const canServeBanca =
+            actor.role !== Role.BANCA ||
+            (actor.bancaId && cfgMap.bancaId === actor.bancaId);
+
+          if (canServeBanca) {
+            const rawLimit = parseFloat(cfgMap.limit);
+            const limit = !isNaN(rawLimit) && rawLimit > 0 ? rawLimit : null;
+            const threshold = parseFloat(cfgMap.threshold) || 80;
+            const blockMode = cfgMap.blockMode !== "0";
+
+            const baseNum = parseFloat(baseVal || "0") || 0;
+            const openTotal = Object.values(openMap || {}).reduce(
+              (acc: number, val: any) => acc + (parseFloat(val) || 0),
+              0
+            );
+            const effectiveBalance = Math.round((baseNum + openTotal) * 100) / 100;
+            const percentageUsed =
+              limit && limit > 0
+                ? Math.round(((effectiveBalance / limit) * 100) * 100) / 100
+                : 0;
+
+            const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
+            const updatedAt = cfgMap.updatedAt || new Date().toISOString();
+
+            // Touch-on-Read: Renovar TTL de 24h en segundo plano ante actividad activa del vendedor
+            redis.pipeline()
+              .expire(cfg, DEFAULT_TTL_SECONDS)
+              .expire(base, DEFAULT_TTL_SECONDS)
+              .expire(open, DEFAULT_TTL_SECONDS)
+              .exec()
+              .catch(() => {});
+
+            return {
+              enabled: true,
+              items: [
+                {
+                  vendedorId: targetId,
+                  creditLimit: limit,
+                  effectiveBalance,
+                  percentageUsed,
+                  status,
+                  updatedAt,
+                },
+              ],
+            };
+          }
+        }
+      } catch (err: any) {
+        logger.warn({
+          layer: "credit",
+          action: "GET_VENDOR_CREDIT_STATUS_REDIS_FIRST_WARN",
+          payload: { targetId, error: err?.message || String(err) },
+        });
+      }
+    }
+
+    // Fallback: Consultar usuario puntual en DB por ID
+    const whereClause: any = {
+      id: targetId,
+      role: Role.VENDEDOR,
+      isActive: true,
+    };
+
+    if (actor.role === Role.VENDEDOR) {
+      whereClause.id = actor.id;
+    } else if (actor.role === Role.VENTANA) {
+      whereClause.ventanaId = actor.ventanaId;
+    } else if (actor.role === Role.BANCA) {
+      const assignedBancaIds = await prisma.userBanca.findMany({
+        where: { userId: actor.id },
+        select: { bancaId: true },
+      }).then((rows: any[]) => rows.map((r: any) => r.bancaId));
+      if (actor.bancaId && !assignedBancaIds.includes(actor.bancaId)) {
+        assignedBancaIds.push(actor.bancaId);
+      }
+      whereClause.ventana = { bancaId: { in: assignedBancaIds } };
+    } else if (actor.role === Role.ADMIN) {
+      if (activeBancaId) {
+        whereClause.ventana = { bancaId: activeBancaId };
+      }
+    }
+
+    const vendor = await prisma.user.findFirst({
+      where: whereClause,
+      select: {
+        id: true,
+        creditLimit: true,
+        creditAlertThreshold: true,
+        creditBlockMode: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!vendor) {
+      return { enabled: true, items: [] };
+    }
+
+    // Rehidratar en Redis mediante inFlightHydrations
+    const h = await this.hydrate(vendor.id);
+    const totalOpen = Object.values(h.openBySorteo).reduce((a: number, b: any) => a + (parseFloat(b) || 0), 0);
+    const effectiveBalance = Math.round((h.baseBalance + totalOpen) * 100) / 100;
+    const limit = vendor.creditLimit && vendor.creditLimit > 0 ? vendor.creditLimit : null;
+    const threshold = vendor.creditAlertThreshold ?? 80;
+    const blockMode = vendor.creditBlockMode ?? true;
+
+    const percentageUsed = limit && limit > 0
+      ? Math.round(((effectiveBalance / limit) * 100) * 100) / 100
+      : 0;
+
+    const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
+
+    return {
+      enabled: true,
+      items: [
+        {
+          vendedorId: vendor.id,
+          creditLimit: limit,
+          effectiveBalance,
+          percentageUsed,
+          status,
+          updatedAt: vendor.updatedAt.toISOString(),
+        },
+      ],
+    };
   }
 
   /**

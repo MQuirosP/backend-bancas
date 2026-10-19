@@ -108,11 +108,13 @@ export class WarmupCoordinator {
    *
    * @param sorteoId ID del sorteo recién evaluado
    * @param bancaId ID de la banca (opcional)
+   * @param skipCooldown Si es true, omite la ventana de espera de 5s para precalentar de inmediato antes del broadcast
    * @returns Resultado del warmup ejecutado o coalescido
    */
   static async executeWarmup(
     sorteoId: string,
-    bancaId?: string | null
+    bancaId?: string | null,
+    skipCooldown: boolean = false
   ): Promise<WarmupResult> {
     const bancaKey = bancaId || "global";
     const state = this.getState(bancaKey);
@@ -137,9 +139,9 @@ export class WarmupCoordinator {
       });
     }
 
-    // Caso 2: Verificar si estamos dentro de la ventana de cooldown de 5s
+    // Caso 2: Verificar si estamos dentro de la ventana de cooldown de 5s (omitido si skipCooldown es true)
     const timeSinceLastCompleted = Date.now() - state.lastCompletedAt;
-    if (timeSinceLastCompleted < this.COOLDOWN_MS && state.lastCompletedAt > 0) {
+    if (!skipCooldown && timeSinceLastCompleted < this.COOLDOWN_MS && state.lastCompletedAt > 0) {
       const waitMs = this.COOLDOWN_MS - timeSinceLastCompleted;
       state.pendingSorteos.add(sorteoId);
 
@@ -168,7 +170,7 @@ export class WarmupCoordinator {
       });
     }
 
-    // Caso 3: Sin warmup activo y fuera de cooldown -> Iniciar de inmediato
+    // Caso 3: Sin warmup activo y fuera de cooldown (o skipCooldown=true) -> Iniciar de inmediato
     return this.runWarmupCycle(sorteoId, bancaKey);
   }
 
