@@ -5,6 +5,18 @@
 
 ---
 
+## v1.4.1 - Desacoplamiento de Crédito Operativo y Blindaje Anti-Estampida en Evaluaciones
+
+ **Fecha:** 2026-10-19  
+ **Rama:** `feat/vendor-credit-limit`
+
+### ⚡ Rendimiento y Protección de Concurrencia
+- **Desacoplamiento Total de `/status/me`:** Eliminación del fallback síncrono a `fetchOpenSales` y agregaciones masivas en `Ticket`/`Jugada` ante un cache miss en Redis. El endpoint ahora resuelve en O(1) (< 15 ms) mediante lecturas puntuales indexadas (`AccountStatement`) y delega la hidratación profunda a segundo plano con `setImmediate`.
+- **Erradicación de la Purga Global de Memoria:** Sustituida la llamada global `clearStatusMeRamCache()` en el ciclo de evaluación de sorteos por una invalidación quirúrgica selectiva por `vendedorId` (`clearStatusMeRamCache(vendedorId)`), aplicando exclusivamente a vendedores con boletos en el sorteo liquidado. Se elimina el efecto Thundering Herd / Cache Stampede multi-tenant en terminales físicas.
+- **Optimización de Listas de Crédito en Lotes:** En consultas masivas, los vendedores sin límite configurado se resuelven de forma determinista sin competir en la cola de hidratación de PostgreSQL.
+
+---
+
 ## v1.4.0 - Aislamiento Multi-Tenant, Pools Dedicados, Sincronización Realtime por WebSockets y Caché Resiliente
 
  **Fecha:** 2026-09-29

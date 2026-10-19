@@ -1966,6 +1966,11 @@ export class VendorCreditService {
    * Resuelve el estado de crédito para un único vendedor (ej: /api/v1/credit/status/me).
    * Intenta primero Redis Fast-Path en L2 (0 ms / < 5 ms). Si hay Cache Miss o Redis no responde,
    * consulta PostgreSQL puntualmente por ID y rehidrata en Redis protegiendo la DB.
+   *
+   * ⚠️ REGLA CRÍTICA DE LATENCIA (FAST-PATH HTTP):
+   * Este método resuelve GET /api/v1/credit/status/me. NUNCA debe ejecutar fetchOpenSales ni
+   * consultas con SUM/GROUP BY de forma síncrona ante un cache miss. Todo cálculo pesado
+   * debe ejecutarse en background vía setImmediate(() => this.hydrate(vendor.id)).
    */
   private static async resolveSingleVendorStatus(
     actor: { id: string; role: Role; bancaId?: string | null; ventanaId?: string | null },

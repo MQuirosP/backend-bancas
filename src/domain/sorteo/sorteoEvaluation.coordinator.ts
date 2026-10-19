@@ -234,6 +234,11 @@ export class SorteoEvaluationCoordinator {
       // para garantizar que cuando las terminales consulten caigan en Cache Hit (< 15ms).
       // Timeout defensivo de 2,500ms para garantizar que el broadcast jamás quede retenido.
       // =========================================================================
+      // ⚠️ ADVERTENCIA ARQUITECTÓNICA DE RENDIMIENTO (NO MODIFICAR):
+      // Queda estrictamente prohibido invocar clearStatusMeRamCache() sin argumentos aquí.
+      // La purga global destruye la micro-caché de todas las terminales del sistema simultáneamente
+      // provocando un Thundering Herd hacia PostgreSQL. La invalidación DEBE ser selectiva
+      // iterando únicamente sobre affectedVendedores.
       try {
         const { clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
         for (const vId of affectedVendedores) {
