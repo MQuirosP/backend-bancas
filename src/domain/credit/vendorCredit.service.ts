@@ -1226,22 +1226,19 @@ export class VendorCreditService {
 
     try {
       const exists = await redis.exists(cfg);
-      if (!exists) {
-        // Clave no hidratada aún; hidratará cuando sea consultada
-        return;
+      if (exists) {
+        // Verificación rápida en Redis: si el vendedor ya está marcado con limit == -1 o <= 0, abortar inmediatamente
+        try {
+          const lStr = await redis.hget(cfg, "limit");
+          if (lStr === "-1") {
+            return;
+          }
+          if (lStr) {
+            const parsed = parseFloat(lStr);
+            if (!isNaN(parsed) && parsed <= 0) return;
+          }
+        } catch {}
       }
-
-      // Verificación rápida en Redis: si el vendedor ya está marcado con limit == -1 o <= 0, abortar inmediatamente
-      try {
-        const lStr = await redis.hget(cfg, "limit");
-        if (lStr === "-1") {
-          return;
-        }
-        if (lStr) {
-          const parsed = parseFloat(lStr);
-          if (!isNaN(parsed) && parsed <= 0) return;
-        }
-      } catch {}
 
       // 1. Obtener configuración del vendedor
       const vendor = await prisma.user.findUnique({
@@ -1252,10 +1249,15 @@ export class VendorCreditService {
           creditAlertThreshold: true,
           creditBlockMode: true,
           settings: true,
+          bancaId: true,
+          ventanaId: true,
         },
       });
 
       if (!vendor || vendor.creditLimit === null || vendor.creditLimit === undefined || vendor.creditLimit <= 0) {
+        // Pre-calentar clave cfg con limit -1 para evitar futuras consultas
+        await redis.hset(cfg, { limit: "-1", bancaId: vendor?.bancaId || "", ventanaId: vendor?.ventanaId || "" }).catch(() => {});
+        await redis.expire(cfg, DEFAULT_TTL_SECONDS).catch(() => {});
         return;
       }
 
@@ -2107,6 +2109,8 @@ export class VendorCreditService {
         creditBlockMode: true,
         updatedAt: true,
         settings: true,
+        bancaId: true,
+        ventanaId: true,
       },
     });
 
@@ -2118,9 +2122,20 @@ export class VendorCreditService {
 
     // Si el vendedor no tiene límite configurado, responder de inmediato sin tocar balances
     if (!limit) {
-      setImmediate(() => {
-        this.hydrate(vendor.id).catch(() => {});
-      });
+      // Pre-calentar clave cfg en Redis para no volver a consultar User en PostgreSQL tras reinicios
+      if (isRedisAvailable()) {
+        const { cfg } = this.getKeys(vendor.id);
+        const redisClient = getRedisClient();
+        if (redisClient) {
+          redisClient.hset(cfg, {
+            limit: "-1",
+            bancaId: vendor.bancaId,
+            ventanaId: vendor.ventanaId ?? "",
+            updatedAt: vendor.updatedAt.toISOString(),
+          }).catch(() => {});
+          redisClient.expire(cfg, DEFAULT_TTL_SECONDS).catch(() => {});
+        }
+      }
 
       return {
         enabled: true,

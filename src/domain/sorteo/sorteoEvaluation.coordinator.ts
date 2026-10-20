@@ -241,8 +241,17 @@ export class SorteoEvaluationCoordinator {
       // iterando únicamente sobre affectedVendedores.
       try {
         const { clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
-        for (const vId of affectedVendedores) {
-          clearStatusMeRamCache(vId);
+        if (affectedVendedores.size > 0) {
+          const vendorsWithLimit = await prisma.user.findMany({
+            where: {
+              id: { in: Array.from(affectedVendedores) },
+              creditLimit: { not: null, gt: 0 },
+            },
+            select: { id: true },
+          });
+          for (const v of vendorsWithLimit) {
+            clearStatusMeRamCache(v.id);
+          }
         }
       } catch (_) {}
 
