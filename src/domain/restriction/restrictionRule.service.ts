@@ -18,6 +18,7 @@ import {
 } from "../../utils/restrictionCompiledCache";
 import { CacheService } from "../../core/cache.service";
 import { ConcurrencyManager, SingleFlight } from "../../utils/concurrency";
+import { ReportDimension } from "../../types/enums/report.enum";
 
 // Micro-caché L1 en RAM (5s) y coalescing para balances precalculados por vendedor/sorteo
 const vendorBalancesL1Cache = new Map<string, { data: Record<string, Record<string, { remaining: number; limit: number; accumulated: number }>>; expiresAt: number }>();
@@ -986,12 +987,12 @@ export const RestrictionRuleService = {
                 const ruleNumbers = resolveNumbersToValidate(rule, now);
                 if (!ruleNumbers || ruleNumbers.length === 0) return;
 
-                const scopeType = rule.appliesToVendedor || rule.userId ? 'USER' : rule.ventanaId ? 'VENTANA' : 'BANCA';
-                const scopeId = scopeType === 'USER' ? vendorId : scopeType === 'VENTANA' ? (rule.ventanaId || ventanaId || "") : (rule.bancaId || bancaId);
+                const scopeDimension = rule.appliesToVendedor || rule.userId ? ReportDimension.VENDEDOR : rule.ventanaId ? ReportDimension.VENTANA : ReportDimension.BANCA;
+                const scopeId = scopeDimension === ReportDimension.VENDEDOR ? vendorId : scopeDimension === ReportDimension.VENTANA ? (rule.ventanaId || ventanaId || "") : (rule.bancaId || bancaId);
 
                 const accumulatedMap = await calculateAccumulatedByNumbersAndScope(prisma, {
                   numbers: ruleNumbers,
-                  scopeType,
+                  scopeType: scopeDimension,
                   scopeId,
                   sorteoId,
                   cache: scopeCache as any

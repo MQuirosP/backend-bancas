@@ -97,7 +97,7 @@ export async function calculateAccumulatedByNumbersAndScope(
   tx: Prisma.TransactionClient,
   params: {
     numbers: string[];          // Array de números (ej: ["15", "20"])
-    scopeType: ReportDimension;
+    scopeType: ReportDimension | 'USER' | 'VENTANA' | 'BANCA' | string;
     scopeId: string;            // userId, ventanaId, o bancaId
     sorteoId: string;           // ️ CRÍTICO: Acumulado es por sorteo
     multiplierFilter?: { id: string; kind: BetType } | null;
@@ -204,11 +204,13 @@ export async function calculateAccumulatedByNumbersAndScope(
     // Construir WHERE según alcance usando SQL directo para mejor rendimiento y seguridad
     let scopeCondition: Prisma.Sql;
 
-    if (scopeType === ReportDimension.VENDEDOR) {
+    const normalizedScope = String(scopeType).toLowerCase();
+
+    if (normalizedScope === ReportDimension.VENDEDOR || normalizedScope === 'user') {
       scopeCondition = Prisma.sql`t."vendedorId" = ${scopeId}::uuid`;
-    } else if (scopeType === ReportDimension.VENTANA) {
+    } else if (normalizedScope === ReportDimension.VENTANA) {
       scopeCondition = Prisma.sql`t."ventanaId" = ${scopeId}::uuid`;
-    } else if (scopeType === ReportDimension.BANCA) {
+    } else if (normalizedScope === ReportDimension.BANCA) {
       scopeCondition = Prisma.sql`v."bancaId" = ${scopeId}::uuid`;
     } else {
       throw new Error(`Invalid scopeType: ${scopeType}`);
@@ -263,7 +265,7 @@ export async function calculateAccumulatedByNumbersAndScope(
           COALESCE(SUM(j.amount), 0)::numeric as total
         FROM "Ticket" t
         INNER JOIN "Jugada" j ON j."ticketId" = t.id
-        ${scopeType === ReportDimension.BANCA
+        ${String(scopeType).toLowerCase() === ReportDimension.BANCA
           ? Prisma.sql`INNER JOIN "Ventana" v ON v.id = t."ventanaId"`
           : Prisma.sql``
         }
@@ -344,7 +346,7 @@ export async function calculateAccumulatedForMultipleScopes(
     numbers: string[];
     sorteoId: string;
     scopes: Array<{
-      scopeType: ReportDimension;
+      scopeType: ReportDimension | 'USER' | 'VENTANA' | 'BANCA' | string;
       scopeId: string;
       multiplierFilter?: { id: string; kind: BetType } | null;
     }>;
@@ -484,11 +486,12 @@ export async function calculateAccumulatedForMultipleScopes(
   const scopeConditions: Prisma.Sql[] = [];
   for (const sc of scopesToQuery) {
     let scopeCond: Prisma.Sql;
-    if (sc.scopeType === ReportDimension.VENDEDOR) {
+    const normalizedSc = String(sc.scopeType).toLowerCase();
+    if (normalizedSc === ReportDimension.VENDEDOR || normalizedSc === 'user') {
       scopeCond = Prisma.sql`t."vendedorId" = ${sc.scopeId}::uuid`;
-    } else if (sc.scopeType === ReportDimension.VENTANA) {
+    } else if (normalizedSc === ReportDimension.VENTANA) {
       scopeCond = Prisma.sql`t."ventanaId" = ${sc.scopeId}::uuid`;
-    } else if (sc.scopeType === ReportDimension.BANCA) {
+    } else if (normalizedSc === ReportDimension.BANCA) {
       scopeCond = Prisma.sql`v."bancaId" = ${sc.scopeId}::uuid`;
     } else {
       continue;
@@ -584,11 +587,12 @@ export async function calculateAccumulatedForMultipleScopes(
       for (const row of result) {
         // Verificar si la fila pertenece al scope actual
         let scopeMatches = false;
-        if (sc.scopeType === ReportDimension.VENDEDOR) {
+        const normalizedScMatch = String(sc.scopeType).toLowerCase();
+        if (normalizedScMatch === ReportDimension.VENDEDOR || normalizedScMatch === 'user') {
           scopeMatches = row.vendedorId === sc.scopeId;
-        } else if (sc.scopeType === ReportDimension.VENTANA) {
+        } else if (normalizedScMatch === ReportDimension.VENTANA) {
           scopeMatches = row.ventanaId === sc.scopeId;
-        } else if (sc.scopeType === ReportDimension.BANCA) {
+        } else if (normalizedScMatch === ReportDimension.BANCA) {
           scopeMatches = row.bancaId === sc.scopeId;
         }
 
