@@ -36,6 +36,18 @@ export class CierreRollupService {
    * Recalcula la tabla ResumenCierreDiario para una o varias fechas específicas.
    * Elimina los datos existentes de esas fechas y los vuelve a insertar desde cero en micro-lotes por día.
    * 
+   * ⚠️ ADVERTENCIA ARQUITECTÓNICA CRÍTICA (NO DIFERIR A BACKGROUND EN EVALUACIONES):
+   * La tabla "ResumenCierreDiario" NO es un simple reporte analítico ni un cierre nocturno pasivo.
+   * Es la fuente de agregación O(1) en caliente de la cual se alimenta directamente la función
+   * nativa compilada PostgreSQL `fn_get_evaluated_summaries_batch` (usada por WarmupCoordinator
+   * y por el fast-path de GET /evaluated-summary), así como los rankings de vendedores y reportes
+   * de comisiones.
+   * 
+   * Durante la evaluación de un sorteo, `aggregateRange(dateStr, dateStr)` DEBE ejecutarse de
+   * forma síncrona ANTES de `WarmupCoordinator.executeWarmup` y ANTES del broadcast WebSocket.
+   * Si se difiere a segundo plano (setImmediate), el Warmup y las terminales precalentarán y
+   * consumirán una foto obsoleta en Redis L2 sin el sorteo recién evaluado.
+   * 
    * @param startDate Fecha de inicio (inclusive, YYYY-MM-DD)
    * @param endDate Fecha de fin (inclusive, YYYY-MM-DD)
    */
