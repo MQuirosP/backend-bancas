@@ -59,18 +59,18 @@ function drawHeader(
     minute: '2-digit',
   });
 
-  let currentY = 25 * scale;
+  let currentY = 24 * scale;
   ctx.fillStyle = '#000000';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
 
-  // 1. Usuario
-  ctx.font = `bold ${16 * scale}px "Courier New", Courier, monospace`;
+  // 1. Usuario (Más prominente)
+  ctx.font = `bold ${18 * scale}px "Courier New", Courier, monospace`;
   ctx.fillText(`Usuario: ${userName}${userCode}`, leftMargin, currentY);
-  currentY += 20 * scale;
+  currentY += 22 * scale;
 
-  // 2. Fecha y hora de generación
-  ctx.font = `${13 * scale}px "Courier New", Courier, monospace`;
+  // 2. Información del sorteo (en negrita y tamaño mayor para nitidez en móvil)
+  ctx.font = `bold ${14 * scale}px "Courier New", Courier, monospace`;
   ctx.fillText(`Fecha y hora de generación: ${generatedAt}`, leftMargin, currentY);
   currentY += 18 * scale;
 
@@ -101,16 +101,16 @@ function drawHeader(
     currentY += 18 * scale;
   }
 
-  currentY += 6 * scale;
+  currentY += 4 * scale;
 
   // 4. Línea separadora
   ctx.textAlign = 'center';
-  ctx.font = `${13 * scale}px "Courier New", Courier, monospace`;
-  ctx.fillText('--------------------------------------------------------', canvasWidth / 2, currentY);
-  currentY += 18 * scale;
+  ctx.font = `bold ${13 * scale}px "Courier New", Courier, monospace`;
+  ctx.fillText('------------------------------------------------------------------', canvasWidth / 2, currentY);
+  currentY += 16 * scale;
 
   // 5. Totales
-  ctx.font = `bold ${14 * scale}px "Courier New", Courier, monospace`;
+  ctx.font = `bold ${15 * scale}px "Courier New", Courier, monospace`;
   ctx.fillText(`TOTAL GENERAL: ¢ ${formatCurrency(data.meta.totalAmount)}`, canvasWidth / 2, currentY);
   currentY += 18 * scale;
 
@@ -121,16 +121,16 @@ function drawHeader(
   currentY += 18 * scale;
 
   // 6. Línea separadora
-  ctx.font = `${13 * scale}px "Courier New", Courier, monospace`;
-  ctx.fillText('--------------------------------------------------------', canvasWidth / 2, currentY);
-  currentY += 24 * scale;
+  ctx.font = `bold ${13 * scale}px "Courier New", Courier, monospace`;
+  ctx.fillText('------------------------------------------------------------------', canvasWidth / 2, currentY);
+  currentY += 20 * scale;
 
   ctx.textAlign = 'left';
   return currentY;
 }
 
 /**
- * Renderiza una página individual de la lista a Buffer PNG.
+ * Renderiza una página individual de la lista a Buffer PNG manteniendo estrictamente el tamaño Carta (US Letter 8.5" x 11").
  */
 function renderSinglePage(
   data: NumbersSummaryListData,
@@ -138,35 +138,29 @@ function renderSinglePage(
   sorteoDigits: number,
   scale = 2
 ): Buffer {
-  const baseWidth = 800;
+  // Dimensiones estrictas Carta (US Letter: 8.5" x 11" -> 612 x 792 pt base)
+  const baseWidth = 612;
+  const baseHeight = 792;
   const canvasWidth = baseWidth * scale;
-  const leftMargin = 30 * scale;
+  const canvasHeight = baseHeight * scale;
+
+  const leftMargin = 28 * scale;
   const contentWidth = canvasWidth - leftMargin * 2;
 
   const numColumns = sorteoDigits === 3 ? 4 : 3;
   const columnWidth = Math.floor(contentWidth / numColumns);
-  const lineHeight = (sorteoDigits === 3 ? 15 : 18) * scale;
-  const fontSize = (sorteoDigits === 3 ? 12 : 14) * scale;
 
-  // Calcular filas requeridas
-  const totalItems = pageNumbers.length;
-  const rows = Math.max(1, Math.ceil(totalItems / numColumns));
-
-  // Altura del encabezado estimado ~220 * scale + margen inferior
-  const headerEstimate = 230 * scale;
-  const bottomMargin = 30 * scale;
-  const totalHeight = headerEstimate + rows * lineHeight + bottomMargin;
-
-  const canvas = createCanvas(canvasWidth, totalHeight);
+  const canvas = createCanvas(canvasWidth, canvasHeight);
   const ctx = canvas.getContext('2d');
 
   // Fondo blanco nítido
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvasWidth, totalHeight);
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
   // Dibujar encabezado
   const startY = drawHeader(ctx, data, canvasWidth, leftMargin, scale);
 
+  const totalItems = pageNumbers.length;
   if (totalItems === 0) {
     ctx.textAlign = 'center';
     ctx.font = `${14 * scale}px "Courier New", Courier, monospace`;
@@ -175,7 +169,19 @@ function renderSinglePage(
     return canvas.toBuffer('image/png');
   }
 
-  // Dibujar números en columnas ordenadas de arriba hacia abajo
+  // Calcular filas requeridas según el número de columnas
+  const rows = Math.max(1, Math.ceil(totalItems / numColumns));
+
+  // Ajuste de altura e interlineado para mantener el tamaño Carta estricto
+  const availableHeight = canvasHeight - startY - 20 * scale;
+  const maxLineHeight = availableHeight / rows;
+  const idealLineHeight = (sorteoDigits === 3 ? 11 : 15.5) * scale;
+  const lineHeight = Math.min(idealLineHeight, maxLineHeight);
+
+  // Tamaño de fuente nítido proporcional al interlineado
+  const idealFontSize = (sorteoDigits === 3 ? 10.5 : 14.5) * scale;
+  const fontSize = Math.min(idealFontSize, lineHeight * 0.95);
+
   ctx.textAlign = 'left';
   ctx.font = `bold ${fontSize}px "Courier New", Courier, monospace`;
   ctx.fillStyle = '#000000';
@@ -219,7 +225,7 @@ export async function generateListImagePages(
   const sorteoDigits = options.sorteoDigits ?? data.meta.sorteoDigits ?? 2;
   const padLength = sorteoDigits;
   const maxNumber = sorteoDigits === 3 ? 999 : 99;
-  const scale = options.scale ?? 1.5;
+  const scale = options.scale ?? 2;
 
   // Mapa de números indexado
   const numbersMap = new Map<string, { amountByNumber: number; amountByReventado: number }>();
