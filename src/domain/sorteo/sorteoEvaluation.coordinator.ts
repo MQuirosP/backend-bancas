@@ -188,6 +188,25 @@ export class SorteoEvaluationCoordinator {
         );
         // -----------------------------------------------------------------------------------
 
+        // --- ACTUALIZACIÓN DE ROLLUPS (ResumenCierreDiario) PARA EL DÍA DEL SORTEO ---
+        // Vital antes de WarmupCoordinator.executeWarmup: fn_get_evaluated_summaries_batch
+        // depende de ResumenCierreDiario para incluir el nuevo sorteo evaluado y sus totales.
+        try {
+          const { CierreRollupService } = await import("../cierre/cierre.rollup.service");
+          const { tz } = await import("../../utils/timezone");
+          const dateStr =
+            syncOutput?.businessDate ||
+            (existingSorteo.scheduledAt ? tz.toDateStr(existingSorteo.scheduledAt) : tz.toDateStr());
+          await CierreRollupService.aggregateRange(dateStr, dateStr);
+        } catch (rollupErr: any) {
+          logger.error({
+            layer: "coordinator",
+            action: "ROLLUP_EVALUATION_DAY_ERROR",
+            payload: { sorteoId: id, error: rollupErr?.message || String(rollupErr) },
+          });
+        }
+        // -----------------------------------------------------------------------------
+
         logger.info({
           layer: "coordinator",
           action: "SORTEO_EVALUATE_SYNC_COMPLETED",
@@ -370,10 +389,10 @@ export class SorteoEvaluationCoordinator {
       const todayCR = tz.toDateStr();
       const isHistorical = dateStr < todayCR;
 
-      // Si el sorteo evaluado es de una fecha anterior, agregar rollups hasta hoy inclusive
-      await CierreRollupService.aggregateRange(dateStr, isHistorical ? todayCR : dateStr);
-
       if (isHistorical) {
+        // Si el sorteo evaluado es de una fecha anterior, propagar rollups hasta hoy inclusive
+        await CierreRollupService.aggregateRange(dateStr, todayCR);
+
         logger.info({
           layer: "coordinator",
           action: "SORTEO_HISTORICAL_EVALUATE_PROPAGATION_START",
