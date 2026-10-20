@@ -259,18 +259,29 @@ export class SorteoEvaluationCoordinator {
       // provocando un Thundering Herd hacia PostgreSQL. La invalidación DEBE ser selectiva
       // iterando únicamente sobre affectedVendedores.
       try {
-        const { clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
+        const { warmStatusMeRamCache, clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
+        const { VendorCreditService } = await import("../credit/vendorCredit.service");
         if (affectedVendedores.size > 0) {
           const vendorsWithLimit = await prisma.user.findMany({
             where: {
               id: { in: Array.from(affectedVendedores) },
               creditLimit: { not: null, gt: 0 },
             },
-            select: { id: true },
+            select: { id: true, role: true, bancaId: true, ventanaId: true },
           });
-          for (const v of vendorsWithLimit) {
-            clearStatusMeRamCache(v.id);
-          }
+          await Promise.all(
+            vendorsWithLimit.map(async (v) => {
+              try {
+                const statusRes = await VendorCreditService.getVendorsCreditStatus(
+                  v,
+                  { requestedVendedorIds: [v.id] }
+                );
+                warmStatusMeRamCache(v.id, statusRes, 8000);
+              } catch (_) {
+                clearStatusMeRamCache(v.id);
+              }
+            })
+          );
         }
       } catch (_) {}
 

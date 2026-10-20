@@ -94,6 +94,7 @@ export interface SorteoEvaluatedPayload {
   scheduledAt: string;
   bancaId: string | null;
   evaluatedAt: string;
+  syncBackoffWindowMs?: number;
 }
 
 export interface SorteoRevertedPayload {
@@ -417,20 +418,12 @@ export class SocketService {
 
     const room = SocketRooms.banca(payload.bancaId);
 
-    this.io.in(room).fetchSockets().then((sockets) => {
-      if (!sockets || sockets.length === 0) {
-        this.io?.to(room).emit(SocketEvents.SORTEO_EVALUADO, payload);
-        return;
-      }
-      for (const s of sockets) {
-        const jitterMs = Math.floor(Math.random() * 450) + 50; // 50ms a 500ms
-        setTimeout(() => {
-          s.emit(SocketEvents.SORTEO_EVALUADO, payload);
-        }, jitterMs);
-      }
-    }).catch(() => {
-      this.io?.to(room).emit(SocketEvents.SORTEO_EVALUADO, payload);
-    });
+    const broadcastPayload: SorteoEvaluatedPayload = {
+      ...payload,
+      syncBackoffWindowMs: 2500,
+    };
+
+    this.io.to(room).emit(SocketEvents.SORTEO_EVALUADO, broadcastPayload);
 
     logger.info({
       layer: 'socket',

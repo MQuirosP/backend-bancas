@@ -22,6 +22,13 @@ export function clearStatusMeRamCache(userId?: string): void {
   }
 }
 
+export function warmStatusMeRamCache(userId: string, data: any, ttlMs = 8000): void {
+  statusMeRamCache.set(userId, {
+    data,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
 export const CreditController = {
   /**
    * GET /api/v1/credit/status?vendedorIds=uuid1,uuid2
