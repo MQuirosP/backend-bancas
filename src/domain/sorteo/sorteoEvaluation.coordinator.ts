@@ -261,16 +261,40 @@ export class SorteoEvaluationCoordinator {
       try {
         const { warmStatusMeRamCache, clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
         const { VendorCreditService } = await import("../credit/vendorCredit.service");
-        if (affectedVendedores.size > 0) {
-          const vendorsWithLimit = await prisma.user.findMany({
-            where: {
-              id: { in: Array.from(affectedVendedores) },
-              creditLimit: { not: null, gt: 0 },
-            },
-            select: { id: true, role: true, bancaId: true, ventanaId: true },
-          });
+
+        const targetBancaIds = targetBancaId
+          ? [targetBancaId]
+          : Array.from(affectedBancas).filter(Boolean);
+
+        const vendorWhere: Prisma.UserWhereInput = {
+          role: Role.VENDEDOR,
+          isActive: true,
+        };
+
+        if (targetBancaIds.length === 1) {
+          vendorWhere.OR = [
+            { bancaId: targetBancaIds[0] },
+            { ventana: { bancaId: targetBancaIds[0] } },
+          ];
+        } else if (targetBancaIds.length > 1) {
+          vendorWhere.OR = [
+            { bancaId: { in: targetBancaIds } },
+            { ventana: { bancaId: { in: targetBancaIds } } },
+          ];
+        } else if (affectedVendedores.size > 0) {
+          vendorWhere.id = { in: Array.from(affectedVendedores) };
+        }
+
+        const activeVendors = (targetBancaIds.length > 0 || affectedVendedores.size > 0)
+          ? await prisma.user.findMany({
+              where: vendorWhere,
+              select: { id: true, role: true, bancaId: true, ventanaId: true },
+            })
+          : [];
+
+        if (activeVendors.length > 0) {
           await Promise.all(
-            vendorsWithLimit.map(async (v) => {
+            activeVendors.map(async (v) => {
               try {
                 const statusRes = await VendorCreditService.getVendorsCreditStatus(
                   v,
