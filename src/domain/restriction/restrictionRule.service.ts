@@ -199,6 +199,37 @@ export const RestrictionRuleService = {
       }
       await validateBancaAdminPermissions(actor, data, contextBancaId);
     }
+
+    // Inferencia automática de jerarquía (prevenir reglas huérfanas sin banca/ventana)
+    if (data.userId) {
+      const targetUser = await prisma.user.findUnique({
+        where: { id: data.userId },
+        select: { ventanaId: true, bancaId: true, ventana: { select: { bancaId: true } } },
+      });
+      if (targetUser) {
+        if (!data.ventanaId && targetUser.ventanaId) {
+          data.ventanaId = targetUser.ventanaId;
+        }
+        if (!data.bancaId) {
+          data.bancaId = targetUser.bancaId || targetUser.ventana?.bancaId || contextBancaId || undefined;
+        }
+      }
+    }
+
+    if (data.ventanaId && !data.bancaId) {
+      const targetVentana = await prisma.ventana.findUnique({
+        where: { id: data.ventanaId },
+        select: { bancaId: true },
+      });
+      if (targetVentana?.bancaId) {
+        data.bancaId = targetVentana.bancaId;
+      }
+    }
+
+    if (!data.bancaId && contextBancaId) {
+      data.bancaId = contextBancaId;
+    }
+
     const isLotteryRule = Boolean(data.loteriaId || data.multiplierId);
     let multiplierName = "";
 

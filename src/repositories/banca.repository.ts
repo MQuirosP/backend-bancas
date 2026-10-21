@@ -6,6 +6,8 @@ import { Prisma } from "../generated/prisma/client";
 import { CreateBancaInput, UpdateBancaInput } from "../api/v1/dto/banca.dto";
 import { invalidateRestrictionCaches } from "../utils/restrictionCache";
 import { CacheService } from '../core/cache.service';
+import { bumpRestrictionsVersion } from '../utils/restrictionCompiledCache';
+import { clearL1CutoffCache } from './restrictionRule.repository';
 
 // Mapeadores DTO -> Prisma
 const toPrismaCreate = (d: CreateBancaInput): Prisma.BancaCreateInput => ({
@@ -135,6 +137,8 @@ const BancaRepository = {
       // Invalidar caché de cutoff para esta banca (L1 RAM y Redis L2)
       await invalidateRestrictionCaches({ bancaId: id });
       await CacheService.invalidateTag(`cutoff:${id}`).catch(() => {});
+      await bumpRestrictionsVersion(id);
+      await clearL1CutoffCache(id);
     }
 
     const banca = await prisma.banca.update({
