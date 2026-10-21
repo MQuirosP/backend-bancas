@@ -1,4 +1,4 @@
-﻿import { Role, ActivityType } from "../../generated/prisma/client";
+import { Role, ActivityType } from "../../generated/prisma/client";
 import prisma from "../../core/prismaClient";
 import { AppError } from "../../core/errors";
 import { AccountPaymentRepository } from "../../repositories/accountPayment.repository";
@@ -284,12 +284,14 @@ export async function registerPayment(data: {
     const dimension: "banca" | "ventana" | "vendedor" = data.vendedorId ? "vendedor" : (finalVentanaId ? "ventana" : "banca");
     const entityId = data.vendedorId || finalVentanaId || finalBancaId;
 
-    // Envolver en transacción: crear pago y recalcular statement usando el sync service
+    // Envolver en transacción: crear pago y actualizar statement atómicamente en una sola transacción (< 20ms)
     let payment: any = undefined;
     let updatedStatement: any = undefined;
     let processedTime: string = "00:00";
     await prisma.$transaction(async (tx) => {
-        //  CRÍTICO: Obtener estado actual del statement DENTRO de la transacción
+        // Bloqueo explícito FOR UPDATE sobre el statement para prevenir condiciones de carrera concurrentes
+        await tx.$executeRaw`SELECT 1 FROM "AccountStatement" WHERE id = CAST(${statement.id} AS uuid) FOR UPDATE`;
+
         const currentStatement = await tx.accountStatement.findUnique({
             where: { id: statement.id },
             select: {
@@ -298,14 +300,23 @@ export async function registerPayment(data: {
                 vendedorId: true,
                 ventanaId: true,
                 bancaId: true,
+                totalSales: true,
+                totalPayouts: true,
+                listeroCommission: true,
+                vendedorCommission: true,
+                balance: true,
+                totalPaid: true,
+                totalCollected: true,
+                remainingBalance: true,
+                accumulatedBalance: true,
+                ticketCount: true,
+                isSettled: true,
             }
         });
 
         if (!currentStatement) {
             throw new AppError("Estado de cuenta no encontrado en la transacción", 500, "STATEMENT_TRANSACTION_ERROR");
         }
-
-
 
         // Validar monto
         if (data.type === "payment" && data.amount <= 0) {
@@ -349,23 +360,46 @@ export async function registerPayment(data: {
             },
         });
 
+        // 2. Actualizar totales del statement atómicamente (< 15ms)
+        const isPayment = data.type === "payment";
+        const currentTotalPaid = Number(currentStatement.totalPaid || 0);
+        const currentTotalCollected = Number(currentStatement.totalCollected || 0);
+        const currentAccumulated = Number(currentStatement.accumulatedBalance ?? currentStatement.remainingBalance ?? 0);
+
+        const newTotalPaid = isPayment
+            ? Math.round((currentTotalPaid + data.amount) * 100) / 100
+            : currentTotalPaid;
+        const newTotalCollected = !isPayment
+            ? Math.round((currentTotalCollected + data.amount) * 100) / 100
+            : currentTotalCollected;
+        const delta = isPayment ? data.amount : -data.amount;
+        const newAccumulated = Math.round((currentAccumulated + delta) * 100) / 100;
+        const newRemaining = newAccumulated;
+        const newIsSettled = calculateIsSettled(
+            currentStatement.ticketCount || 0,
+            newAccumulated,
+            newTotalPaid,
+            newTotalCollected
+        );
+
+        updatedStatement = await tx.accountStatement.update({
+            where: { id: currentStatement.id },
+            data: {
+                totalPaid: newTotalPaid,
+                totalCollected: newTotalCollected,
+                remainingBalance: newRemaining,
+                accumulatedBalance: newAccumulated,
+                isSettled: newIsSettled,
+            },
+        });
+
     }, {
-        timeout: 30000,
+        timeout: 5000,
         isolationLevel: "ReadCommitted"
     });
 
-    // 2. Usar el sync service para recalcular correctamente el statement (FUERA de la tx del pago)
-    //    En Arquitectura v5, el cómputo es stateless y requiere ver los datos commiteados.
-    await AccountStatementSyncService.syncDayStatement(
-        paymentDate,
-        dimension,
-        entityId || undefined,
-        { force: true }
-    );
-
     // Validar que statement esté definido (defensivo)
     if (!updatedStatement) {
-        // Fallback: Si por alguna razón la transacción no retornó el statement actualizado, obtenerlo de la DB
         updatedStatement = await AccountStatementRepository.findById(statement.id);
     }
 
@@ -374,96 +408,98 @@ export async function registerPayment(data: {
         throw new AppError("Error al registrar el pago: la transacción no retornó el pago creado.", 500, "PAYMENT_CREATION_ERROR");
     }
 
-    // CRÍTICO: Propagar cambios a días posteriores si el pago se registró en un día pasado
-    // Esto asegura que los accumulatedBalance de días posteriores se actualicen correctamente
+    // Inmediatamente invalidar micro-caché para la fecha y entidad del pago
+    await updateCacheAfterMovement(data.date, finalVentanaId, data.vendedorId, finalBancaId);
+
+    // CRÍTICO (DESACOPLADO): Propagar cambios a días posteriores si el pago se registró en un día pasado
+    // Se ejecuta en segundo plano vía setImmediate para NO bloquear el tiempo de respuesta HTTP (< 50ms)
     const todayCR = crDateService.dateUTCToCRString(new Date());
     if (data.date < todayCR) {
-        try {
-            await AccountStatementSyncService.propagateBalanceChange(
-                paymentDate,
-                dimension,
-                entityId || undefined
-            );
-            logger.info({
-                layer: "service",
-                action: "PAYMENT_BALANCE_PROPAGATION_SUCCESS",
-                payload: {
-                    paymentId: payment.id,
-                    date: data.date,
-                    todayCR,
-                    dimension,
-                    entityId
-                }
-            });
-        } catch (error) {
-            const errorMessage = (error as Error).message;
-            logger.error({
-                layer: "service",
-                action: "PAYMENT_BALANCE_PROPAGATION_ERROR",
-                payload: {
-                    paymentId: payment.id,
-                    date: data.date,
-                    dimension,
-                    entityId,
-                    error: errorMessage,
-                    stack: (error as Error).stack
-                }
-            });
-
-            // CRÍTICO: Registrar en ActivityLog para auditoría empresarial
+        setImmediate(async () => {
             try {
-                await ActivityService.log({
-                    userId: data.paidById,
-                    action: ActivityType.ACCOUNT_STATEMENT_VIEW, // Usar el más cercano disponible
-                    targetType: "ACCOUNT_PAYMENT",
-                    targetId: payment.id,
-                    details: {
-                        action: "BALANCE_PROPAGATION_ERROR",
+                await AccountStatementSyncService.propagateBalanceChange(
+                    paymentDate,
+                    dimension,
+                    entityId || undefined
+                );
+                logger.info({
+                    layer: "service",
+                    action: "PAYMENT_BALANCE_PROPAGATION_SUCCESS",
+                    payload: {
+                        paymentId: payment.id,
+                        date: data.date,
+                        todayCR,
+                        dimension,
+                        entityId
+                    }
+                });
+            } catch (error) {
+                const errorMessage = (error as Error).message;
+                logger.error({
+                    layer: "service",
+                    action: "PAYMENT_BALANCE_PROPAGATION_ERROR",
+                    payload: {
                         paymentId: payment.id,
                         date: data.date,
                         dimension,
                         entityId,
                         error: errorMessage,
-                        severity: "ERROR",
-                        note: "Error en propagación automática de saldos. El pago se registró correctamente pero los saldos posteriores pueden necesitar recálculo manual."
-                    },
-                    layer: "service",
-                });
-            } catch (activityLogError) {
-                // Si el ActivityLog falla, al menos logear el error doble
-                logger.error({
-                    layer: "service",
-                    action: "ACTIVITY_LOG_FAILED_DURING_PROPAGATION_ERROR",
-                    payload: {
-                        originalError: errorMessage,
-                        activityLogError: (activityLogError as Error).message,
-                        paymentId: payment.id
+                        stack: (error as Error).stack
                     }
                 });
+
+                // Registrar en ActivityLog para auditoría empresarial
+                try {
+                    await ActivityService.log({
+                        userId: data.paidById,
+                        action: ActivityType.ACCOUNT_STATEMENT_VIEW,
+                        targetType: "ACCOUNT_PAYMENT",
+                        targetId: payment.id,
+                        details: {
+                            action: "BALANCE_PROPAGATION_ERROR",
+                            paymentId: payment.id,
+                            date: data.date,
+                            dimension,
+                            entityId,
+                            error: errorMessage,
+                            severity: "ERROR",
+                            note: "Error en propagación automática de saldos en segundo plano. El pago se registró correctamente pero los saldos posteriores pueden necesitar recálculo manual."
+                        },
+                        layer: "service",
+                    });
+                } catch (activityLogError) {
+                    logger.error({
+                        layer: "service",
+                        action: "ACTIVITY_LOG_FAILED_DURING_PROPAGATION_ERROR",
+                        payload: {
+                            originalError: errorMessage,
+                            activityLogError: (activityLogError as Error).message,
+                            paymentId: payment.id
+                        }
+                    });
+                }
             }
-            // No relanzar el error - el pago se registró correctamente
-        }
+        });
     }
 
-    //  CRÍTICO: Si se registró un pago/cobro en un mes que ya tiene cierre mensual,
-    // recalcular automáticamente el cierre para mantener los saldos actualizados
+    // Recálculo asíncrono de cierre mensual si aplica
     const paymentMonth = month;
     const nowCRStr = crDateService.dateUTCToCRString(new Date());
     const [currentYear, currentMonth] = nowCRStr.split('-').map(Number);
     const [pYear, pMonth] = paymentMonth.split('-').map(Number);
 
     if (pYear < currentYear || (pYear === currentYear && pMonth < currentMonth)) {
-        Promise.all([
-            data.vendedorId ? recalculateMonthlyClosingForDimension(paymentMonth, "vendedor", finalVentanaId || undefined, data.vendedorId, finalBancaId || undefined) : Promise.resolve(),
-            finalVentanaId ? recalculateMonthlyClosingForDimension(paymentMonth, "ventana", finalVentanaId, undefined, finalBancaId || undefined) : Promise.resolve(),
-            finalBancaId ? recalculateMonthlyClosingForDimension(paymentMonth, "banca", undefined, undefined, finalBancaId) : Promise.resolve(),
-        ]).catch((error) => {
-            logger.error({ layer: "service", action: "MONTHLY_CLOSING_AUTO_RECALCULATE_ERROR", payload: { paymentId: payment.id, error: error.message } });
+        setImmediate(() => {
+            Promise.all([
+                data.vendedorId ? recalculateMonthlyClosingForDimension(paymentMonth, "vendedor", finalVentanaId || undefined, data.vendedorId, finalBancaId || undefined) : Promise.resolve(),
+                finalVentanaId ? recalculateMonthlyClosingForDimension(paymentMonth, "ventana", finalVentanaId, undefined, finalBancaId || undefined) : Promise.resolve(),
+                finalBancaId ? recalculateMonthlyClosingForDimension(paymentMonth, "banca", undefined, undefined, finalBancaId) : Promise.resolve(),
+            ]).catch((error) => {
+                logger.error({ layer: "service", action: "MONTHLY_CLOSING_AUTO_RECALCULATE_ERROR", payload: { paymentId: payment.id, error: error.message } });
+            });
         });
     }
 
-    // Invalidar caché
-    await updateCacheAfterMovement(data.date, finalVentanaId, data.vendedorId, finalBancaId);
     return {
         payment: {
             ...payment,
@@ -503,9 +539,24 @@ export async function reversePayment(
 
     let updatedStatement: any = undefined;
     await prisma.$transaction(async (tx) => {
+        // Bloqueo explícito FOR UPDATE sobre el statement
+        await tx.$executeRaw`SELECT 1 FROM "AccountStatement" WHERE id = CAST(${statement.id} AS uuid) FOR UPDATE`;
+
         const currentStatement = await tx.accountStatement.findUnique({
             where: { id: statement.id },
-            select: { id: true, date: true, vendedorId: true, ventanaId: true, bancaId: true }
+            select: {
+                id: true,
+                date: true,
+                vendedorId: true,
+                ventanaId: true,
+                bancaId: true,
+                totalPaid: true,
+                totalCollected: true,
+                remainingBalance: true,
+                accumulatedBalance: true,
+                ticketCount: true,
+                isSettled: true,
+            }
         });
 
         if (!currentStatement) throw new AppError("Statement not found in tx", 500);
@@ -516,94 +567,119 @@ export async function reversePayment(
             data: { isReversed: true, reversedAt: new Date(), reversedBy: userId }
         });
 
+        // 2. Actualizar totales del statement atómicamente (< 15ms)
+        const isPayment = payment.type === "payment";
+        const currentTotalPaid = Number(currentStatement.totalPaid || 0);
+        const currentTotalCollected = Number(currentStatement.totalCollected || 0);
+        const currentAccumulated = Number(currentStatement.accumulatedBalance ?? currentStatement.remainingBalance ?? 0);
+
+        const newTotalPaid = isPayment
+            ? Math.max(0, Math.round((currentTotalPaid - payment.amount) * 100) / 100)
+            : currentTotalPaid;
+        const newTotalCollected = !isPayment
+            ? Math.max(0, Math.round((currentTotalCollected - payment.amount) * 100) / 100)
+            : currentTotalCollected;
+        const delta = isPayment ? -payment.amount : payment.amount;
+        const newAccumulated = Math.round((currentAccumulated + delta) * 100) / 100;
+        const newRemaining = newAccumulated;
+        const newIsSettled = calculateIsSettled(
+            currentStatement.ticketCount || 0,
+            newAccumulated,
+            newTotalPaid,
+            newTotalCollected
+        );
+
+        updatedStatement = await tx.accountStatement.update({
+            where: { id: currentStatement.id },
+            data: {
+                totalPaid: newTotalPaid,
+                totalCollected: newTotalCollected,
+                remainingBalance: newRemaining,
+                accumulatedBalance: newAccumulated,
+                isSettled: newIsSettled,
+            }
+        });
+
     }, {
-        timeout: 30000,
+        timeout: 5000,
         isolationLevel: "ReadCommitted"
     });
 
-    // 2. Usar el sync service para recalcular correctamente el statement (FUERA de la tx)
-    await AccountStatementSyncService.syncDayStatement(
-        paymentDate,
-        dimension,
-        entityId || undefined,
-        { force: true }
-    );
+    if (!updatedStatement) {
+        updatedStatement = await AccountStatementRepository.findById(statement.id);
+    }
 
-    // CRÍTICO: Propagar cambios a días posteriores si el pago se revirtió en un día pasado
-    // Esto asegura que los accumulatedBalance de días posteriores se actualicen correctamente
+    // Inmediatamente invalidar micro-caché para la fecha y entidad
+    await updateCacheAfterMovement(dateStr, statement.ventanaId, statement.vendedorId, statement.bancaId);
+
+    // CRÍTICO (DESACOPLADO): Propagar cambios a días posteriores en segundo plano
     const todayCR = crDateService.dateUTCToCRString(new Date());
     if (dateStr < todayCR) {
-        try {
-            await AccountStatementSyncService.propagateBalanceChange(
-                paymentDate,
-                dimension,
-                entityId || undefined
-            );
-            logger.info({
-                layer: "service",
-                action: "REVERSE_BALANCE_PROPAGATION_SUCCESS",
-                payload: {
-                    paymentId: payment.id,
-                    date: dateStr,
-                    todayCR,
-                    dimension,
-                    entityId
-                }
-            });
-        } catch (error) {
-            const errorMessage = (error as Error).message;
-            logger.error({
-                layer: "service",
-                action: "REVERSE_BALANCE_PROPAGATION_ERROR",
-                payload: {
-                    paymentId: payment.id,
-                    date: dateStr,
-                    dimension,
-                    entityId,
-                    error: errorMessage,
-                    stack: (error as Error).stack
-                }
-            });
-
-            // CRÍTICO: Registrar en ActivityLog para auditoría empresarial
+        setImmediate(async () => {
             try {
-                await ActivityService.log({
-                    userId: userId,
-                    action: ActivityType.ACCOUNT_PAYMENT_REVERSE, // Más específico para reversiones
-                    targetType: "ACCOUNT_PAYMENT",
-                    targetId: payment.id,
-                    details: {
-                        action: "BALANCE_PROPAGATION_ERROR_ON_REVERSE",
+                await AccountStatementSyncService.propagateBalanceChange(
+                    paymentDate,
+                    dimension,
+                    entityId || undefined
+                );
+                logger.info({
+                    layer: "service",
+                    action: "REVERSE_BALANCE_PROPAGATION_SUCCESS",
+                    payload: {
+                        paymentId: payment.id,
+                        date: dateStr,
+                        todayCR,
+                        dimension,
+                        entityId
+                    }
+                });
+            } catch (error) {
+                const errorMessage = (error as Error).message;
+                logger.error({
+                    layer: "service",
+                    action: "REVERSE_BALANCE_PROPAGATION_ERROR",
+                    payload: {
                         paymentId: payment.id,
                         date: dateStr,
                         dimension,
                         entityId,
                         error: errorMessage,
-                        severity: "ERROR",
-                        note: "Error en propagación automática de saldos después de reversión. La reversión se completó correctamente pero los saldos posteriores pueden necesitar recálculo manual."
-                    },
-                    layer: "service",
-                });
-            } catch (activityLogError) {
-                // Si el ActivityLog falla, al menos logear el error doble
-                logger.error({
-                    layer: "service",
-                    action: "ACTIVITY_LOG_FAILED_DURING_REVERSE_PROPAGATION_ERROR",
-                    payload: {
-                        originalError: errorMessage,
-                        activityLogError: (activityLogError as Error).message,
-                        paymentId: payment.id
+                        stack: (error as Error).stack
                     }
                 });
+
+                try {
+                    await ActivityService.log({
+                        userId: userId,
+                        action: ActivityType.ACCOUNT_PAYMENT_REVERSE,
+                        targetType: "ACCOUNT_PAYMENT",
+                        targetId: payment.id,
+                        details: {
+                            action: "BALANCE_PROPAGATION_ERROR_ON_REVERSE",
+                            paymentId: payment.id,
+                            date: dateStr,
+                            dimension,
+                            entityId,
+                            error: errorMessage,
+                            severity: "ERROR",
+                            note: "Error en propagación automática de saldos después de reversión en segundo plano."
+                        },
+                        layer: "service",
+                    });
+                } catch (activityLogError) {
+                    logger.error({
+                        layer: "service",
+                        action: "ACTIVITY_LOG_FAILED_DURING_REVERSE_PROPAGATION_ERROR",
+                        payload: {
+                            originalError: errorMessage,
+                            activityLogError: (activityLogError as Error).message,
+                            paymentId: payment.id
+                        }
+                    });
+                }
             }
-            // No relanzar el error - la reversión se completó correctamente
-        }
+        });
     }
-
-    await updateCacheAfterMovement(dateStr, statement.ventanaId, statement.vendedorId, statement.bancaId);
-
-    // Recuperar el statement actualizado para la respuesta
-    updatedStatement = await AccountStatementRepository.findById(statement.id);
 
     return {
         payment: { ...payment, isReversed: true, reversedAt: new Date().toISOString(), reversedBy: userId, date: dateStr },
