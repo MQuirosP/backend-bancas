@@ -342,6 +342,7 @@ export const RestrictionRuleService = {
       createdRules.map((rule) =>
         ActivityService.log({
           userId: actorId,
+          bancaId: rule.bancaId || contextBancaId || undefined,
           action: ActivityType.SYSTEM_ACTION,
           targetType: "RESTRICTION_RULE",
           targetId: rule.id,
@@ -466,6 +467,7 @@ export const RestrictionRuleService = {
     const updated = await RestrictionRuleRepository.update(id, payload);
     await ActivityService.log({
       userId: actorId,
+      bancaId: updated.bancaId || contextBancaId || undefined,
       action: ActivityType.SYSTEM_ACTION,
       targetType: "RESTRICTION_RULE",
       targetId: id,
@@ -536,8 +538,10 @@ export const RestrictionRuleService = {
       await clearL1CutoffCache(bId || undefined);
     }
 
+    const firstUpdateBancaId = updatedRules.find(r => r.bancaId)?.bancaId || contextBancaId || undefined;
     await ActivityService.log({
       userId: actorId,
+      bancaId: firstUpdateBancaId,
       action: ActivityType.SYSTEM_ACTION,
       targetType: "RESTRICTION_RULE",
       targetId: ids[0], // Referencia al primero
@@ -609,8 +613,10 @@ export const RestrictionRuleService = {
       await clearL1CutoffCache(bId || undefined);
     }
 
+    const firstDeleteBancaId = deletedRules.find(r => r.bancaId)?.bancaId || contextBancaId || undefined;
     await ActivityService.log({
       userId: actorId,
+      bancaId: firstDeleteBancaId,
       action: ActivityType.SOFT_DELETE,
       targetType: "RESTRICTION_RULE",
       targetId: ids[0],
@@ -638,6 +644,7 @@ export const RestrictionRuleService = {
     );
     await ActivityService.log({
       userId: actorId,
+      bancaId: deleted.bancaId || contextBancaId || undefined,
       action: ActivityType.SOFT_DELETE,
       targetType: "RESTRICTION_RULE",
       targetId: id,
@@ -660,6 +667,7 @@ export const RestrictionRuleService = {
     const restored = await RestrictionRuleRepository.restore(id);
     await ActivityService.log({
       userId: actorId,
+      bancaId: restored.bancaId || contextBancaId || undefined,
       action: ActivityType.RESTORE,
       targetType: "RESTRICTION_RULE",
       targetId: id,

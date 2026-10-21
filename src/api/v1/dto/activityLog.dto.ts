@@ -5,7 +5,7 @@ export const listActivityLogsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().optional().default(10),
   userId: z.uuid().optional(),
-  action: z.enum(ActivityType).optional(),
+  action: z.string().optional(),
   targetType: z.string().optional(),
   targetId: z.string().optional(),
   startDate: z.string().datetime().optional(), // ISO 8601 format

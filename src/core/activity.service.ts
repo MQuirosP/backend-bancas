@@ -67,7 +67,25 @@ async function resolveBancaId(
     } catch {}
   }
 
-  // 4. Si el log involucra a un usuario (por ejemplo LOGIN)
+  // 4. Si el target es RESTRICTION_RULE
+  if (targetType === 'RESTRICTION_RULE' && targetId) {
+    try {
+      const rule = await tx.restrictionRule.findUnique({
+        where: { id: targetId },
+        select: {
+          bancaId: true,
+          ventana: { select: { bancaId: true } },
+          user: { select: { bancaId: true, ventana: { select: { bancaId: true } } } },
+        },
+      });
+      if (rule?.bancaId) return rule.bancaId;
+      if (rule?.ventana?.bancaId) return rule.ventana.bancaId;
+      if (rule?.user?.bancaId) return rule.user.bancaId;
+      if (rule?.user?.ventana?.bancaId) return rule.user.ventana.bancaId;
+    } catch {}
+  }
+
+  // 5. Si el log involucra a un usuario (por ejemplo LOGIN)
   if (userId) {
     try {
       const user = await tx.user.findUnique({

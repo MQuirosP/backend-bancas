@@ -5,7 +5,7 @@ export const listActivityLogsQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(20),
   userId: z.uuid().optional(),
-  action: z.enum(ActivityType).optional(),
+  action: z.string().min(1).optional(),
   targetType: z.string().min(1).optional(),
   targetId: z.string().optional(),
   startDate: z.string().datetime().optional(),
@@ -27,7 +27,7 @@ export const getByTargetParamSchema = z.object({
 });
 
 export const getByActionParamSchema = z.object({
-  action: z.enum(ActivityType),
+  action: z.string().min(1, 'Acción requerida'),
 });
 
 export const cleanupLogsBodySchema = z.object({

@@ -43,12 +43,28 @@ export const ActivityLogService = {
       }
     }
 
+    // Mapeo transparente de alias del frontend a enums formales de la base de datos
+    let mappedAction: ActivityType | undefined = undefined;
+    let mappedTargetType = targetType;
+
+    if (action) {
+      if (action === 'RESTRICTION_RULE_DELETE') {
+        mappedAction = ActivityType.SOFT_DELETE;
+        mappedTargetType = mappedTargetType || 'RESTRICTION_RULE';
+      } else if (action === 'RESTRICTION_RULE_CREATE' || action === 'RESTRICTION_RULE_UPDATE') {
+        mappedAction = ActivityType.SYSTEM_ACTION;
+        mappedTargetType = mappedTargetType || 'RESTRICTION_RULE';
+      } else if (Object.values(ActivityType).includes(action as ActivityType)) {
+        mappedAction = action as ActivityType;
+      }
+    }
+
     const { data, total } = await ActivityLogRepository.list({
       page,
       pageSize,
       userId,
-      action,
-      targetType,
+      action: mappedAction,
+      targetType: mappedTargetType,
       targetId,
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
@@ -103,8 +119,14 @@ export const ActivityLogService = {
     };
   },
 
-  async getByAction(action: ActivityType, page = 1, pageSize = 20, bancaId?: string | null) {
-    const { data, total } = await ActivityLogRepository.listByAction(action, page, pageSize, bancaId);
+  async getByAction(action: string, page = 1, pageSize = 20, bancaId?: string | null) {
+    let mappedAction: ActivityType = action as ActivityType;
+    if (action === 'RESTRICTION_RULE_DELETE') {
+      mappedAction = ActivityType.SOFT_DELETE;
+    } else if (action === 'RESTRICTION_RULE_CREATE' || action === 'RESTRICTION_RULE_UPDATE') {
+      mappedAction = ActivityType.SYSTEM_ACTION;
+    }
+    const { data, total } = await ActivityLogRepository.listByAction(mappedAction, page, pageSize, bancaId);
     const totalPages = Math.ceil(total / pageSize);
     return {
       data,
