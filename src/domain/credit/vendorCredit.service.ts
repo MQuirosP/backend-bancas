@@ -1997,13 +1997,11 @@ export class VendorCreditService {
         cachedBaseVal = baseVal;
         openMap = (results?.[2]?.[1] as Record<string, string>) || {};
 
-        // Si el hash cfg y el base existen en Redis (cache hit)
+        // Si el hash cfg existe en Redis (cache hit de configuración)
         if (
           cfgMap &&
           Object.keys(cfgMap).length > 0 &&
-          cfgMap.limit !== undefined &&
-          baseVal !== null &&
-          baseVal !== undefined
+          cfgMap.limit !== undefined
         ) {
           // Si el vendedor fue marcado inactivo en Redis, retornar vacío
           if (cfgMap.isActive === "0") {
@@ -2023,46 +2021,71 @@ export class VendorCreditService {
             (actor.bancaId && cfgMap.bancaId === actor.bancaId);
 
           if (canServeBanca) {
-            const rawLimit = parseFloat(cfgMap.limit);
-            const limit = !isNaN(rawLimit) && rawLimit > 0 ? rawLimit : null;
-            const threshold = parseFloat(cfgMap.threshold) || 80;
-            const blockMode = cfgMap.blockMode !== "0";
+            // Caso 1: Vendedor Sin Límite (-1 o null) -> Cache Hit inmediato sin requerir clave 'base'
+            if (cfgMap.limit === "-1" || cfgMap.limit === "null") {
+              const updatedAt = cfgMap.updatedAt || new Date().toISOString();
 
-            const baseNum = parseFloat(baseVal || "0") || 0;
-            const openTotal = Object.values(openMap || {}).reduce(
-              (acc: number, val: any) => acc + (parseFloat(val) || 0),
-              0
-            );
-            const effectiveBalance = Math.round((baseNum + openTotal) * 100) / 100;
-            const percentageUsed =
-              limit && limit > 0
-                ? Math.round(((effectiveBalance / limit) * 100) * 100) / 100
-                : 0;
+              // Touch-on-Read: Renovar TTL de 24h en segundo plano
+              redis.expire(cfg, DEFAULT_TTL_SECONDS).catch(() => {});
 
-            const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
-            const updatedAt = cfgMap.updatedAt || new Date().toISOString();
+              return {
+                enabled: true,
+                items: [
+                  {
+                    vendedorId: targetId,
+                    creditLimit: null,
+                    effectiveBalance: 0,
+                    percentageUsed: 0,
+                    status: "NORMAL",
+                    updatedAt,
+                  },
+                ],
+              };
+            }
 
-            // Touch-on-Read: Renovar TTL de 24h en segundo plano ante actividad activa del vendedor
-            redis.pipeline()
-              .expire(cfg, DEFAULT_TTL_SECONDS)
-              .expire(base, DEFAULT_TTL_SECONDS)
-              .expire(open, DEFAULT_TTL_SECONDS)
-              .exec()
-              .catch(() => {});
+            // Caso 2: Vendedor Con Límite configurado -> Requiere presencia de clave 'base'
+            if (baseVal !== null && baseVal !== undefined) {
+              const rawLimit = parseFloat(cfgMap.limit);
+              const limit = !isNaN(rawLimit) && rawLimit > 0 ? rawLimit : null;
+              const threshold = parseFloat(cfgMap.threshold) || 80;
+              const blockMode = cfgMap.blockMode !== "0";
 
-            return {
-              enabled: true,
-              items: [
-                {
-                  vendedorId: targetId,
-                  creditLimit: limit,
-                  effectiveBalance,
-                  percentageUsed,
-                  status,
-                  updatedAt,
-                },
-              ],
-            };
+              const baseNum = parseFloat(baseVal || "0") || 0;
+              const openTotal = Object.values(openMap || {}).reduce(
+                (acc: number, val: any) => acc + (parseFloat(val) || 0),
+                0
+              );
+              const effectiveBalance = Math.round((baseNum + openTotal) * 100) / 100;
+              const percentageUsed =
+                limit && limit > 0
+                  ? Math.round(((effectiveBalance / limit) * 100) * 100) / 100
+                  : 0;
+
+              const status = this.computeCreditStatus(effectiveBalance, limit, threshold, blockMode);
+              const updatedAt = cfgMap.updatedAt || new Date().toISOString();
+
+              // Touch-on-Read: Renovar TTL de 24h en segundo plano ante actividad activa del vendedor
+              redis.pipeline()
+                .expire(cfg, DEFAULT_TTL_SECONDS)
+                .expire(base, DEFAULT_TTL_SECONDS)
+                .expire(open, DEFAULT_TTL_SECONDS)
+                .exec()
+                .catch(() => {});
+
+              return {
+                enabled: true,
+                items: [
+                  {
+                    vendedorId: targetId,
+                    creditLimit: limit,
+                    effectiveBalance,
+                    percentageUsed,
+                    status,
+                    updatedAt,
+                  },
+                ],
+              };
+            }
           }
         }
       } catch (err: any) {
