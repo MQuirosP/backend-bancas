@@ -1,4 +1,4 @@
-﻿import { getCRLocalComponents } from "../../utils/businessDate";
+import { getCRLocalComponents } from "../../utils/businessDate";
 import { crDateService } from "../../utils/crDateService";
 import { ACCOUNT_PREVIOUS_MONTH_METHOD } from "./accounts.types";
 
@@ -51,6 +51,12 @@ export interface SorteoOrMovement {
   vendedorCommission: number;
   ticketCount: number;
   sorteoAccumulated?: number;
+
+  // Campos de compatibilidad cruzada con evaluatedSummary
+  totalSales?: number;
+  totalPrizes?: number;
+  totalCommission?: number;
+  subtotal?: number;
 
   // Campos específicos de movimientos (undefined en sorteos)
   type?: "payment" | "collection" | "initial_balance"; //  NUEVO: "initial_balance" para saldo del mes anterior
@@ -228,10 +234,14 @@ export function intercalateSorteosAndMovements(
       loteriaId: null,
       loteriaName: null,
       sales: 0,
+      totalSales: 0,
       payouts: 0,
+      totalPrizes: 0,
       listeroCommission: 0,
       vendedorCommission: 0,
+      totalCommission: 0,
       ticketCount: 0,
+      subtotal: effectiveBalance,
 
       // Campos específicos de movimiento
       //  CRÍTICO: Mapear opening_balance a initial_balance para compatibilidad con SorteoOrMovement
@@ -271,11 +281,15 @@ export function intercalateSorteosAndMovements(
       loteriaId: sorteo.loteriaId,
       loteriaName: sorteo.loteriaName,
       sales: Number(sorteo.sales || 0), //  CRÍTICO: Convertir a Number
+      totalSales: Number(sorteo.sales || 0),
       payouts: Number(sorteo.payouts || 0), //  CRÍTICO: Convertir a Number
+      totalPrizes: Number(sorteo.payouts || 0),
       listeroCommission: Number(sorteo.listeroCommission || 0), //  CRÍTICO: Convertir a Number
       vendedorCommission: Number(sorteo.vendedorCommission || 0), //  CRÍTICO: Convertir a Number
+      totalCommission: Number(sorteo.vendedorCommission || sorteo.listeroCommission || 0),
       ticketCount: sorteo.ticketCount,
       sorteoAccumulated: Number(sorteo.sorteoAccumulated || 0), //  CRÍTICO: Convertir a Number
+      subtotal: balanceNum,
     };
   });
 
@@ -285,10 +299,14 @@ export function intercalateSorteosAndMovements(
     const timeA = new Date(a.scheduledAt).getTime();
     const timeB = new Date(b.scheduledAt).getTime();
 
-    //  CRÍTICO: Si tiempos son iguales, priorizar "initial_balance"
+    //  CRÍTICO: Si tiempos son iguales, priorizar "initial_balance", luego movimientos, y desempatar con sorteoId
     if (timeA === timeB) {
       if (a.type === 'initial_balance') return -1;
       if (b.type === 'initial_balance') return 1;
+      const isMovA = (a.sorteoId || '').startsWith('mov-');
+      const isMovB = (b.sorteoId || '').startsWith('mov-');
+      if (isMovA !== isMovB) return isMovA ? -1 : 1;
+      return (a.sorteoId || '').localeCompare(b.sorteoId || '');
     }
 
     return timeA - timeB; // ASC para calcular

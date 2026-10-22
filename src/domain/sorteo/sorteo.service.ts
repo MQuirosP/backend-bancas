@@ -2176,9 +2176,10 @@ gs."hour24" ASC
                       if (isMov && event.date && event.time && /^\d{1,2}:\d{2}/.test(event.time.trim())) {
                         const [hh, mm] = event.time.trim().split(':').map(Number);
                         if (!isNaN(hh) && !isNaN(mm) && hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
-                          const localTimeStr = `${event.date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
-                          event.scheduledAt = localTimeStr;
-                          eventTime = new Date(localTimeStr).getTime();
+                          const [y, m, d] = event.date.split('-').map(Number);
+                          const utcDate = new Date(Date.UTC(y, m - 1, d, hh + 6, mm, 0, 0));
+                          event.scheduledAt = utcDate.toISOString();
+                          eventTime = utcDate.getTime();
                         }
                       }
 
@@ -3531,9 +3532,10 @@ gs."hour24" ASC
                 if (isMov && event.date && event.time && /^\d{1,2}:\d{2}/.test(event.time.trim())) {
                   const [hh, mm] = event.time.trim().split(':').map(Number);
                   if (!isNaN(hh) && !isNaN(mm) && hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
-                    const localTimeStr = `${event.date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
-                    event.scheduledAt = localTimeStr;
-                    eventTime = new Date(localTimeStr).getTime();
+                    const [y, m, d] = event.date.split('-').map(Number);
+                    const utcDate = new Date(Date.UTC(y, m - 1, d, hh + 6, mm, 0, 0));
+                    event.scheduledAt = utcDate.toISOString();
+                    eventTime = utcDate.getTime();
                   }
                 }
 
