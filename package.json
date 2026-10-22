@@ -4,7 +4,7 @@
   "description": "Backend para Plataforma de Lotería con Node.js, Express, Prisma y Supabase.",
   "main": "dist/index.js",
   "engines": {
-    "node": "20.x"
+    "node": ">=22.23.4"
   },
   "scripts": {
     "start": "node --max-old-space-size=350 --max-semi-space-size=32 dist/index.js",
