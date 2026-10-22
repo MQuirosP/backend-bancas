@@ -327,8 +327,13 @@ day_payments AS (
         'sorteoName',            CASE WHEN ap.type = 'payment'
                                       THEN 'Pago recibido'
                                       ELSE 'Cobro realizado' END,
-        'scheduledAt',           to_char(((ap."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'),
-                                         'YYYY-MM-DD"T"HH24:MI:SS'),
+        'scheduledAt',           CASE
+                                   WHEN ap.time IS NOT NULL AND ap.time ~ '^[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?$'
+                                     THEN to_char(ap.date + ap.time::time, 'YYYY-MM-DD"T"HH24:MI:SS')
+                                   ELSE
+                                     to_char(((ap."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica'),
+                                             'YYYY-MM-DD"T"HH24:MI:SS')
+                                 END,
         'date',                  to_char(ap.date, 'YYYY-MM-DD'),
         'time',                  COALESCE(ap.time, ''),
         'loteriaId',             NULL::text,
@@ -356,7 +361,12 @@ day_payments AS (
         'method',                COALESCE(ap.method, ''),
         'notes',                 COALESCE(ap.notes, '')
       )
-      ORDER BY ap."createdAt" ASC
+      ORDER BY
+        CASE
+          WHEN ap.time IS NOT NULL AND ap.time ~ '^[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?$'
+            THEN ap.date + ap.time::time
+          ELSE ((ap."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Costa_Rica')
+        END ASC
     ) AS payments_array
   FROM "AccountPayment" ap
   CROSS JOIN sorteo_date sd

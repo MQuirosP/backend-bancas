@@ -2169,11 +2169,25 @@ gs."hour24" ASC
                     let evAccumulated = initialAccumulated;
                     let rApplied = false;
 
-                    const decoratedEvents = rawEvents.map((event: any) => ({
-                      event,
-                      time: new Date(event.scheduledAt).getTime(),
-                      isMov: typeof event.sorteoId === 'string' && event.sorteoId.startsWith('mov-'),
-                    }));
+                    const decoratedEvents = rawEvents.map((event: any) => {
+                      let eventTime = new Date(event.scheduledAt).getTime();
+                      const isMov = typeof event.sorteoId === 'string' && event.sorteoId.startsWith('mov-');
+
+                      if (isMov && event.date && event.time && /^\d{1,2}:\d{2}/.test(event.time.trim())) {
+                        const [hh, mm] = event.time.trim().split(':').map(Number);
+                        if (!isNaN(hh) && !isNaN(mm) && hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+                          const localTimeStr = `${event.date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+                          event.scheduledAt = localTimeStr;
+                          eventTime = new Date(localTimeStr).getTime();
+                        }
+                      }
+
+                      return {
+                        event,
+                        time: eventTime,
+                        isMov,
+                      };
+                    });
 
                     // 1. ORDENAR CRONOLÓGICAMENTE ASCENDENTE ANTES DE ACUMULAR
                     decoratedEvents.sort((a, b) => {
@@ -3510,11 +3524,25 @@ gs."hour24" ASC
 
               // Pre-calcular timestamps y flags una sola vez por evento para evitar
               // instanciar new Date() repetidamente dentro de los comparadores de sort.
-              const decoratedEvents = rawEvents.map((event) => ({
-                event,
-                time: new Date(event.scheduledAt).getTime(),
-                isMov: typeof event.sorteoId === 'string' && event.sorteoId.startsWith('mov-'),
-              }));
+              const decoratedEvents = rawEvents.map((event: any) => {
+                let eventTime = new Date(event.scheduledAt).getTime();
+                const isMov = typeof event.sorteoId === 'string' && event.sorteoId.startsWith('mov-');
+
+                if (isMov && event.date && event.time && /^\d{1,2}:\d{2}/.test(event.time.trim())) {
+                  const [hh, mm] = event.time.trim().split(':').map(Number);
+                  if (!isNaN(hh) && !isNaN(mm) && hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+                    const localTimeStr = `${event.date}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+                    event.scheduledAt = localTimeStr;
+                    eventTime = new Date(localTimeStr).getTime();
+                  }
+                }
+
+                return {
+                  event,
+                  time: eventTime,
+                  isMov,
+                };
+              });
 
               // 1. ORDENAR CRONOLÓGICAMENTE ASCENDENTE ANTES DE ACUMULAR
               decoratedEvents.sort((a, b) => {
