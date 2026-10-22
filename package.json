@@ -79,7 +79,6 @@
     "on-headers": "^1.1.0",
     "opossum": "^9.0.0",
     "pdf-lib": "^1.17.1",
-    "pdf-to-png-converter": "^3.11.0",
     "pdfkit": "^0.17.2",
     "pdfmake": "^0.2.20",
     "pino": "^10.0.0",

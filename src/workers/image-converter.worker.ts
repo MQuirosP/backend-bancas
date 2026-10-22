@@ -51,38 +51,7 @@ parentPort.on('message', async (data) => {
       return;
     }
 
-    // Default: PDF to PNG conversion
-    const { pdfToPng } = await import('pdf-to-png-converter');
-    
-    const finalOptions = {
-      viewportScale: 1.2, 
-      ...options
-    };
-
-    const pngPages = await pdfToPng(pdfBuffer, finalOptions);
-    
-    const transferList: ArrayBuffer[] = [];
-    const formattedPages = pngPages.map(page => {
-      if (page.content && page.content.buffer instanceof ArrayBuffer) {
-        transferList.push(page.content.buffer);
-      }
-      return {
-        ...page,
-        content: page.content
-      };
-    });
-
-    try {
-      parentPort?.postMessage({ 
-        success: true, 
-        pngPages: formattedPages
-      }, transferList);
-    } catch (_err) {
-      parentPort?.postMessage({ 
-        success: true, 
-        pngPages: formattedPages
-      });
-    }
+    throw new Error(`Tipo de tarea no soportado o en desuso: ${type}`);
   } catch (error: any) {
     parentPort?.postMessage({ 
       success: false, 
