@@ -7,10 +7,10 @@ import { RedisOpsService, RedisKeyItem, RedisKeyCategory } from '../../domain/ca
  *
  * MÓDULO INTERACTIVO DE OPERACIONES Y LIMPIEZA DE CLAVES EN REDIS
  *
- * Niveles jerárquicos:
- * 1. Banca (Claves globales de la banca: sorteos, reglas, cortes, tags, resúmenes)
- * 2. Listero (Claves a nivel listero / ventana: sorteos scope, reglas, tags)
- * 3. Vendedor (Claves individuales: sesión, crédito, resumen, comisiones, tags)
+ * Flujo Principal:
+ *   [1] Por BANCA    -> Lista bancas -> Gestión de claves de la Banca
+ *   [2] Por LISTERO  -> Lista bancas -> Lista listeros -> Gestión de claves del Listero
+ *   [3] Por VENDEDOR -> Lista bancas -> Lista listeros -> Lista vendedores -> Gestión de claves del Vendedor
  *
  * Compatible con:
  * - Entornos locales (llamadas directas vía RedisOpsService)
@@ -163,7 +163,7 @@ function formatTtl(ttl: number): string {
 }
 
 // ============================================================================
-// WIZARD PRINCIPAL
+// MENÚ PRINCIPAL: POR BANCA / POR LISTERO / POR VENDEDOR
 // ============================================================================
 
 export async function runRedisKeysWizard() {
@@ -172,25 +172,123 @@ export async function runRedisKeysWizard() {
     console.log(`======================================================================`);
     console.log(`🧹  ${colors.bold}${colors.brightCyan}GESTIÓN Y LIMPIEZA DE CLAVES EN REDIS${colors.reset}`);
     console.log(`======================================================================`);
-    console.log(`💡  ${colors.dim}Escriba "B" en cualquier momento para regresar al menú principal.${colors.reset}\n`);
+    console.log(`💡  ${colors.dim}Escriba "B" en cualquier momento para regresar al menú anterior.${colors.reset}\n`);
 
-    // PASO 1: Seleccionar Banca
+    console.log(`¿Cómo desea consultar y gestionar las claves de Redis?\n`);
+    console.log(`  [1] 🏛️   ${colors.bold}Por BANCA${colors.reset}`);
+    console.log(`           ${colors.dim}Muestra la lista de bancas para gestionar claves globales de la banca${colors.reset}\n`);
+
+    console.log(`  [2] 📋  ${colors.bold}Por LISTERO${colors.reset}`);
+    console.log(`           ${colors.dim}Selecciona la banca y luego el listero para ver sus claves y acumulados${colors.reset}\n`);
+
+    console.log(`  [3] 👤  ${colors.bold}Por VENDEDOR${colors.reset}`);
+    console.log(`           ${colors.dim}Selecciona banca, listero y vendedor para gestionar saldo, sesión y caché${colors.reset}\n`);
+
+    console.log(`  [B] ⬅️   ${colors.dim}Volver al menú principal de soporte${colors.reset}`);
+
+    const mainChoice = await ask(`\nOpción (1-3 o B): `);
+    if (isBack(mainChoice)) return;
+
+    if (mainChoice === '1') {
+      await flowPorBanca();
+    } else if (mainChoice === '2') {
+      await flowPorListero();
+    } else if (mainChoice === '3') {
+      await flowPorVendedor();
+    } else {
+      console.log(`❌  Opción no válida.`);
+      await ask(`Presione ENTER para continuar...`);
+    }
+  }
+}
+
+// ============================================================================
+// 1. FLUJO: POR BANCA
+// ============================================================================
+
+async function flowPorBanca() {
+  while (true) {
+    clearScreen();
+    console.log(`======================================================================`);
+    console.log(`🏛️   ${colors.bold}CLAVES EN REDIS - POR BANCA${colors.reset}`);
+    console.log(`======================================================================`);
+
     console.log(`⏳  Cargando lista de bancas activas...`);
     let bancas: Array<{ id: string; name: string }> = [];
     try {
       bancas = await fetchBancas();
     } catch (err: any) {
       console.log(`❌  Error al obtener bancas: ${err.message}`);
-      await ask(`\nPresione ENTER para reintentar...`);
-      continue;
+      await ask(`\nPresione ENTER para volver...`);
+      return;
     }
 
-    console.log(`\n🏛️   ${colors.bold}PASO 1: SELECCIONE LA BANCA:${colors.reset}`);
+    console.log(`\nSeleccione la Banca a inspeccionar:`);
     bancas.forEach((b, idx) => {
       console.log(`  [${idx + 1}] ${colors.bold}${b.name}${colors.reset} [ID: ${colors.dim}${b.id}${colors.reset}]`);
     });
-    console.log(`  [0] 🌐  ${colors.brightYellow}Todas las Bancas / Búsqueda Global${colors.reset}`);
-    console.log(`  [B] ⬅️   Volver al menú principal`);
+    console.log(`  [B] ⬅️   Volver`);
+
+    const choice = await ask(`\nOpción (1-${bancas.length} o B): `);
+    if (isBack(choice)) return;
+
+    const idx = parseInt(choice, 10);
+    if (isNaN(idx) || idx < 1 || idx > bancas.length) {
+      console.log(`❌  Opción no válida.`);
+      await ask(`Presione ENTER para continuar...`);
+      continue;
+    }
+
+    const selectedBanca = bancas[idx - 1];
+
+    await keysManagerLoop({
+      entityType: 'BANCA',
+      id: selectedBanca.id,
+      title: `Banca: ${selectedBanca.name}`,
+      subtitle: `ID: ${selectedBanca.id}`,
+      fetchKeys: async () => {
+        const data = await fetchBancaKeysApi(selectedBanca.id);
+        return { totalKeys: data.totalKeys, keys: data.keys };
+      },
+      deleteKeys: async ({ keys, deleteAll }) => {
+        return await deleteBancaKeysApi({
+          bancaId: selectedBanca.id,
+          keys,
+          deleteAll,
+        });
+      },
+    });
+  }
+}
+
+// ============================================================================
+// 2. FLUJO: POR LISTERO
+// ============================================================================
+
+async function flowPorListero() {
+  while (true) {
+    clearScreen();
+    console.log(`======================================================================`);
+    console.log(`📋  ${colors.bold}CLAVES EN REDIS - POR LISTERO${colors.reset}`);
+    console.log(`======================================================================`);
+
+    // Paso A: Seleccionar la Banca
+    console.log(`⏳  Cargando lista de bancas activas...`);
+    let bancas: Array<{ id: string; name: string }> = [];
+    try {
+      bancas = await fetchBancas();
+    } catch (err: any) {
+      console.log(`❌  Error al obtener bancas: ${err.message}`);
+      await ask(`\nPresione ENTER para volver...`);
+      return;
+    }
+
+    console.log(`\n🏛️   ${colors.bold}PASO 1: SELECCIONE LA BANCA DEL LISTERO:${colors.reset}`);
+    bancas.forEach((b, idx) => {
+      console.log(`  [${idx + 1}] ${colors.bold}${b.name}${colors.reset}`);
+    });
+    console.log(`  [0] 🌐  ${colors.brightYellow}Todas las Bancas (Búsqueda global)${colors.reset}`);
+    console.log(`  [B] ⬅️   Volver`);
 
     const bancaChoice = await ask(`\nOpción (0-${bancas.length} o B): `);
     if (isBack(bancaChoice)) return;
@@ -209,105 +307,18 @@ export async function runRedisKeysWizard() {
       targetBancaName = bancas[idx - 1].name;
     }
 
-    // PASO 2: Seleccionar Nivel Operativo (Banca / Listero / Vendedor)
-    await levelSelectionLoop(targetBancaId, targetBancaName);
+    // Paso B: Seleccionar el Listero de esa Banca
+    await selectListeroAndManage(targetBancaId, targetBancaName);
   }
 }
 
-// ============================================================================
-// PASO 2: SELECCIÓN DE NIVEL (BANCA / LISTERO / VENDEDOR)
-// ============================================================================
-
-async function levelSelectionLoop(bancaId: string | null, bancaName: string) {
-  while (true) {
-    clearScreen();
-    console.log(`======================================================================`);
-    console.log(`🎯  ${colors.bold}PASO 2: SELECCIONE EL NIVEL A OPERAR${colors.reset}`);
-    console.log(`🏛️   Banca: ${colors.bold}${colors.brightCyan}${bancaName}${colors.reset}`);
-    console.log(`======================================================================`);
-    console.log(`\n¿A qué nivel desea inspeccionar y gestionar las claves de Redis?\n`);
-
-    if (bancaId) {
-      console.log(`  [1] 🏛️   ${colors.bold}Claves de esta BANCA completa${colors.reset}`);
-      console.log(`           ${colors.dim}Topes globales de banca, cortes, acumulados y multiplicadores${colors.reset}\n`);
-
-      console.log(`  [2] 📋  ${colors.bold}Claves de un LISTERO${colors.reset}`);
-      console.log(`           ${colors.dim}Topes por listero, comisiones, tags y acumulados de su red${colors.reset}\n`);
-
-      console.log(`  [3] 👤  ${colors.bold}Claves de un VENDEDOR${colors.reset}`);
-      console.log(`           ${colors.dim}Sesión activa, saldo de crédito, caja, resumen y comisiones${colors.reset}\n`);
-    } else {
-      console.log(`  [1] 📋  ${colors.bold}Claves de un LISTERO (Búsqueda en todas las bancas)${colors.reset}\n`);
-      console.log(`  [2] 👤  ${colors.bold}Claves de un VENDEDOR (Búsqueda en todas las bancas)${colors.reset}\n`);
-    }
-
-    console.log(`  [B] ⬅️   Volver a selección de banca`);
-
-    const opt = await ask(`\nOpción: `);
-    if (isBack(opt)) return;
-
-    if (bancaId) {
-      if (opt === '1') {
-        // Nivel 1: Banca completa
-        await bancaKeysLoop(bancaId, bancaName);
-      } else if (opt === '2') {
-        // Nivel 2: Listero
-        await listeroSelectionLoop(bancaId, bancaName);
-      } else if (opt === '3') {
-        // Nivel 3: Vendedor
-        await vendorPreFilterLoop(bancaId, bancaName);
-      } else {
-        console.log(`❌  Opción no válida.`);
-        await ask(`Presione ENTER para continuar...`);
-      }
-    } else {
-      if (opt === '1') {
-        await listeroSelectionLoop(null, 'TODAS LAS BANCAS');
-      } else if (opt === '2') {
-        await vendorPreFilterLoop(null, 'TODAS LAS BANCAS');
-      } else {
-        console.log(`❌  Opción no válida.`);
-        await ask(`Presione ENTER para continuar...`);
-      }
-    }
-  }
-}
-
-// ============================================================================
-// SELECCIÓN Y GESTIÓN A NIVEL BANCA
-// ============================================================================
-
-async function bancaKeysLoop(bancaId: string, bancaName: string) {
-  await keysManagerLoop({
-    entityType: 'BANCA',
-    id: bancaId,
-    title: `Banca: ${bancaName}`,
-    subtitle: `ID: ${bancaId}`,
-    fetchKeys: async () => {
-      const data = await fetchBancaKeysApi(bancaId);
-      return { totalKeys: data.totalKeys, keys: data.keys };
-    },
-    deleteKeys: async ({ keys, deleteAll }) => {
-      return await deleteBancaKeysApi({
-        bancaId,
-        keys,
-        deleteAll,
-      });
-    },
-  });
-}
-
-// ============================================================================
-// SELECCIÓN Y GESTIÓN A NIVEL LISTERO
-// ============================================================================
-
-async function listeroSelectionLoop(bancaId: string | null, bancaName: string) {
+async function selectListeroAndManage(bancaId: string | null, bancaName: string) {
   let searchFilter = '';
 
   while (true) {
     clearScreen();
     console.log(`======================================================================`);
-    console.log(`📋  ${colors.bold}SELECCIONE EL LISTERO${colors.reset}`);
+    console.log(`📋  ${colors.bold}PASO 2: SELECCIONE EL LISTERO${colors.reset}`);
     console.log(`🏛️   Banca: ${colors.bold}${colors.brightCyan}${bancaName}${colors.reset}`);
     if (searchFilter) {
       console.log(`🔍  Filtro activo: "${colors.brightYellow}${searchFilter}${colors.reset}"`);
@@ -330,9 +341,9 @@ async function listeroSelectionLoop(bancaId: string | null, bancaName: string) {
     }
 
     if (listeros.length === 0) {
-      console.log(`\n⚠️   ${colors.yellow}No se encontraron listeros${searchFilter ? ` con el filtro "${searchFilter}"` : ''}.${colors.reset}`);
+      console.log(`\n⚠️   ${colors.yellow}No se encontraron listeros${searchFilter ? ` con el filtro "${searchFilter}"` : ''} en ${bancaName}.${colors.reset}`);
       console.log(`  [F] 🔍  Cambiar filtro de búsqueda`);
-      console.log(`  [B] ⬅️   Volver`);
+      console.log(`  [B] ⬅️   Volver a selección de banca`);
       const emptyOpt = await ask(`\nOpción: `);
       if (isBack(emptyOpt)) return;
       if (emptyOpt.toLowerCase() === 'f') {
@@ -396,70 +407,105 @@ async function listeroSelectionLoop(bancaId: string | null, bancaName: string) {
 }
 
 // ============================================================================
-// SELECCIÓN Y GESTIÓN A NIVEL VENDEDOR
+// 3. FLUJO: POR VENDEDOR
 // ============================================================================
 
-async function vendorPreFilterLoop(bancaId: string | null, bancaName: string) {
+async function flowPorVendedor() {
   while (true) {
     clearScreen();
     console.log(`======================================================================`);
-    console.log(`👤  ${colors.bold}GESTIÓN DE CLAVES DE VENDEDOR${colors.reset}`);
-    console.log(`🏛️   Banca: ${colors.bold}${colors.brightCyan}${bancaName}${colors.reset}`);
+    console.log(`👤  ${colors.bold}CLAVES EN REDIS - POR VENDEDOR${colors.reset}`);
     console.log(`======================================================================`);
-    console.log(`\n¿Cómo desea buscar al vendedor?\n`);
-    console.log(`  [1] 👥  Listar/Buscar entre todos los vendedores de la banca`);
-    console.log(`  [2] 📋  Filtrar primero por un LISTERO específico`);
+
+    // Paso A: Seleccionar Banca
+    console.log(`⏳  Cargando lista de bancas activas...`);
+    let bancas: Array<{ id: string; name: string }> = [];
+    try {
+      bancas = await fetchBancas();
+    } catch (err: any) {
+      console.log(`❌  Error al obtener bancas: ${err.message}`);
+      await ask(`\nPresione ENTER para volver...`);
+      return;
+    }
+
+    console.log(`\n🏛️   ${colors.bold}PASO 1: SELECCIONE LA BANCA:${colors.reset}`);
+    bancas.forEach((b, idx) => {
+      console.log(`  [${idx + 1}] ${colors.bold}${b.name}${colors.reset}`);
+    });
+    console.log(`  [0] 🌐  ${colors.brightYellow}Todas las Bancas (Búsqueda global)${colors.reset}`);
     console.log(`  [B] ⬅️   Volver`);
 
-    const opt = await ask(`\nOpción: `);
-    if (isBack(opt)) return;
+    const bancaChoice = await ask(`\nOpción (0-${bancas.length} o B): `);
+    if (isBack(bancaChoice)) return;
 
-    if (opt === '1') {
-      await vendorSelectionLoop(bancaId, bancaName, null, null);
-    } else if (opt === '2') {
-      // Primero seleccionar listero
-      console.log(`\n⏳  Cargando listeros...`);
-      let listeros: any[] = [];
-      try {
-        listeros = await fetchVentanas(bancaId);
-      } catch (err: any) {
-        console.log(`❌  Error: ${err.message}`);
-        await ask(`Presione ENTER para continuar...`);
-        continue;
-      }
+    let targetBancaId: string | null = null;
+    let targetBancaName = 'TODAS LAS BANCAS';
 
-      if (listeros.length === 0) {
-        console.log(`⚠️   No se encontraron listeros.`);
-        await ask(`Presione ENTER para continuar...`);
-        continue;
-      }
-
-      console.log(`\n${colors.bold}Seleccione el Listero:${colors.reset}`);
-      listeros.forEach((l, idx) => {
-        const bancaStr = !bancaId ? `[Banca: ${l.bancaName}]` : '';
-        console.log(`  [${idx + 1}] ${colors.bold}${l.name}${colors.reset} ${colors.dim}${bancaStr}${colors.reset}`);
-      });
-      console.log(`  [B] Cancelar`);
-
-      const lChoice = await ask(`\nOpción (1-${listeros.length}): `);
-      if (isBack(lChoice)) continue;
-
-      const lIdx = parseInt(lChoice, 10);
-      if (!isNaN(lIdx) && lIdx >= 1 && lIdx <= lIdx && lIdx <= listeros.length) {
-        const listero = listeros[lIdx - 1];
-        await vendorSelectionLoop(bancaId, bancaName, listero.id, listero.name);
-      } else {
+    if (bancaChoice !== '0') {
+      const idx = parseInt(bancaChoice, 10);
+      if (isNaN(idx) || idx < 1 || idx > bancas.length) {
         console.log(`❌  Opción no válida.`);
         await ask(`Presione ENTER para continuar...`);
+        continue;
       }
-    } else {
-      console.log(`❌  Opción no válida.`);
-      await ask(`Presione ENTER para continuar...`);
+      targetBancaId = bancas[idx - 1].id;
+      targetBancaName = bancas[idx - 1].name;
     }
+
+    // Paso B: Seleccionar Listero de la Banca
+    await selectListeroForVendorFlow(targetBancaId, targetBancaName);
   }
 }
 
-async function vendorSelectionLoop(
+async function selectListeroForVendorFlow(bancaId: string | null, bancaName: string) {
+  while (true) {
+    clearScreen();
+    console.log(`======================================================================`);
+    console.log(`📋  ${colors.bold}PASO 2: SELECCIONE EL LISTERO${colors.reset}`);
+    console.log(`🏛️   Banca: ${colors.bold}${colors.brightCyan}${bancaName}${colors.reset}`);
+    console.log(`======================================================================`);
+
+    console.log(`⏳  Cargando listeros...`);
+    let listeros: any[] = [];
+    try {
+      listeros = await fetchVentanas(bancaId);
+    } catch (err: any) {
+      console.log(`❌  Error al obtener listeros: ${err.message}`);
+      await ask(`\nPresione ENTER para volver...`);
+      return;
+    }
+
+    console.log(`\nSeleccione el Listero para ver sus vendedores:`);
+    listeros.forEach((l, idx) => {
+      const bancaStr = !bancaId ? `[Banca: ${l.bancaName}]` : '';
+      console.log(`  [${idx + 1}] ${colors.bold}${l.name}${colors.reset} ${colors.dim}${bancaStr}${colors.reset}`);
+    });
+    console.log(`  [0] 👥  ${colors.brightYellow}Todos los Listeros de esta banca (Ver todos los vendedores)${colors.reset}`);
+    console.log(`  [B] ⬅️   Volver a selección de banca`);
+
+    const choice = await ask(`\nOpción (0-${listeros.length} o B): `);
+    if (isBack(choice)) return;
+
+    let targetVentanaId: string | null = null;
+    let targetVentanaName: string | null = null;
+
+    if (choice !== '0') {
+      const idx = parseInt(choice, 10);
+      if (isNaN(idx) || idx < 1 || idx > listeros.length) {
+        console.log(`❌  Opción no válida.`);
+        await ask(`Presione ENTER para continuar...`);
+        continue;
+      }
+      targetVentanaId = listeros[idx - 1].id;
+      targetVentanaName = listeros[idx - 1].name;
+    }
+
+    // Paso C: Seleccionar Vendedor
+    await selectVendorAndManage(bancaId, bancaName, targetVentanaId, targetVentanaName);
+  }
+}
+
+async function selectVendorAndManage(
   bancaId: string | null,
   bancaName: string,
   ventanaId: string | null,
@@ -470,7 +516,7 @@ async function vendorSelectionLoop(
   while (true) {
     clearScreen();
     console.log(`======================================================================`);
-    console.log(`👤  ${colors.bold}SELECCIONE EL VENDEDOR${colors.reset}`);
+    console.log(`👤  ${colors.bold}PASO 3: SELECCIONE EL VENDEDOR${colors.reset}`);
     console.log(`🏛️   Banca: ${colors.bold}${colors.brightCyan}${bancaName}${colors.reset}`);
     if (ventanaName) {
       console.log(`📋  Listero: ${colors.bold}${colors.brightGreen}${ventanaName}${colors.reset}`);
@@ -493,7 +539,7 @@ async function vendorSelectionLoop(
     if (vendors.length === 0) {
       console.log(`\n⚠️   ${colors.yellow}No se encontraron vendedores${searchFilter ? ` con el filtro "${searchFilter}"` : ''}.${colors.reset}`);
       console.log(`  [F] 🔍  Cambiar filtro de búsqueda`);
-      console.log(`  [B] ⬅️   Volver`);
+      console.log(`  [B] ⬅️   Volver a selección de listero`);
       const opt = await ask(`\nOpción: `);
       if (isBack(opt)) return;
       if (opt.toLowerCase() === 'f') {
@@ -516,7 +562,7 @@ async function vendorSelectionLoop(
     if (searchFilter) {
       console.log(`  [X] 🧹  Limpiar filtro de búsqueda`);
     }
-    console.log(`  [B] ⬅️   Volver`);
+    console.log(`  [B] ⬅️   Volver a selección de listero`);
 
     const choice = await ask(`\nOpción: `);
     if (isBack(choice)) return;
