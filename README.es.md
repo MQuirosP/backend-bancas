@@ -136,6 +136,8 @@ Crea un archivo `.env` en la raíz guiándote por el archivo `.env.example`:
 | `JWT_ACCESS_SECRET` | Llave secreta para firmar tokens de acceso | `tu_secreto_seguro` |
 | `BUSINESS_CUTOFF_HOUR_CR` | Hora por defecto de corte comercial (CR) | `23:59` |
 | `ENABLE_RESOURCE_MONITOR` | Activar daemon de monitoreo de recursos (`true`/`false`) | `false` |
+| `ENABLE_MEMORY_MONITOR` | Emitir logs periódicos `MEMORY_SNAPSHOT` (RSS, heap V8, new/old space, worker threads) (`true`/`false`) | `false` |
+| `MEMORY_MONITOR_INTERVAL_MS` | Intervalo de `MEMORY_SNAPSHOT` en ms (mínimo 30000) | `300000` |
 
 ### Pasos de Instalación y Operación
 

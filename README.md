@@ -136,6 +136,8 @@ Create a `.env` file in the root directory (use `.env.example` as a template):
 | `JWT_ACCESS_SECRET` | Secret key for JWT signatures | `your_secure_secret` |
 | `BUSINESS_CUTOFF_HOUR_CR` | Default business day cutoff time (CR local) | `23:59` |
 | `ENABLE_RESOURCE_MONITOR` | Enable diagnostic resource monitoring daemon (`true`/`false`) | `false` |
+| `ENABLE_MEMORY_MONITOR` | Emit periodic `MEMORY_SNAPSHOT` logs (RSS, V8 heap, new/old space, worker threads) (`true`/`false`) | `false` |
+| `MEMORY_MONITOR_INTERVAL_MS` | Interval for `MEMORY_SNAPSHOT` in ms (minimum 30000) | `300000` |
 
 ### Installation & Operations Steps
 

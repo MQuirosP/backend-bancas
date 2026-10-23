@@ -171,6 +171,44 @@ class DedicatedWorkerRunner {
       this.isBusy = false;
     }
   }
+
+  /**
+   * Instantánea de memoria del isolate del worker (solo lectura, para diagnóstico).
+   * Usa worker.getHeapStatistics() (Node >= 22.16). Si el worker está ocupado en código
+   * síncrono no responde hasta quedar libre, por eso se acota con un timeout.
+   */
+  public async getMemorySnapshot(timeoutMs = 1500): Promise<Record<string, unknown>> {
+    const worker = this.worker as any;
+    const base = { name: this.name, busy: this.isBusy, queue: this.queue.length };
+    if (!worker) return { ...base, alive: false };
+    if (typeof worker.getHeapStatistics !== 'function') {
+      return { ...base, alive: true, supported: false };
+    }
+
+    const toMiB = (bytes: number) => Math.round((bytes / 1048576) * 10) / 10;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const stats: any = await Promise.race([
+        worker.getHeapStatistics(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+        }),
+      ]);
+      return {
+        ...base,
+        alive: true,
+        heapUsedMiB: toMiB(stats.used_heap_size),
+        heapTotalMiB: toMiB(stats.total_heap_size),
+        heapLimitMiB: toMiB(stats.heap_size_limit),
+        externalMiB: toMiB(stats.external_memory),
+        mallocedMiB: toMiB(stats.malloced_memory),
+      };
+    } catch (err: any) {
+      return { ...base, alive: true, error: err?.message || String(err) };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
 }
 
 // ============================================================================
@@ -214,6 +252,17 @@ export async function generateListImages(
     page: p.page,
     buffer: Buffer.isBuffer(p.buffer) ? p.buffer : Buffer.from(p.buffer),
   }));
+}
+
+/**
+ * Instantánea de memoria de los 3 workers segregados (diagnóstico, solo lectura).
+ */
+export async function getWorkersMemorySnapshot(): Promise<Array<Record<string, unknown>>> {
+  return Promise.all([
+    ticketWorker.getMemorySnapshot(),
+    listWorker.getMemorySnapshot(),
+    pdfWorker.getMemorySnapshot(),
+  ]);
 }
 
 /**
@@ -302,4 +351,5 @@ export const WorkerService = {
   generateTicketImage,
   generateListImages,
   warmupWorkers,
+  getWorkersMemorySnapshot,
 };

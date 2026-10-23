@@ -14,6 +14,7 @@ import { activeOperationsService } from '../core/activeOperations.service'
 import { warmupConnection } from '../core/connectionWarmup'
 import { SocketService } from '../core/socket.service'
 import { resourceMonitorService } from '../core/resourceMonitor.service'
+import { memoryMonitorService } from '../core/memoryMonitor.service'
 import { WorkerService } from '../api/v1/services/worker.service'
 import { ActivityLogBuffer } from '../core/activityLogBuffer'
 
@@ -52,6 +53,11 @@ server.listen(config.port, 511, async () => {
   // Iniciar monitor de event loop y pools (desactivado por default para evitar ruido)
   if (process.env.ENABLE_RESOURCE_MONITOR === 'true') {
     resourceMonitorService.start();
+  }
+
+  // Monitor de memoria opt-in (RSS, heap, new/old space y workers) para diagnóstico en producción
+  if (process.env.ENABLE_MEMORY_MONITOR === 'true') {
+    memoryMonitorService.start(WorkerService.getWorkersMemorySnapshot);
   }
 
   //  OPTIMIZACIÓN: Inicializar Redis (opcional, no bloquea el servidor)
@@ -185,6 +191,7 @@ const gracefulShutdown = async (signal: string) => {
   try { stopMonthlyClosingJob(); } catch (e) {}
   try { restrictionCacheV2.stopWarmingProcess(); } catch (e) {}
   try { resourceMonitorService.stop(); } catch (e) {}
+  try { memoryMonitorService.stop(); } catch (e) {}
   try { await SocketService.close(); } catch (e) {}
   try { closeRedisClient(); } catch (e) {}
 
