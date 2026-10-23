@@ -207,7 +207,7 @@ export async function calculateDynamicLimit(
               const hydratedKey = `sorteo:${context.sorteoId}:hydrated`;
               const [redisVal, isHydrated] = await redis.mget(redisKey, hydratedKey);
               if (redisVal !== null && redisVal !== undefined) {
-                return parseFloat(redisVal) || 0;
+                return Math.max(0, parseFloat(redisVal) || 0);
               }
               if (isHydrated === "true") {
                 // Sorteo ya fue hidratado en Redis: si este scope no tiene acumulado registrado, sus ventas son 0.
@@ -257,7 +257,8 @@ export async function calculateDynamicLimit(
       }
     }
 
-    const percentageAmount = (sorteoSales * rule.salesPercentage!) / 100;
+    const safeSales = Math.max(0, sorteoSales || 0);
+    const percentageAmount = (safeSales * rule.salesPercentage!) / 100;
 
     // Fórmula de negocio: El porcentaje de ventas SUMA sobre la base establecida
     // Ejemplo: base=2000, 3% de 50000=1500 → límite = 2000 + 1500 = 3500
@@ -1354,6 +1355,17 @@ export const TicketRepository = {
                   pipeline.hincrbyfloat(multKey, num, -amount);
                   keysToExpire.add(multKey);
                 }
+              }
+            }
+
+            // 3. Restar de la clave de ventas totales del sorteo por alcance (Fast-Path para límites dinámicos)
+            const ticketTotal = Number(ticket.totalAmount || 0);
+            if (ticketTotal > 0) {
+              for (const sc of scopes) {
+                if (!sc.id) continue;
+                const totalSalesKey = `sorteo:${sorteoId}:scope:${sc.id}:total_sales`;
+                pipeline.incrbyfloat(totalSalesKey, -ticketTotal);
+                keysToExpire.add(totalSalesKey);
               }
             }
 
