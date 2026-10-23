@@ -6,15 +6,20 @@ import { RedisOpsService, RedisKeyItem, RedisKeyCategory } from '../../domain/ca
  * redis-keys-cli.ts
  *
  * MÓDULO INTERACTIVO DE OPERACIONES Y LIMPIEZA DE CLAVES EN REDIS
- * Flujo:
- * 1. Selección de Banca (o Global).
- * 2. Selección de Vendedor perteneciente a la Banca.
- * 3. Inspección, filtrado y eliminación segura de claves (individual o total).
+ *
+ * Niveles jerárquicos:
+ * 1. Banca (Claves globales de la banca: sorteos, reglas, cortes, tags, resúmenes)
+ * 2. Listero (Claves a nivel listero / ventana: sorteos scope, reglas, tags)
+ * 3. Vendedor (Claves individuales: sesión, crédito, resumen, comisiones, tags)
  *
  * Compatible con:
  * - Entornos locales (llamadas directas vía RedisOpsService)
  * - Render Shell bajo restricción de 100MB RAM (vía endpoints livianos de OpsController)
  */
+
+// ============================================================================
+// API / SERVICE FETCHERS
+// ============================================================================
 
 async function fetchBancas(): Promise<Array<{ id: string; name: string }>> {
   if (IS_RENDER) {
@@ -24,12 +29,72 @@ async function fetchBancas(): Promise<Array<{ id: string; name: string }>> {
   return await RedisOpsService.listBancas();
 }
 
-async function fetchVendorsApi(query?: string, bancaId?: string | null): Promise<any[]> {
+async function fetchVentanas(bancaId?: string | null): Promise<Array<{ id: string; name: string; bancaId: string; bancaName: string }>> {
   if (IS_RENDER) {
-    const res = await callOpsApi('/redis/vendors', { query, bancaId });
+    const res = await callOpsApi('/redis/ventanas', { bancaId });
+    return res.ventanas || [];
+  }
+  return await RedisOpsService.listVentanas(bancaId);
+}
+
+async function fetchVendorsApi(query?: string, bancaId?: string | null, ventanaId?: string | null): Promise<any[]> {
+  if (IS_RENDER) {
+    const res = await callOpsApi('/redis/vendors', { query, bancaId, ventanaId });
     return res.vendors || [];
   }
-  return await RedisOpsService.listVendors(query, bancaId);
+  return await RedisOpsService.listVendors(query, bancaId, ventanaId);
+}
+
+async function fetchBancaKeysApi(bancaId: string): Promise<{
+  banca: { id: string; name: string };
+  totalKeys: number;
+  keys: RedisKeyItem[];
+}> {
+  if (IS_RENDER) {
+    const res = await callOpsApi('/redis/banca/keys', { bancaId });
+    return res;
+  }
+  return await RedisOpsService.listBancaKeys(bancaId);
+}
+
+async function deleteBancaKeysApi(params: { keys?: string[]; bancaId: string; deleteAll?: boolean }): Promise<{
+  deletedCount: number;
+  deletedKeys: string[];
+}> {
+  if (IS_RENDER) {
+    const res = await callOpsApi('/redis/banca/delete', params);
+    return res;
+  }
+  if (params.deleteAll) {
+    return await RedisOpsService.deleteAllBancaKeys(params.bancaId);
+  }
+  return await RedisOpsService.deleteKeys(params.keys || [], { bancaId: params.bancaId });
+}
+
+async function fetchVentanaKeysApi(ventanaId: string): Promise<{
+  ventana: { id: string; name: string; bancaId: string; bancaName: string };
+  totalKeys: number;
+  keys: RedisKeyItem[];
+}> {
+  if (IS_RENDER) {
+    const res = await callOpsApi('/redis/ventana/keys', { ventanaId });
+    return res;
+  }
+  return await RedisOpsService.listVentanaKeys(ventanaId);
+}
+
+async function deleteVentanaKeysApi(params: { keys?: string[]; ventanaId: string; deleteAll?: boolean }): Promise<{
+  deletedCount: number;
+  deletedKeys: string[];
+}> {
+  if (IS_RENDER) {
+    const res = await callOpsApi('/redis/ventana/delete', params);
+    return res;
+  }
+  if (params.deleteAll) {
+    return await RedisOpsService.deleteAllVentanaKeys(params.ventanaId);
+  }
+  return await RedisOpsService.deleteKeys(params.keys || [], { ventanaId: params.ventanaId });
 }
 
 async function fetchVendorKeysApi(vendedorId: string): Promise<{
@@ -55,8 +120,12 @@ async function deleteVendorKeysApi(params: { keys?: string[]; vendedorId: string
   if (params.deleteAll) {
     return await RedisOpsService.deleteAllVendorKeys(params.vendedorId);
   }
-  return await RedisOpsService.deleteKeys(params.keys || [], params.vendedorId);
+  return await RedisOpsService.deleteKeys(params.keys || [], { vendedorId: params.vendedorId });
 }
+
+// ============================================================================
+// FORMATTERS
+// ============================================================================
 
 function formatCategoryBadge(category: RedisKeyCategory): string {
   switch (category) {
@@ -92,6 +161,10 @@ function formatTtl(ttl: number): string {
   if (ttl < 3600) return `${colors.cyan}${Math.round(ttl / 60)}m${colors.reset}`;
   return `${colors.green}${Number((ttl / 3600).toFixed(1))}h${colors.reset}`;
 }
+
+// ============================================================================
+// WIZARD PRINCIPAL
+// ============================================================================
 
 export async function runRedisKeysWizard() {
   while (true) {
@@ -136,28 +209,281 @@ export async function runRedisKeysWizard() {
       targetBancaName = bancas[idx - 1].name;
     }
 
-    // PASO 2: Seleccionar Vendedor dentro de la Banca
-    await vendorSelectionLoop(targetBancaId, targetBancaName);
+    // PASO 2: Seleccionar Nivel Operativo (Banca / Listero / Vendedor)
+    await levelSelectionLoop(targetBancaId, targetBancaName);
   }
 }
 
-async function vendorSelectionLoop(bancaId: string | null, bancaName: string) {
+// ============================================================================
+// PASO 2: SELECCIÓN DE NIVEL (BANCA / LISTERO / VENDEDOR)
+// ============================================================================
+
+async function levelSelectionLoop(bancaId: string | null, bancaName: string) {
+  while (true) {
+    clearScreen();
+    console.log(`======================================================================`);
+    console.log(`🎯  ${colors.bold}PASO 2: SELECCIONE EL NIVEL A OPERAR${colors.reset}`);
+    console.log(`🏛️   Banca: ${colors.bold}${colors.brightCyan}${bancaName}${colors.reset}`);
+    console.log(`======================================================================`);
+    console.log(`\n¿A qué nivel desea inspeccionar y gestionar las claves de Redis?\n`);
+
+    if (bancaId) {
+      console.log(`  [1] 🏛️   ${colors.bold}Claves de esta BANCA completa${colors.reset}`);
+      console.log(`           ${colors.dim}Topes globales de banca, cortes, acumulados y multiplicadores${colors.reset}\n`);
+
+      console.log(`  [2] 📋  ${colors.bold}Claves de un LISTERO${colors.reset}`);
+      console.log(`           ${colors.dim}Topes por listero, comisiones, tags y acumulados de su red${colors.reset}\n`);
+
+      console.log(`  [3] 👤  ${colors.bold}Claves de un VENDEDOR${colors.reset}`);
+      console.log(`           ${colors.dim}Sesión activa, saldo de crédito, caja, resumen y comisiones${colors.reset}\n`);
+    } else {
+      console.log(`  [1] 📋  ${colors.bold}Claves de un LISTERO (Búsqueda en todas las bancas)${colors.reset}\n`);
+      console.log(`  [2] 👤  ${colors.bold}Claves de un VENDEDOR (Búsqueda en todas las bancas)${colors.reset}\n`);
+    }
+
+    console.log(`  [B] ⬅️   Volver a selección de banca`);
+
+    const opt = await ask(`\nOpción: `);
+    if (isBack(opt)) return;
+
+    if (bancaId) {
+      if (opt === '1') {
+        // Nivel 1: Banca completa
+        await bancaKeysLoop(bancaId, bancaName);
+      } else if (opt === '2') {
+        // Nivel 2: Listero
+        await listeroSelectionLoop(bancaId, bancaName);
+      } else if (opt === '3') {
+        // Nivel 3: Vendedor
+        await vendorPreFilterLoop(bancaId, bancaName);
+      } else {
+        console.log(`❌  Opción no válida.`);
+        await ask(`Presione ENTER para continuar...`);
+      }
+    } else {
+      if (opt === '1') {
+        await listeroSelectionLoop(null, 'TODAS LAS BANCAS');
+      } else if (opt === '2') {
+        await vendorPreFilterLoop(null, 'TODAS LAS BANCAS');
+      } else {
+        console.log(`❌  Opción no válida.`);
+        await ask(`Presione ENTER para continuar...`);
+      }
+    }
+  }
+}
+
+// ============================================================================
+// SELECCIÓN Y GESTIÓN A NIVEL BANCA
+// ============================================================================
+
+async function bancaKeysLoop(bancaId: string, bancaName: string) {
+  await keysManagerLoop({
+    entityType: 'BANCA',
+    id: bancaId,
+    title: `Banca: ${bancaName}`,
+    subtitle: `ID: ${bancaId}`,
+    fetchKeys: async () => {
+      const data = await fetchBancaKeysApi(bancaId);
+      return { totalKeys: data.totalKeys, keys: data.keys };
+    },
+    deleteKeys: async ({ keys, deleteAll }) => {
+      return await deleteBancaKeysApi({
+        bancaId,
+        keys,
+        deleteAll,
+      });
+    },
+  });
+}
+
+// ============================================================================
+// SELECCIÓN Y GESTIÓN A NIVEL LISTERO
+// ============================================================================
+
+async function listeroSelectionLoop(bancaId: string | null, bancaName: string) {
   let searchFilter = '';
 
   while (true) {
     clearScreen();
     console.log(`======================================================================`);
-    console.log(`👤  ${colors.bold}PASO 2: SELECCIONE EL VENDEDOR${colors.reset}`);
+    console.log(`📋  ${colors.bold}SELECCIONE EL LISTERO${colors.reset}`);
     console.log(`🏛️   Banca: ${colors.bold}${colors.brightCyan}${bancaName}${colors.reset}`);
     if (searchFilter) {
       console.log(`🔍  Filtro activo: "${colors.brightYellow}${searchFilter}${colors.reset}"`);
     }
     console.log(`======================================================================`);
 
-    console.log(`⏳  Buscando vendedores (Role: VENDEDOR)...`);
+    console.log(`⏳  Cargando listeros...`);
+    let listeros: any[] = [];
+    try {
+      listeros = await fetchVentanas(bancaId);
+    } catch (err: any) {
+      console.log(`❌  Error al obtener listeros: ${err.message}`);
+      await ask(`\nPresione ENTER para volver...`);
+      return;
+    }
+
+    if (searchFilter) {
+      const q = searchFilter.toLowerCase();
+      listeros = listeros.filter((l) => l.name.toLowerCase().includes(q) || (l.bancaName && l.bancaName.toLowerCase().includes(q)));
+    }
+
+    if (listeros.length === 0) {
+      console.log(`\n⚠️   ${colors.yellow}No se encontraron listeros${searchFilter ? ` con el filtro "${searchFilter}"` : ''}.${colors.reset}`);
+      console.log(`  [F] 🔍  Cambiar filtro de búsqueda`);
+      console.log(`  [B] ⬅️   Volver`);
+      const emptyOpt = await ask(`\nOpción: `);
+      if (isBack(emptyOpt)) return;
+      if (emptyOpt.toLowerCase() === 'f') {
+        searchFilter = await ask(`Ingrese texto para filtrar listeros: `);
+      }
+      continue;
+    }
+
+    console.log(`\n${colors.bold}Listeros disponibles (${listeros.length}):${colors.reset}`);
+    listeros.forEach((l, idx) => {
+      const bancaStr = !bancaId ? `[Banca: ${l.bancaName}]` : '';
+      console.log(`  [${idx + 1}] ${colors.bold}${l.name}${colors.reset} ${colors.dim}${bancaStr} (ID: ${l.id})${colors.reset}`);
+    });
+
+    console.log(`\nAcciones:`);
+    console.log(`  [1-${listeros.length}] 👉  Seleccionar listero`);
+    console.log(`  [F] 🔍  Filtrar por texto`);
+    if (searchFilter) {
+      console.log(`  [X] 🧹  Limpiar filtro de búsqueda`);
+    }
+    console.log(`  [B] ⬅️   Volver`);
+
+    const choice = await ask(`\nOpción: `);
+    if (isBack(choice)) return;
+
+    if (choice.toLowerCase() === 'f') {
+      searchFilter = await ask(`Ingrese texto para filtrar: `);
+      continue;
+    }
+
+    if (choice.toLowerCase() === 'x') {
+      searchFilter = '';
+      continue;
+    }
+
+    const idx = parseInt(choice, 10);
+    if (!isNaN(idx) && idx >= 1 && idx <= listeros.length) {
+      const selectedListero = listeros[idx - 1];
+      await keysManagerLoop({
+        entityType: 'LISTERO',
+        id: selectedListero.id,
+        title: `Listero: ${selectedListero.name}`,
+        subtitle: `Banca: ${selectedListero.bancaName} | ID: ${selectedListero.id}`,
+        fetchKeys: async () => {
+          const data = await fetchVentanaKeysApi(selectedListero.id);
+          return { totalKeys: data.totalKeys, keys: data.keys };
+        },
+        deleteKeys: async ({ keys, deleteAll }) => {
+          return await deleteVentanaKeysApi({
+            ventanaId: selectedListero.id,
+            keys,
+            deleteAll,
+          });
+        },
+      });
+    } else {
+      console.log(`❌  Opción no válida.`);
+      await ask(`Presione ENTER para continuar...`);
+    }
+  }
+}
+
+// ============================================================================
+// SELECCIÓN Y GESTIÓN A NIVEL VENDEDOR
+// ============================================================================
+
+async function vendorPreFilterLoop(bancaId: string | null, bancaName: string) {
+  while (true) {
+    clearScreen();
+    console.log(`======================================================================`);
+    console.log(`👤  ${colors.bold}GESTIÓN DE CLAVES DE VENDEDOR${colors.reset}`);
+    console.log(`🏛️   Banca: ${colors.bold}${colors.brightCyan}${bancaName}${colors.reset}`);
+    console.log(`======================================================================`);
+    console.log(`\n¿Cómo desea buscar al vendedor?\n`);
+    console.log(`  [1] 👥  Listar/Buscar entre todos los vendedores de la banca`);
+    console.log(`  [2] 📋  Filtrar primero por un LISTERO específico`);
+    console.log(`  [B] ⬅️   Volver`);
+
+    const opt = await ask(`\nOpción: `);
+    if (isBack(opt)) return;
+
+    if (opt === '1') {
+      await vendorSelectionLoop(bancaId, bancaName, null, null);
+    } else if (opt === '2') {
+      // Primero seleccionar listero
+      console.log(`\n⏳  Cargando listeros...`);
+      let listeros: any[] = [];
+      try {
+        listeros = await fetchVentanas(bancaId);
+      } catch (err: any) {
+        console.log(`❌  Error: ${err.message}`);
+        await ask(`Presione ENTER para continuar...`);
+        continue;
+      }
+
+      if (listeros.length === 0) {
+        console.log(`⚠️   No se encontraron listeros.`);
+        await ask(`Presione ENTER para continuar...`);
+        continue;
+      }
+
+      console.log(`\n${colors.bold}Seleccione el Listero:${colors.reset}`);
+      listeros.forEach((l, idx) => {
+        const bancaStr = !bancaId ? `[Banca: ${l.bancaName}]` : '';
+        console.log(`  [${idx + 1}] ${colors.bold}${l.name}${colors.reset} ${colors.dim}${bancaStr}${colors.reset}`);
+      });
+      console.log(`  [B] Cancelar`);
+
+      const lChoice = await ask(`\nOpción (1-${listeros.length}): `);
+      if (isBack(lChoice)) continue;
+
+      const lIdx = parseInt(lChoice, 10);
+      if (!isNaN(lIdx) && lIdx >= 1 && lIdx <= lIdx && lIdx <= listeros.length) {
+        const listero = listeros[lIdx - 1];
+        await vendorSelectionLoop(bancaId, bancaName, listero.id, listero.name);
+      } else {
+        console.log(`❌  Opción no válida.`);
+        await ask(`Presione ENTER para continuar...`);
+      }
+    } else {
+      console.log(`❌  Opción no válida.`);
+      await ask(`Presione ENTER para continuar...`);
+    }
+  }
+}
+
+async function vendorSelectionLoop(
+  bancaId: string | null,
+  bancaName: string,
+  ventanaId: string | null,
+  ventanaName: string | null
+) {
+  let searchFilter = '';
+
+  while (true) {
+    clearScreen();
+    console.log(`======================================================================`);
+    console.log(`👤  ${colors.bold}SELECCIONE EL VENDEDOR${colors.reset}`);
+    console.log(`🏛️   Banca: ${colors.bold}${colors.brightCyan}${bancaName}${colors.reset}`);
+    if (ventanaName) {
+      console.log(`📋  Listero: ${colors.bold}${colors.brightGreen}${ventanaName}${colors.reset}`);
+    }
+    if (searchFilter) {
+      console.log(`🔍  Filtro activo: "${colors.brightYellow}${searchFilter}${colors.reset}"`);
+    }
+    console.log(`======================================================================`);
+
+    console.log(`⏳  Buscando vendedores...`);
     let vendors: any[] = [];
     try {
-      vendors = await fetchVendorsApi(searchFilter, bancaId);
+      vendors = await fetchVendorsApi(searchFilter, bancaId, ventanaId);
     } catch (err: any) {
       console.log(`❌  Error al buscar vendedores: ${err.message}`);
       await ask(`\nPresione ENTER para volver...`);
@@ -165,9 +491,9 @@ async function vendorSelectionLoop(bancaId: string | null, bancaName: string) {
     }
 
     if (vendors.length === 0) {
-      console.log(`\n⚠️   ${colors.yellow}No se encontraron vendedores${searchFilter ? ` con el filtro "${searchFilter}"` : ''} en esta banca.${colors.reset}`);
+      console.log(`\n⚠️   ${colors.yellow}No se encontraron vendedores${searchFilter ? ` con el filtro "${searchFilter}"` : ''}.${colors.reset}`);
       console.log(`  [F] 🔍  Cambiar filtro de búsqueda`);
-      console.log(`  [B] ⬅️   Volver a selección de banca`);
+      console.log(`  [B] ⬅️   Volver`);
       const opt = await ask(`\nOpción: `);
       if (isBack(opt)) return;
       if (opt.toLowerCase() === 'f') {
@@ -179,9 +505,9 @@ async function vendorSelectionLoop(bancaId: string | null, bancaName: string) {
     console.log(`\n${colors.bold}Vendedores encontrados (${vendors.length}):${colors.reset}`);
     vendors.forEach((v, idx) => {
       const codeStr = v.code ? `[Cód: ${v.code}]` : '';
-      const ventanaStr = v.ventanaName ? `| Ventana: ${v.ventanaName}` : '';
+      const listeroStr = v.ventanaName ? `| Listero: ${v.ventanaName}` : '';
       const bancaStr = !bancaId ? `| Banca: ${v.bancaName}` : '';
-      console.log(`  [${idx + 1}] ${colors.bold}${v.name}${colors.reset} (@${colors.brightCyan}${v.username}${colors.reset}) ${colors.dim}${codeStr} ${ventanaStr} ${bancaStr}${colors.reset}`);
+      console.log(`  [${idx + 1}] ${colors.bold}${v.name}${colors.reset} (@${colors.brightCyan}${v.username}${colors.reset}) ${colors.dim}${codeStr} ${listeroStr} ${bancaStr}${colors.reset}`);
     });
 
     console.log(`\nAcciones:`);
@@ -190,7 +516,7 @@ async function vendorSelectionLoop(bancaId: string | null, bancaName: string) {
     if (searchFilter) {
       console.log(`  [X] 🧹  Limpiar filtro de búsqueda`);
     }
-    console.log(`  [B] ⬅️   Volver a selección de banca`);
+    console.log(`  [B] ⬅️   Volver`);
 
     const choice = await ask(`\nOpción: `);
     if (isBack(choice)) return;
@@ -208,7 +534,23 @@ async function vendorSelectionLoop(bancaId: string | null, bancaName: string) {
     const idx = parseInt(choice, 10);
     if (!isNaN(idx) && idx >= 1 && idx <= vendors.length) {
       const selectedVendor = vendors[idx - 1];
-      await vendorKeysLoop(selectedVendor);
+      await keysManagerLoop({
+        entityType: 'VENDEDOR',
+        id: selectedVendor.id,
+        title: `Vendedor: ${selectedVendor.name} (@${selectedVendor.username})`,
+        subtitle: `Banca: ${selectedVendor.bancaName} | Listero: ${selectedVendor.ventanaName} | ID: ${selectedVendor.id}`,
+        fetchKeys: async () => {
+          const data = await fetchVendorKeysApi(selectedVendor.id);
+          return { totalKeys: data.totalKeys, keys: data.keys };
+        },
+        deleteKeys: async ({ keys, deleteAll }) => {
+          return await deleteVendorKeysApi({
+            vendedorId: selectedVendor.id,
+            keys,
+            deleteAll,
+          });
+        },
+      });
     } else {
       console.log(`❌  Opción no válida.`);
       await ask(`Presione ENTER para continuar...`);
@@ -216,24 +558,37 @@ async function vendorSelectionLoop(bancaId: string | null, bancaName: string) {
   }
 }
 
-async function vendorKeysLoop(vendorSummary: any) {
+// ============================================================================
+// GESTOR REUTILIZABLE DE CLAVES (TABLA, CATEGORÍAS, BORRADO INDIVIDUAL Y TOTAL)
+// ============================================================================
+
+interface KeysManagerContext {
+  entityType: 'BANCA' | 'LISTERO' | 'VENDEDOR';
+  id: string;
+  title: string;
+  subtitle: string;
+  fetchKeys: () => Promise<{ totalKeys: number; keys: RedisKeyItem[] }>;
+  deleteKeys: (params: { keys?: string[]; deleteAll?: boolean }) => Promise<{ deletedCount: number; deletedKeys: string[] }>;
+}
+
+async function keysManagerLoop(ctx: KeysManagerContext) {
   let categoryFilter: RedisKeyCategory | 'ALL' = 'ALL';
 
   while (true) {
     clearScreen();
     console.log(`======================================================================`);
-    console.log(`🔑  ${colors.bold}PASO 3: CLAVES DE REDIS DEL VENDEDOR${colors.reset}`);
-    console.log(`👤  Vendedor: ${colors.bold}${colors.brightCyan}${vendorSummary.name}${colors.reset} (@${vendorSummary.username})`);
-    console.log(`🏛️   Banca: ${vendorSummary.bancaName} | Ventana: ${vendorSummary.ventanaName} | ID: ${colors.dim}${vendorSummary.id}${colors.reset}`);
+    console.log(`🔑  ${colors.bold}GESTIÓN DE CLAVES EN REDIS - NIVEL ${ctx.entityType}${colors.reset}`);
+    console.log(`📌  ${colors.bold}${colors.brightCyan}${ctx.title}${colors.reset}`);
+    console.log(`🏛️   ${colors.dim}${ctx.subtitle}${colors.reset}`);
     if (categoryFilter !== 'ALL') {
       console.log(`🏷️   Filtro por Categoría: ${colors.brightYellow}${categoryFilter}${colors.reset}`);
     }
     console.log(`======================================================================`);
 
-    console.log(`⏳  Escaneando Redis para este vendedor...`);
-    let data: { vendor: any; totalKeys: number; keys: RedisKeyItem[] };
+    console.log(`⏳  Escaneando Redis para este ${ctx.entityType.toLowerCase()}...`);
+    let data: { totalKeys: number; keys: RedisKeyItem[] };
     try {
-      data = await fetchVendorKeysApi(vendorSummary.id);
+      data = await ctx.fetchKeys();
     } catch (err: any) {
       console.log(`❌  Error al obtener claves de Redis: ${err.message}`);
       await ask(`\nPresione ENTER para volver...`);
@@ -254,7 +609,7 @@ async function vendorKeysLoop(vendorSummary: any) {
         console.log(`  [X] 🧹  Mostrar todas las categorías`);
       }
       console.log(`  [R] 🔄  Re-escanear Redis`);
-      console.log(`  [B] ⬅️   Volver a selección de vendedores`);
+      console.log(`  [B] ⬅️   Volver`);
 
       const emptyChoice = await ask(`\nOpción: `);
       if (isBack(emptyChoice)) return;
@@ -286,7 +641,7 @@ async function vendorKeysLoop(vendorSummary: any) {
       console.log(`  [X] 🧹  Quitar filtro de categoría (Ver todas)`);
     }
     console.log(`  [R] 🔄  Re-escanear Redis`);
-    console.log(`  [B] ⬅️   Volver a selección de vendedores`);
+    console.log(`  [B] ⬅️   Volver`);
 
     const action = await ask(`\nOpción: `);
     if (isBack(action)) return;
@@ -301,7 +656,6 @@ async function vendorKeysLoop(vendorSummary: any) {
     }
 
     if (action.toLowerCase() === 'c') {
-      // Menú de selección de categorías
       const categories: RedisKeyCategory[] = [
         'SESION',
         'CREDITO',
@@ -337,11 +691,10 @@ async function vendorKeysLoop(vendorSummary: any) {
     }
 
     if (action.toUpperCase() === 'A') {
-      // Eliminar todas las claves mostradas
       const keysToDelete = displayedKeys.map((k) => k.key);
       console.log(`\n⚠️   ${colors.bgRed}${colors.bold} ADVERTENCIA DE ELIMINACIÓN MASIVA ${colors.reset}`);
-      console.log(`Se eliminarán ${colors.bold}${colors.brightRed}${keysToDelete.length} claves${colors.reset} de Redis para ${colors.bold}${vendorSummary.name}${colors.reset}.`);
-      console.log(`Esto cerrará sesiones activas, invalidará cachés de crédito y recargará datos desde PostgreSQL en la próxima solicitud.`);
+      console.log(`Se eliminarán ${colors.bold}${colors.brightRed}${keysToDelete.length} claves${colors.reset} de Redis para ${colors.bold}${ctx.title}${colors.reset}.`);
+      console.log(`Esto invalidará los cachés de nivel ${ctx.entityType} en Redis y RAM local, recargando datos frescos de PostgreSQL.`);
 
       const confirm = await ask(`\n¿Está absolutamente seguro de proceder? Escriba "${colors.bold}ELIMINAR${colors.reset}" para confirmar: `);
       if (confirm !== 'ELIMINAR') {
@@ -353,8 +706,7 @@ async function vendorKeysLoop(vendorSummary: any) {
       console.log(`\n⏳  Eliminando ${keysToDelete.length} claves en Redis...`);
       try {
         const isPurgeAll = categoryFilter === 'ALL' && displayedKeys.length === data.totalKeys;
-        const res = await deleteVendorKeysApi({
-          vendedorId: vendorSummary.id,
+        const res = await ctx.deleteKeys({
           keys: isPurgeAll ? undefined : keysToDelete,
           deleteAll: isPurgeAll,
         });
@@ -380,8 +732,7 @@ async function vendorKeysLoop(vendorSummary: any) {
       if (confirm.toLowerCase() === 'si' || confirm.toLowerCase() === 's') {
         console.log(`\n⏳  Eliminando clave "${targetItem.key}"...`);
         try {
-          const res = await deleteVendorKeysApi({
-            vendedorId: vendorSummary.id,
+          const res = await ctx.deleteKeys({
             keys: [targetItem.key],
           });
           console.log(`✅  ${colors.brightGreen}Clave eliminada con éxito.${colors.reset} (Unlinked: ${res.deletedCount})`);

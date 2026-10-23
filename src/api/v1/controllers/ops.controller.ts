@@ -598,15 +598,110 @@ export class OpsController {
   }
 
   /**
-   * Lista vendedores para el módulo de Redis (por banca o query)
+   * Lista listeros (ventanas) para el módulo de Redis
+   */
+  static async listRedisVentanas(req: Request, res: Response): Promise<void> {
+    try {
+      const { bancaId } = req.body;
+      const ventanas = await RedisOpsService.listVentanas(bancaId);
+      res.json({ success: true, ventanas });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista vendedores para el módulo de Redis (por banca, listero o query)
    */
   static async listRedisVendors(req: Request, res: Response): Promise<void> {
     try {
-      const { query, bancaId } = req.body;
-      const vendors = await RedisOpsService.listVendors(query, bancaId);
+      const { query, bancaId, ventanaId } = req.body;
+      const vendors = await RedisOpsService.listVendors(query, bancaId, ventanaId);
       res.json({ success: true, vendors });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista las claves de Redis asociadas a una Banca
+   */
+  static async listBancaRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { bancaId } = req.body;
+      if (!bancaId) {
+        res.status(400).json({ success: false, error: 'bancaId es requerido' });
+        return;
+      }
+      const data = await RedisOpsService.listBancaKeys(bancaId);
+      res.json({ success: true, ...data });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Elimina claves de Redis asociadas a una Banca
+   */
+  static async deleteBancaRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { keys, bancaId, deleteAll } = req.body;
+      if (!bancaId && (!keys || keys.length === 0)) {
+        res.status(400).json({ success: false, error: 'Parámetros obligatorios incompletos' });
+        return;
+      }
+
+      if (deleteAll && bancaId) {
+        const result = await RedisOpsService.deleteAllBancaKeys(bancaId);
+        res.json({ success: true, ...result });
+        return;
+      }
+
+      const result = await RedisOpsService.deleteKeys(keys || [], { bancaId });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista las claves de Redis asociadas a un Listero (Ventana)
+   */
+  static async listVentanaRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { ventanaId } = req.body;
+      if (!ventanaId) {
+        res.status(400).json({ success: false, error: 'ventanaId es requerido' });
+        return;
+      }
+      const data = await RedisOpsService.listVentanaKeys(ventanaId);
+      res.json({ success: true, ...data });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Elimina claves de Redis asociadas a un Listero (Ventana)
+   */
+  static async deleteVentanaRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { keys, ventanaId, deleteAll } = req.body;
+      if (!ventanaId && (!keys || keys.length === 0)) {
+        res.status(400).json({ success: false, error: 'Parámetros obligatorios incompletos' });
+        return;
+      }
+
+      if (deleteAll && ventanaId) {
+        const result = await RedisOpsService.deleteAllVentanaKeys(ventanaId);
+        res.json({ success: true, ...result });
+        return;
+      }
+
+      const result = await RedisOpsService.deleteKeys(keys || [], { ventanaId });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
     }
   }
 
@@ -644,7 +739,7 @@ export class OpsController {
         return;
       }
 
-      const result = await RedisOpsService.deleteKeys(keys || [], vendedorId);
+      const result = await RedisOpsService.deleteKeys(keys || [], { vendedorId });
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(err.statusCode || 500).json({ success: false, error: err.message });

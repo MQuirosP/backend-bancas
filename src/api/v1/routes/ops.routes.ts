@@ -30,6 +30,11 @@ router.post('/vendor/transfer', OpsController.transferVendor);
 router.post('/vendor/adjust-balance', OpsController.adjustVendorBalance);
 
 // Redis Keys Operations
+router.post('/redis/ventanas', OpsController.listRedisVentanas);
+router.post('/redis/banca/keys', OpsController.listBancaRedisKeys);
+router.post('/redis/banca/delete', OpsController.deleteBancaRedisKeys);
+router.post('/redis/ventana/keys', OpsController.listVentanaRedisKeys);
+router.post('/redis/ventana/delete', OpsController.deleteVentanaRedisKeys);
 router.post('/redis/vendors', OpsController.listRedisVendors);
 router.post('/redis/vendor/keys', OpsController.listVendorRedisKeys);
 router.post('/redis/vendor/delete', OpsController.deleteVendorRedisKeys);
