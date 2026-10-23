@@ -108,6 +108,7 @@ export async function calculateDynamicLimit(
     salesPercentage?: number | null;
     appliesToVendedor?: boolean | null;
     ruleUserId?: string | null;
+    userId?: string | null;
     bancaId?: string | null;   //  NUEVO: Para alcance de banca
     ventanaId?: string | null; //  NUEVO: Para alcance de ventana
   },
@@ -164,13 +165,15 @@ export async function calculateDynamicLimit(
     let scopeId = "";
 
     //  LÓGICA DE ALCANCE JERÁRQUICO DE VENTAS PARA EL CÁLCULO DEL PORCENTAJE
-    //  appliesToVendedor = true: ventas individuales del vendedor
-    //  appliesToVendedor = false / no especificado: ventas globales de la banca (o ventana)
-    if (rule.appliesToVendedor === true) {
+    //  appliesToVendedor = true o regla con userId/ruleUserId: ventas individuales del vendedor
+    //  appliesToVendedor = false / no especificado sin userId: ventas globales de la banca (o ventana)
+    const effectiveTargetUserId = rule.userId || rule.ruleUserId;
+    if (rule.appliesToVendedor === true || !!effectiveTargetUserId) {
       // 1. Vendedor Individual
-      where.vendedorId = context.userId;
-      cacheKey = `USER:${context.userId}`;
-      scopeId = context.userId;
+      const effectiveUserId = effectiveTargetUserId || context.userId;
+      where.vendedorId = effectiveUserId;
+      cacheKey = `USER:${effectiveUserId}`;
+      scopeId = effectiveUserId;
     } else if (rule.ventanaId) {
       // 2. Ventana Específica (Listero)
       where.ventanaId = rule.ventanaId;
