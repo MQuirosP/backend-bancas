@@ -1661,35 +1661,32 @@ export const TicketRepository = {
       const totalNumbers = Math.pow(10, maxDigits);
       const numbers = Array.from({ length: totalNumbers }, (_, i) => String(i).padStart(maxDigits, '0'));
 
-      // 5. Calcular acumulados actuales de forma paralela
-      const [bancaAccumulated, ventanaAccumulated, userAccumulated] = await Promise.all([
-        calculateAccumulatedByNumbersAndScope(prisma as any, {
-          numbers,
-          scopeType: ReportDimension.BANCA,
-          scopeId: effectiveBancaId,
-          sorteoId,
-        }),
-        calculateAccumulatedByNumbersAndScope(prisma as any, {
-          numbers,
-          scopeType: ReportDimension.VENTANA,
-          scopeId: user.ventanaId,
-          sorteoId,
-        }),
-        calculateAccumulatedByNumbersAndScope(prisma as any, {
-          numbers,
-          scopeType: ReportDimension.VENDEDOR,
-          scopeId: vendedorId,
-          sorteoId,
-        }),
-      ]);
-
-      // 6. Pre-calcular límites dinámicos
-      const dynamicLimits = new Map<string, number>();
-
+      // 5. Inicializar cache de ámbitos y pre-cargar acumulados masivos (Banca, Ventana, Vendedor)
+      // OPTIMIZACIÓN: calculateAccumulatedForMultipleScopes usa un único pipeline en Redis L2 (o un solo query agrupado en DB)
       const cache: ScopeCache = {
         salesTotals: new Map<string, number>(),
         numberTotals: new Map<string, Map<string, number>>(),
       };
+
+      const scopes = [
+        { scopeType: ReportDimension.BANCA, scopeId: effectiveBancaId },
+        { scopeType: ReportDimension.VENTANA, scopeId: user.ventanaId },
+        { scopeType: ReportDimension.VENDEDOR, scopeId: vendedorId },
+      ];
+
+      await calculateAccumulatedForMultipleScopes(prisma as any, {
+        numbers,
+        sorteoId,
+        scopes,
+        cache,
+      });
+
+      const bancaAccumulated = cache.numberTotals.get(`${ReportDimension.BANCA}:${effectiveBancaId}:${sorteoId}:NONE`) ?? new Map<string, number>();
+      const ventanaAccumulated = cache.numberTotals.get(`${ReportDimension.VENTANA}:${user.ventanaId}:${sorteoId}:NONE`) ?? new Map<string, number>();
+      const userAccumulated = cache.numberTotals.get(`${ReportDimension.VENDEDOR}:${vendedorId}:${sorteoId}:NONE`) ?? new Map<string, number>();
+
+      // 6. Pre-calcular límites dinámicos
+      const dynamicLimits = new Map<string, number>();
 
       // Pre-poblar cache.salesTotals desde Redis para que calculateDynamicLimit
       // use la misma fuente en memoria que los acumulados por número, eliminando race condition.
@@ -1749,7 +1746,20 @@ export const TicketRepository = {
         }
       }
 
-      // 7. Evaluar reglas por número
+      // 7. Pre-calcular O(1) los números permitidos por cada regla con filtro de número
+      // OPTIMIZACIÓN CRÍTICA: Resuelve los números UNA SOLA VEZ fuera del bucle de 100 números,
+      // eliminando miles de llamadas a timezone/regex/logger y allocations de memoria en el Event Loop.
+      const ruleNumbersMap = new Map<string, Set<string>>();
+      for (const rule of applicableRules) {
+        if (rule.number) {
+          const ruleNumbers = resolveNumbersToValidate(rule, now);
+          if (ruleNumbers.length > 0) {
+            ruleNumbersMap.set(rule.id, new Set(ruleNumbers));
+          }
+        }
+      }
+
+      // 8. Evaluar reglas por número (O(1) Set lookups, cero asignaciones de memoria)
       const balances: Record<string, { remaining: number; limit: number; accumulated: number }> = {};
       for (const num of numbers) {
         let minRemaining = Infinity;
@@ -1759,8 +1769,8 @@ export const TicketRepository = {
 
         for (const rule of applicableRules) {
           if (rule.number) {
-            const ruleNumbers = resolveNumbersToValidate(rule, now);
-            if (ruleNumbers.length > 0 && !ruleNumbers.includes(num)) continue;
+            const ruleNumbers = ruleNumbersMap.get(rule.id);
+            if (ruleNumbers && !ruleNumbers.has(num)) continue;
           }
 
           const scopeType = (rule.appliesToVendedor || rule.userId) ? ReportDimension.VENDEDOR : rule.ventanaId ? ReportDimension.VENTANA : ReportDimension.BANCA;
