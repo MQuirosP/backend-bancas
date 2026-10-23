@@ -8,7 +8,7 @@ import { config } from "../../../config";
 import { RestrictionRuleRepository } from "../../../repositories/restrictionRule.repository";
 import { TicketRiskValidator } from "../pipeline/TicketRiskValidator";
 import { TicketPrefetchService } from "../pipeline/TicketPrefetchService";
-import { resolveBaseMultiplierX } from "../../../repositories/ticket.repository";
+import TicketRepository, { resolveBaseMultiplierX } from "../../../repositories/ticket.repository";
 import { TicketTimingCollector } from "../pipeline/ticket.types";
 import { commissionService } from "../../../domain/commission/CommissionService";
 import { nowCR, validateDate, normalizeDateCR } from "../../../utils/datetime";
@@ -16,6 +16,7 @@ import { CacheService } from "../../../core/cache.service";
 import { TicketValidationService } from "../TicketValidationService";
 import { TicketPrintService } from "../TicketPrintService";
 import { TicketPersistenceService } from "../TicketPersistenceService";
+import { RestrictionRuleService } from "../../restriction/restrictionRule.service";
 
 const CUTOFF_GRACE_MS = 1000;
 const L1_TTL_ENTITY_MS = 300_000;
@@ -620,6 +621,30 @@ export class TicketCreationService {
 
       if (creditInfo) {
         (response as any).creditInfo = creditInfo;
+      }
+
+      // 5.1 Piggyback sorteoBalances: pre-calcula los balances en memoria con el acumulado recién incrementado
+      // para que el cliente no tenga que disparar un GET /validation/balances redundante.
+      try {
+        RestrictionRuleService.invalidateVendorBalancesL1Cache(effectiveVendedorId, ticket.sorteoId);
+        const sorteoBalances = await TicketRepository.getSorteoBalances({
+          sorteoId: ticket.sorteoId,
+          vendedorId: effectiveVendedorId,
+          bancaId: resolvedVentanaWithBanca.bancaId,
+          actorRole,
+          bypassL1Cache: true,
+        });
+        if (sorteoBalances) {
+          (response as any).sorteoBalances = sorteoBalances;
+        }
+      } catch (err: any) {
+        logger.warn({
+          layer: "service",
+          action: "PIGGYBACK_SORTEO_BALANCES_ERROR",
+          userId,
+          requestId,
+          payload: { ticketId: ticket.id, error: err?.message },
+        });
       }
 
       // 6. Instrumentación y desglose de tiempos

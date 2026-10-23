@@ -163,28 +163,25 @@ export async function calculateDynamicLimit(
     let cacheKey = "";
     let scopeId = "";
 
-    //  LÓGICA DE ALCANCE JERÁRQUICO
-    //  Prioriza el alcance más específico definido en la regla
-    if (rule.ruleUserId || rule.appliesToVendedor) {
-      // 1. Vendedor Individual (Personal o Automático/Masivo)
+    //  LÓGICA DE ALCANCE JERÁRQUICO DE VENTAS PARA EL CÁLCULO DEL PORCENTAJE
+    //  appliesToVendedor = true: ventas individuales del vendedor
+    //  appliesToVendedor = false / no especificado: ventas globales de la banca (o ventana)
+    if (rule.appliesToVendedor === true) {
+      // 1. Vendedor Individual
       where.vendedorId = context.userId;
       cacheKey = `USER:${context.userId}`;
       scopeId = context.userId;
     } else if (rule.ventanaId) {
-      // 2. Ventana Específica
+      // 2. Ventana Específica (Listero)
       where.ventanaId = rule.ventanaId;
       cacheKey = `VENTANA:${rule.ventanaId}`;
       scopeId = rule.ventanaId;
-    } else if (rule.bancaId) {
-      // 3. Banca Completa (Filtra todas las ventanas de la banca)
-      where.ventana = { bancaId: rule.bancaId };
-      cacheKey = `BANCA:${rule.bancaId}`;
-      scopeId = rule.bancaId;
     } else {
-      // Fallback: Ventana actual (Seguridad para reglas globales sin scope explícito en registro)
-      where.ventanaId = context.ventanaId;
-      cacheKey = `VENTANA:${context.ventanaId}`;
-      scopeId = context.ventanaId;
+      // 3. Banca Completa / Global
+      const bancaId = rule.bancaId || context.bancaId;
+      where.ventana = { bancaId };
+      cacheKey = `BANCA:${bancaId}`;
+      scopeId = bancaId;
     }
 
     // 2. Intentar obtener de caché L1 en memoria (ScopeCache)
@@ -262,15 +259,9 @@ export async function calculateDynamicLimit(
 
     const percentageAmount = (sorteoSales * rule.salesPercentage!) / 100;
 
-    // base actúa como piso garantizado: aunque el % sea menor, siempre se puede vender hasta la base
-    // Cuando el % supera la base, el % es el límite total
-    // Ejemplo: base=2500, 3% de 93950=2818.50 → límite=max(2500,2818.50)=2818.50 → disponible=2818.50-1300=1518.50
-    // Ejemplo: base=2500, 3% de 10000=300 → límite=max(2500,300)=2500 → disponible=2500
-    dynamicLimit = baseAmt > 0
-      ? Math.max(baseAmt, percentageAmount)
-      : percentageAmount;
-
-    const gano = percentageAmount >= baseAmt ? 'porcentaje' : 'base';
+    // Fórmula de negocio: El porcentaje de ventas SUMA sobre la base establecida
+    // Ejemplo: base=2000, 3% de 50000=1500 → límite = 2000 + 1500 = 3500
+    dynamicLimit = baseAmt + percentageAmount;
 
     logger.debug({
       layer: 'repository',
@@ -280,8 +271,8 @@ export async function calculateDynamicLimit(
         sorteoId: context.sorteoId,
         base: `₡${baseAmt.toLocaleString()}`,
         ventas: `₡${sorteoSales.toLocaleString()}`,
-        calculo: `${rule.salesPercentage}% × ${sorteoSales.toLocaleString()} = ₡${percentageAmount.toFixed(2)}`,
-        limite: `₡${dynamicLimit.toFixed(2)} (ganó ${gano})`,
+        calculo: `Base ₡${baseAmt.toLocaleString()} + (${rule.salesPercentage}% × ₡${sorteoSales.toLocaleString()}) = ₡${dynamicLimit.toFixed(2)}`,
+        limite: `₡${dynamicLimit.toFixed(2)}`,
       },
     });
   } else if (baseAmt > 0) {
@@ -1557,26 +1548,52 @@ export const TicketRepository = {
   /**
    * Obtiene los saldos disponibles para todos los números (00-99 o 000-999) de un sorteo específico.
    * Evalúa todas las reglas de restricción (MaxTotal) y límites dinámicos aplicables.
+  /**
+   * Invalida selectivamente la micro-caché L1 en RAM de balances de sorteo
+   */
+  invalidateSorteoBalancesL1Cache(sorteoId: string, vendedorId?: string): void {
+    if (vendedorId) {
+      for (const key of sorteoBalancesL1Cache.keys()) {
+        if (key.startsWith(`${sorteoId}:${vendedorId}:`)) {
+          sorteoBalancesL1Cache.delete(key);
+        }
+      }
+    } else {
+      for (const key of sorteoBalancesL1Cache.keys()) {
+        if (key.startsWith(`${sorteoId}:`)) {
+          sorteoBalancesL1Cache.delete(key);
+        }
+      }
+    }
+  },
+
+  /**
+   * Obtiene los saldos disponibles y acumulados para los números 00-99 en un sorteo específico.
    */
   async getSorteoBalances(params: {
     sorteoId: string;
     vendedorId: string;
     bancaId?: string;
     actorRole?: Role;
+    bypassL1Cache?: boolean;
   }): Promise<Record<string, { remaining: number; limit: number; accumulated: number }>> {
-    const { sorteoId, vendedorId, bancaId, actorRole } = params;
+    const { sorteoId, vendedorId, bancaId, actorRole, bypassL1Cache } = params;
 
     const cacheKey = `${sorteoId}:${vendedorId}:${actorRole || 'NONE'}`;
     const nowMs = Date.now();
-    const cached = sorteoBalancesL1Cache.get(cacheKey);
-    if (cached && cached.expiresAt > nowMs) {
-      return cached.data;
+    if (!bypassL1Cache) {
+      const cached = sorteoBalancesL1Cache.get(cacheKey);
+      if (cached && cached.expiresAt > nowMs) {
+        return cached.data;
+      }
     }
 
     return await SingleFlight.do(cacheKey, async () => {
-      const doubleCheck = sorteoBalancesL1Cache.get(cacheKey);
-      if (doubleCheck && doubleCheck.expiresAt > Date.now()) {
-        return doubleCheck.data;
+      if (!bypassL1Cache) {
+        const doubleCheck = sorteoBalancesL1Cache.get(cacheKey);
+        if (doubleCheck && doubleCheck.expiresAt > Date.now()) {
+          return doubleCheck.data;
+        }
       }
 
       const calculated = await withConnectionRetry(async () => {
@@ -1697,18 +1714,17 @@ export const TicketRepository = {
             const prefetchedLabels = new Set<string>();
             for (const rule of applicableRules) {
               if (!(rule.salesPercentage != null && rule.salesPercentage > 0)) continue;
-              const scopeId =
-                rule.appliesToVendedor || rule.userId
-                  ? vendedorId
-                  : rule.ventanaId ?? rule.bancaId ?? user.ventanaId;
-              const cacheLabel =
-                rule.appliesToVendedor || rule.userId
-                  ? `USER:${vendedorId}`
-                  : rule.ventanaId
-                    ? `VENTANA:${rule.ventanaId}`
-                    : rule.bancaId
-                      ? `BANCA:${rule.bancaId}`
-                      : `VENTANA:${user.ventanaId}`;
+              const isPerVendedor = rule.appliesToVendedor === true;
+              const scopeId = isPerVendedor
+                ? vendedorId
+                : rule.ventanaId
+                  ? rule.ventanaId
+                  : effectiveBancaId;
+              const cacheLabel = isPerVendedor
+                ? `USER:${vendedorId}`
+                : rule.ventanaId
+                  ? `VENTANA:${rule.ventanaId}`
+                  : `BANCA:${effectiveBancaId}`;
               if (!scopeId || prefetchedLabels.has(cacheLabel)) continue;
               prefetchedLabels.add(cacheLabel);
               const hashKey = `sorteo:${sorteoId}:scope:${scopeId}:acumulados`;

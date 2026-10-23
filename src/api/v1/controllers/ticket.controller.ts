@@ -12,12 +12,13 @@ import { IdempotencyService } from "../../../domain/ticket/idempotency.service";
 
 function sendTicketResponse(res: Response, ticketResult: any, status = 200) {
   if (res.headersSent) return;
-  const { creditInfo, warnings, ...ticketData } = (ticketResult || {}) as any;
+  const { creditInfo, warnings, sorteoBalances, ...ticketData } = (ticketResult || {}) as any;
   return res.status(status).json({
     success: true,
     data: ticketData,
     ...(warnings ? { warnings } : {}),
     ...(creditInfo ? { creditInfo } : {}),
+    ...(sorteoBalances ? { sorteoBalances } : {}),
   });
 }
 
@@ -314,7 +315,7 @@ export const TicketController = {
     const userId = req.user!.id;
     const bancaId = req.bancaContext?.bancaId || undefined;
     const result = await TicketService.cancel(req.params.id, userId, req.requestId, bancaId);
-    return success(res, result);
+    return sendTicketResponse(res, result);
   },
 
   async restore(req: AuthenticatedRequest, res: Response) {

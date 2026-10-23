@@ -10,6 +10,8 @@ import { CacheService } from "../../../core/cache.service";
 import { BackgroundTaskQueue } from "../../../utils/concurrency";
 import { nowCR } from "../../../utils/datetime";
 import { TicketPrintService } from "../TicketPrintService";
+import { VendorCreditService } from "../../credit/vendorCredit.service";
+import { RestrictionRuleService } from "../../restriction/restrictionRule.service";
 
 const CUTOFF_GRACE_MS = 1000;
 
@@ -203,6 +205,29 @@ export class TicketOperationsService {
       requestId,
       payload: { ticketId: id },
     });
+
+    // Piggyback creditInfo y sorteoBalances actualizados tras la anulación (0ms overhead)
+    if (ticket.vendedorId) {
+      try {
+        const creditInfo = await VendorCreditService.getVendorCreditInfo(ticket.vendedorId);
+        if (creditInfo) (ticket as any).creditInfo = creditInfo;
+      } catch (err: any) {
+        logger.warn({ layer: "service", action: "PIGGYBACK_CREDIT_INFO_ON_CANCEL_ERROR", payload: { error: err?.message } });
+      }
+
+      try {
+        RestrictionRuleService.invalidateVendorBalancesL1Cache(ticket.vendedorId, existing.sorteoId);
+        const sorteoBalances = await TicketRepository.getSorteoBalances({
+          sorteoId: existing.sorteoId,
+          vendedorId: ticket.vendedorId,
+          bancaId: existing.ventana.bancaId,
+          bypassL1Cache: true,
+        });
+        if (sorteoBalances) (ticket as any).sorteoBalances = sorteoBalances;
+      } catch (err: any) {
+        logger.warn({ layer: "service", action: "PIGGYBACK_SORTEO_BALANCES_ON_CANCEL_ERROR", payload: { error: err?.message } });
+      }
+    }
 
     return ticket;
   }

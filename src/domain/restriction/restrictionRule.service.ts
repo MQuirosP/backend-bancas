@@ -1127,4 +1127,28 @@ export const RestrictionRuleService = {
       vendorSpecific: filteredVendorSpecific.map(cleanRule),
     };
   },
+
+  /**
+   * Invalida la micro-caché L1 en RAM de balances precalculados de restricciones por vendedor/sorteo
+   */
+  invalidateVendorBalancesL1Cache(vendorId?: string, sorteoId?: string): void {
+    if (vendorId && sorteoId) {
+      vendorBalancesL1Cache.delete(`${vendorId}:${sorteoId}`);
+    } else if (sorteoId) {
+      for (const key of vendorBalancesL1Cache.keys()) {
+        if (key.endsWith(`:${sorteoId}`)) {
+          vendorBalancesL1Cache.delete(key);
+        }
+      }
+    } else if (vendorId) {
+      for (const key of vendorBalancesL1Cache.keys()) {
+        if (key.startsWith(`${vendorId}:`)) {
+          vendorBalancesL1Cache.delete(key);
+        }
+      }
+    } else {
+      vendorBalancesL1Cache.clear();
+    }
+  },
 };
+

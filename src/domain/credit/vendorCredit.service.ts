@@ -1661,6 +1661,35 @@ export class VendorCreditService {
   }
 
   /**
+   * Helper mono-vendedor para obtener el resumen de crédito (creditInfo)
+   * Reutiliza la caché RAM local y SingleFlight de resolveSingleVendorStatus
+   */
+  static async getVendorCreditInfo(vendedorId: string): Promise<{
+    limit: number | null;
+    effectiveBalance: number;
+    percentageUsed: number;
+    status: CreditStatus;
+  } | null> {
+    if (!config.creditLimit.enabled) return null;
+    try {
+      const resp = await this.getVendorsCreditStatus(
+        { id: vendedorId, role: Role.VENDEDOR },
+        { requestedVendedorIds: [vendedorId] }
+      );
+      const item = resp.items?.[0];
+      if (!item) return null;
+      return {
+        limit: item.creditLimit ?? null,
+        effectiveBalance: item.effectiveBalance,
+        percentageUsed: item.percentageUsed,
+        status: item.status,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Consulta el estado de crédito para un listado de vendedores o para todos los del alcance del usuario.
    * Aplica aislamiento estricto por rol (RBAC), caché en memoria (2.5s) y concurrencia controlada en hidratación.
    */
