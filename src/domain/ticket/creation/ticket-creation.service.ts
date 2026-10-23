@@ -120,15 +120,16 @@ export class TicketCreationService {
     actorRole: Role = Role.VENDEDOR,
     userVentanaId?: string | null,
   ) {
+    const t0 = performance.now();
+    let timingCollector: TicketTimingCollector | undefined;
     try {
-      const t0 = performance.now();
       const initialPoolStats = {
         sales_pool_waiting: salesPool.waitingCount,
         sales_pool_total: salesPool.totalCount,
         sales_pool_idle: salesPool.idleCount,
         general_pool_waiting: generalPool.waitingCount,
       };
-      const timingCollector: TicketTimingCollector = {
+      timingCollector = {
         startTime: t0,
         initialPoolStats,
         prefetch_breakdown: {},
@@ -700,12 +701,17 @@ export class TicketCreationService {
 
       return response;
     } catch (err: any) {
+      const elapsed_ms = Math.round((performance.now() - t0) * 100) / 100;
       logger.error({
         layer: "service",
         action: "TICKET_CREATE_FAIL",
         userId,
         requestId,
-        payload: { message: err.message },
+        payload: {
+          message: err.message,
+          elapsed_ms,
+          prefetch_breakdown: timingCollector?.prefetch_breakdown,
+        },
       });
       throw err;
     }

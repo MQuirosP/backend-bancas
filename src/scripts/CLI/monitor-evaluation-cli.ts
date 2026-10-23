@@ -81,7 +81,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
   // 1. Ciclo de Vida de Evaluaciones de Sorteos
   const sorteosSql = `
     SELECT dt, raw 
-    FROM remote(t604487_backend_bancas_logs) 
+    FROM remote(t563335_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND (
         raw ILIKE '%SORTEO_EVALUATE_DB%' 
@@ -95,7 +95,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
   // 2. Pre-calentamiento (Warmup) e Invalidación de Caché
   const cacheSql = `
     SELECT dt, raw 
-    FROM remote(t604487_backend_bancas_logs) 
+    FROM remote(t563335_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND (
         raw ILIKE '%WARMUP_EVALUATED_SUMMARY%' 
@@ -121,7 +121,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
       quantile(0.50)(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as p50_ms,
       quantile(0.95)(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as p95_ms,
       max(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as max_latency_ms
-    FROM remote(t604487_backend_bancas_logs) 
+    FROM remote(t563335_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND raw ILIKE '%evaluated-summary%'
       AND raw ILIKE '%http-request%'
@@ -136,7 +136,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
       min(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as min_ms,
       round(avg(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))), 1) as avg_ms,
       max(toInt32OrZero(JSONExtractString(raw, 'message', 'responseTimeMS'))) as max_ms
-    FROM remote(t604487_backend_bancas_logs) 
+    FROM remote(t563335_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND raw ILIKE '%evaluated-summary%'
       AND raw ILIKE '%http-request%'
@@ -149,7 +149,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
   // 5. Errores Críticos / 503 / Timeouts
   const errorsSql = `
     SELECT dt, raw 
-    FROM remote(t604487_backend_bancas_logs) 
+    FROM remote(t563335_backend_bancas_logs) 
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE 
       AND (
         raw ILIKE '%UNHANDLED_REJECTION%' 
@@ -172,7 +172,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
       quantile(0.95)(toInt32OrZero(JSONExtractString(raw, 'message', 'payload', 'durationMs'))) as p95_ms,
       max(toInt32OrZero(JSONExtractString(raw, 'message', 'payload', 'durationMs'))) as max_duration_ms,
       max(toInt32OrZero(JSONExtractString(raw, 'message', 'payload', 'queueRemaining'))) as max_queue
-    FROM remote(t604487_backend_bancas_logs)
+    FROM remote(t563335_backend_bancas_logs)
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE
       AND JSONExtractString(raw, 'message', 'action') = 'WORKER_TASK_SUCCESS'
     GROUP BY worker, type
@@ -185,7 +185,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
     SELECT 
       JSONExtractString(raw, 'message', 'action') as action,
       count() as count
-    FROM remote(t604487_backend_bancas_logs)
+    FROM remote(t563335_backend_bancas_logs)
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE
       AND JSONExtractString(raw, 'message', 'action') IN ('TICKET_IMAGE_CACHE_HIT', 'TICKET_IMAGE_GENERATED')
     GROUP BY action
@@ -200,7 +200,7 @@ export async function runMonitorEvaluation(minutes: number = 20, isDetail: boole
       JSONExtractString(raw, 'message', 'payload', 'workerName') as worker,
       JSONExtractString(raw, 'message', 'payload', 'durationMs') as durationMs,
       raw
-    FROM remote(t604487_backend_bancas_logs)
+    FROM remote(t563335_backend_bancas_logs)
     WHERE dt >= now() - INTERVAL ${minutes} MINUTE
       AND (
         raw ILIKE '%WORKER_WARMUP%' 

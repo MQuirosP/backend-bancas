@@ -104,7 +104,11 @@ export const errorHandler = (err: any, req: Request, res: Response, _next: NextF
           layer: 'middleware',
           action: 'PRISMA_UNKNOWN_ERROR',
           requestId,
-          meta: err.meta ?? null,
+          meta: {
+            code: err?.code ?? null,
+            message: err?.message ?? null,
+            ...(err?.meta || {}),
+          },
         });
         return errorResponse(res, 'Database error', 500, err.meta ?? undefined);
     }

@@ -27,13 +27,23 @@ server.keepAliveTimeout = 65000 // 65s (mayor a los 60s del proxy de Render para
 server.headersTimeout = 66000   // 66s (debe ser mayor que keepAliveTimeout)
 server.maxConnections = 1000    // Límite de sockets TCP concurrentes
 
+// Acota el tiempo de recepción de la petición completa (headers + body)
+// Si un cliente móvil sufre un corte de señal a mitad de transmitir el JSON del ticket,
+// Node.js cerrará el socket a los ~12s evitando que Render espere hasta su timeout perimetral (72s).
+server.requestTimeout = Math.max((config.hardening.requestTimeoutMs || 10000) + 2000, 10000)
+
 // Backlog de 511 conexiones para absorber ráfagas simultáneas sin descartar sockets
 server.listen(config.port, 511, async () => {
   logger.info({
     layer: 'server',
     action: 'SERVER_LISTEN',
     requestId: null,
-    payload: { port: config.port, keepAliveTimeout: server.keepAliveTimeout, backlog: 511 },
+    payload: {
+      port: config.port,
+      keepAliveTimeout: server.keepAliveTimeout,
+      requestTimeout: server.requestTimeout,
+      backlog: 511,
+    },
   })
 
   // Esperar conexión a DB antes de iniciar jobs y caches que la requieren
