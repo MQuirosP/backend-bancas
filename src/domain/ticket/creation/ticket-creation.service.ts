@@ -493,19 +493,30 @@ export class TicketCreationService {
         }
       } catch {}
 
-      const normalizedJugadas = jugadasIn.map((j: any) => {
+      // Consolidar defensivamente jugadas por tipo + número para evitar filas fragmentadas en DB
+      const jugadasConsolidadasMap = new Map<string, any>();
+      for (const j of jugadasIn) {
         const type = (j.type ?? "NUMERO") as "NUMERO" | "REVENTADO";
         const isNumero = type === "NUMERO";
         const number = isNumero ? j.number! : (j.reventadoNumber ?? j.number)!;
-        return {
-          type,
-          number,
-          reventadoNumber: isNumero ? null : number,
-          amount: j.amount,
-          multiplierId: isNumero ? ((j as any).multiplierId ?? null) : null,
-          finalMultiplierX: 0,
-        };
-      });
+        const multiplierId = isNumero ? ((j as any).multiplierId ?? null) : null;
+        const key = `${type}-${number}-${multiplierId || "default"}`;
+
+        const existing = jugadasConsolidadasMap.get(key);
+        if (existing) {
+          existing.amount += Number(j.amount);
+        } else {
+          jugadasConsolidadasMap.set(key, {
+            type,
+            number,
+            reventadoNumber: isNumero ? null : number,
+            amount: Number(j.amount),
+            multiplierId,
+            finalMultiplierX: 0,
+          });
+        }
+      }
+      const normalizedJugadas = Array.from(jugadasConsolidadasMap.values());
 
       let createdBy: string | undefined;
       let createdByRole: Role | undefined;

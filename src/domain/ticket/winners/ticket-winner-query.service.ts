@@ -66,23 +66,39 @@ export class TicketWinnerQueryService {
         (j) => j.type === "REVENTADO",
       );
 
-      // Crear un mapa de números a montos y multiplierId para jugadas NUMERO
+      // Consolidar defensivamente montos de jugadas NUMERO por número
       const numeroDataMap = new Map<
         string,
         { amount: number; multiplierId: string | null }
       >();
       jugadasNumero.forEach((j) => {
-        numeroDataMap.set(j.number, {
-          amount: j.amount,
-          multiplierId: j.multiplierId,
-        });
+        const prev = numeroDataMap.get(j.number);
+        if (prev) {
+          prev.amount += j.amount;
+          if (!prev.multiplierId && j.multiplierId) prev.multiplierId = j.multiplierId;
+        } else {
+          numeroDataMap.set(j.number, {
+            amount: j.amount,
+            multiplierId: j.multiplierId,
+          });
+        }
       });
 
-      // Crear un Set de números que tienen REVENTADO asociado
-      const numerosConReventado = new Set<string>();
+      // Consolidar defensivamente montos de jugadas REVENTADO por número (evita duplicidad histórica)
+      const reventadoDataMap = new Map<
+        string,
+        { amountReventado: number; reventadoNumber: string }
+      >();
       jugadasReventado.forEach((j) => {
-        if (j.number) {
-          numerosConReventado.add(j.number);
+        const key = j.number;
+        const prev = reventadoDataMap.get(key);
+        if (prev) {
+          prev.amountReventado += j.amount;
+        } else {
+          reventadoDataMap.set(key, {
+            amountReventado: j.amount,
+            reventadoNumber: j.reventadoNumber || j.number,
+          });
         }
       });
 
@@ -92,44 +108,47 @@ export class TicketWinnerQueryService {
 
       // Procesar jugadas NUMERO que NO tienen REVENTADO asociado
       jugadasNumero.forEach((jugada) => {
-        if (!numerosConReventado.has(jugada.number)) {
-          const baseJugada: any = {
-            type: "NUMERO",
-            number: jugada.number,
-            amount: jugada.amount,
-          };
+        if (!reventadoDataMap.has(jugada.number)) {
+          if (numeroDataMap.has(jugada.number)) {
+            const numData = numeroDataMap.get(jugada.number)!;
+            const baseJugada: any = {
+              type: "NUMERO",
+              number: jugada.number,
+              amount: numData.amount,
+            };
 
-          if (jugada.multiplierId) {
-            baseJugada.multiplierId = jugada.multiplierId;
+            if (numData.multiplierId) {
+              baseJugada.multiplierId = numData.multiplierId;
+            }
+
+            jugadas.push(baseJugada);
+            numeroDataMap.delete(jugada.number); // Evitar duplicar si venían varias filas de NUMERO
           }
-
-          jugadas.push(baseJugada);
         }
       });
 
-      // Procesar jugadas REVENTADO (agrupadas con NUMERO si existe)
-      jugadasReventado.forEach((jugada) => {
+      // Procesar jugadas REVENTADO (1 sola jugada unificada por número con su respectivo amount de NUMERO)
+      for (const [number, revData] of reventadoDataMap.entries()) {
         const baseJugada: any = {
           type: "REVENTADO",
-          number: jugada.number,
-          reventadoNumber: jugada.reventadoNumber || jugada.number,
+          number,
+          reventadoNumber: revData.reventadoNumber,
+          amountReventado: revData.amountReventado,
         };
 
-        const numeroData = numeroDataMap.get(jugada.number);
+        const numeroData = numeroDataMap.get(number);
         if (numeroData !== undefined) {
           baseJugada.amount = numeroData.amount;
-          baseJugada.amountReventado = jugada.amount;
 
           if (numeroData.multiplierId) {
             baseJugada.multiplierId = numeroData.multiplierId;
           }
         } else {
-          baseJugada.amount = jugada.amount;
-          baseJugada.amountReventado = jugada.amount;
+          baseJugada.amount = revData.amountReventado;
         }
 
         jugadas.push(baseJugada);
-      });
+      }
 
       return {
         ticketNumber: ticket.ticketNumber,
