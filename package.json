@@ -7,7 +7,7 @@
     "node": ">=22.23.4"
   },
   "scripts": {
-    "start": "node --max-old-space-size=350 --max-semi-space-size=32 dist/index.js",
+    "start": "node --max-old-space-size=300 --max-semi-space-size=16 dist/index.js",
     "ops": "node --max-old-space-size=100 dist/scripts/CLI/main-wizard.js",
     "ops:dev": "npx tsx src/scripts/CLI/main-wizard.ts",
     "monitor": "node dist/scripts/CLI/monitor-evaluation-cli.js",
