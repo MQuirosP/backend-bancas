@@ -14,10 +14,10 @@ interface RedisL1CacheEntry {
 }
 
 /**
- * Timeout de fallo de Redis. En la red privada de Render la latencia típica es < 1ms,
- * pero ante ráfagas concurrentes de I/O / event-loop lag, 150ms previene falsos positivos.
+ * Timeout de fallo de Redis. 1500ms tolera picos transitorios de Event Loop Lag (CPU)
+ * en contenedores compartidos sin disparar falsos positivos ni abrir el Circuit Breaker.
  */
-export const REDIS_BREAKER_TIMEOUT_MS = Number(process.env.REDIS_BREAKER_TIMEOUT_MS) || 150;
+export const REDIS_BREAKER_TIMEOUT_MS = Number(process.env.REDIS_BREAKER_TIMEOUT_MS) || 1500;
 
 export class ResilienceService {
     private static prismaBreaker: CircuitBreaker;

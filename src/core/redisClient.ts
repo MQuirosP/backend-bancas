@@ -150,7 +150,7 @@ export async function initRedisClient(): Promise<void> {
             ...baseRedisOptions,
             retryStrategy,
             maxRetriesPerRequest: 1,
-            commandTimeout: 500,     // 500ms: tolera pausas de GC sin degradar en falso
+            commandTimeout: 1500,    // 1500ms: tolera pausas de CPU/Event-Loop lag sin degradar en falso
             enableOfflineQueue: false,
         });
 

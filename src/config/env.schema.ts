@@ -54,7 +54,7 @@ export const EnvSchema = z.object({
   EVENT_LOOP_LAG_THRESHOLD_MS: z.coerce.number().int().default(150),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().default(8000),
   PRISMA_CB_RESET_MS: z.coerce.number().int().default(15000),
-  REDIS_CB_RESET_MS: z.coerce.number().int().default(10000),
+  REDIS_CB_RESET_MS: z.coerce.number().int().default(2000),
 
   // POOL SEGREGATION
   SALES_POOL_MAX: z.coerce.number().int().min(1).default(8),
