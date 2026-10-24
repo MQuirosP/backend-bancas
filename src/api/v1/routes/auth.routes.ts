@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { AuthController } from '../controllers/auth.controller';
 import { validateBody } from '../../../middlewares/validate.middleware';
-import { authRateLimiter } from '../../../middlewares/rateLimit.middleware';
+import { authRateLimiter, authRefreshRateLimiter } from '../../../middlewares/rateLimit.middleware';
 import { registerSchema, loginSchema, setActiveBancaSchema, syncSessionSchema } from '../validators/auth.validator';
 import { updateUserSchema } from '../validators/user.validator';
 import { protect, restrictTo } from '../../../middlewares/auth.middleware';
@@ -12,7 +12,7 @@ const router = Router();
 
 router.post('/register', authRateLimiter, validateBody(registerSchema), AuthController.register);
 router.post('/login', authRateLimiter, validateBody(loginSchema), AuthController.login);
-router.post('/refresh', AuthController.refresh);
+router.post('/refresh', authRefreshRateLimiter, AuthController.refresh);
 router.post('/logout', AuthController.logout);
 router.get('/me', protect, AuthController.me);
 router.patch('/me', protect, validateBody(updateUserSchema), AuthController.updateMe);

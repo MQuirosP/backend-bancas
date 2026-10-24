@@ -7,6 +7,7 @@ import { getPrismaDirect } from '../core/prismaClientDirect'
 import { startSorteosAutoJobs, stopSorteosAutoJobs } from '../jobs/sorteosAuto.job'
 import { startAccountStatementSettlementJob, stopAccountStatementSettlementJob } from '../jobs/accountStatementSettlement.job'
 import { startMonthlyClosingJob, stopMonthlyClosingJob } from '../jobs/monthlyClosing.job'
+import { startRefreshTokenCleanupJob, stopRefreshTokenCleanupJob } from '../jobs/refreshTokenCleanup.job'
 import { initRedisClient, closeRedisClient } from '../core/redisClient'
 import { initCacheSubscriber } from '../core/cache.service'
 import { restrictionCacheV2 } from '../utils/restrictionCacheV2'
@@ -139,6 +140,24 @@ server.listen(config.port, 511, async () => {
     })
   }
 
+  // Iniciar job de limpieza de tokens revocados/expirados
+  try {
+    startRefreshTokenCleanupJob()
+    logger.info({
+      layer: 'server',
+      action: 'REFRESH_TOKEN_CLEANUP_JOB_STARTED',
+      requestId: null,
+      payload: { message: 'Job de limpieza de tokens iniciado' },
+    })
+  } catch (error: any) {
+    logger.error({
+      layer: 'server',
+      action: 'REFRESH_TOKEN_CLEANUP_JOB_START_ERROR',
+      requestId: null,
+      meta: { error: error instanceof Error ? error.message : String(error) },
+    })
+  }
+
   // Iniciar warming process de restriction cache V2
   try {
     restrictionCacheV2.startWarmingProcess()
@@ -189,6 +208,7 @@ const gracefulShutdown = async (signal: string) => {
   try { stopSorteosAutoJobs(); } catch (e) {}
   try { stopAccountStatementSettlementJob(); } catch (e) {}
   try { stopMonthlyClosingJob(); } catch (e) {}
+  try { stopRefreshTokenCleanupJob(); } catch (e) {}
   try { restrictionCacheV2.stopWarmingProcess(); } catch (e) {}
   try { resourceMonitorService.stop(); } catch (e) {}
   try { memoryMonitorService.stop(); } catch (e) {}

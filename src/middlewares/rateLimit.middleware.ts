@@ -89,6 +89,17 @@ export const authRateLimiter = createLimiter({
 });
 
 /**
+ * 2b. Auth (Refresh Token): Máximo 30 peticiones / minuto por IP
+ * Margen holgado para múltiples pestañas o reconexiones mientras protege la DB
+ */
+export const authRefreshRateLimiter = createLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  prefix: 'auth-refresh',
+  message: 'Demasiadas solicitudes de actualización de sesión. Por favor, espera un momento.'
+});
+
+/**
  * 3. Ventas (Tickets): 20 tickets / minuto por UserID (o IP si no hay user)
  */
 export const salesRateLimiter = createLimiter({

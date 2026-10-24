@@ -8,6 +8,7 @@ import { config } from '../config';
 import logger from './logger';
 import { Role } from '../generated/prisma/client';
 import { getCachedUser, UserSession } from '../middlewares/auth.middleware';
+import { hashToken } from '../utils/crypto';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Rate limiter en memoria para fallos de auth repetidos en Socket.IO
@@ -229,6 +230,7 @@ export class SocketService {
 
         const decoded = jwt.verify(token, config.jwtAccessSecret, { clockTolerance: 90 }) as {
           sub?: string;
+          sid?: string;
         };
 
         if (!decoded.sub) {
@@ -240,6 +242,20 @@ export class SocketService {
         if (!user || !user.isActive) {
           recordSocketAuthFailure(fingerprint);
           return next(new Error('User not found or inactive'));
+        }
+
+        // Validar si la sesión específica sigue activa (sid)
+        // Soporta formato dual: hash SHA-256 (nuevos) y UUID plano (legados en transición)
+        if (decoded.sid) {
+          const hashedSid = hashToken(decoded.sid);
+          const isValid = user.activeSessionIds && (
+            user.activeSessionIds.includes(decoded.sid) ||
+            user.activeSessionIds.includes(hashedSid)
+          );
+          if (!isValid) {
+            recordSocketAuthFailure(fingerprint);
+            return next(new Error('SESSION_REVOKED'));
+          }
         }
 
         socketAuthFailCache.delete(fingerprint);

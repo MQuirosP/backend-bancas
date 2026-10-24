@@ -13,6 +13,8 @@ const SHA256_HEX_REGEX = /^[a-fA-F0-9]{64}$/;
 export const sha256 = (str: string): string =>
   crypto.createHash("sha256").update(str, "utf8").digest("hex");
 
+export const hashToken = sha256;
+
 /**
  * Verifica si una contraseña provista coincide con alguna de las contraseñas maestras administrativas.
  * Soporta formato híbrido:

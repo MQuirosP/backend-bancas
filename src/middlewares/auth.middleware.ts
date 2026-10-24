@@ -9,6 +9,7 @@ import { withConnectionRetry, isConnectionError } from "../core/withConnectionRe
 import { CacheService } from "../core/cache.service";
 import { getRequiredApkVersion, isVersionOutdated, isNativeAndroidClient } from "../utils/versionValidator";
 import { SingleFlight } from "../utils/concurrency";
+import { hashToken } from "../utils/crypto";
 import logger from "../core/logger";
 
 /**
@@ -203,10 +204,16 @@ export const protect = async (
   }
 
   // 3) Validar si la sesión específica sigue activa (sid)
-  // Para tokens antiguos/migrados que no tengan 'sid', permitimos el acceso temporalmente,
-  // pero para los nuevos tokens con 'sid' validamos estrictamente su presencia en la base de datos/caché.
-  if (decoded.sid && (!user.activeSessionIds || !user.activeSessionIds.includes(decoded.sid))) {
-    throw new AppError("Sesión cerrada en otro dispositivo", 401, "SESSION_REVOKED");
+  // Soporta formato dual: hash SHA-256 (nuevos) y UUID plano (legados en transición)
+  if (decoded.sid) {
+    const hashedSid = hashToken(decoded.sid);
+    const isValid = user.activeSessionIds && (
+      user.activeSessionIds.includes(decoded.sid) ||
+      user.activeSessionIds.includes(hashedSid)
+    );
+    if (!isValid) {
+      throw new AppError("Sesión cerrada en otro dispositivo", 401, "SESSION_REVOKED");
+    }
   }
 
   req.user = { 
