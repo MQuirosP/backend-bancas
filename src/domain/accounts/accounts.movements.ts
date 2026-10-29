@@ -702,6 +702,19 @@ export async function updateCacheAfterMovement(date: string, ventanaId?: string 
             ? CacheService.invalidateTag(`vendedor:${vendedorId}`)
             : Promise.resolve(),
     ]);
+
+    if (vendedorId) {
+        try {
+            const { VendorCreditService } = await import("../credit/vendorCredit.service");
+            await VendorCreditService.updateBaseBalance(vendedorId);
+        } catch (creditErr: any) {
+            logger.error({
+                layer: "accounts_movement",
+                action: "VENDOR_CREDIT_UPDATE_BASE_ERROR",
+                payload: { vendedorId, error: creditErr?.message || String(creditErr) }
+            });
+        }
+    }
 }
 
 /**

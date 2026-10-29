@@ -1342,6 +1342,9 @@ export class VendorCreditService {
         const { clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
         clearStatusMeRamCache(vendedorId);
       } catch (_) {}
+
+      // Limpiar micro-caché en memoria de listados de crédito de administrador/ventana
+      this.listScopeCache.clear();
     } catch (err: any) {
       markRedisError("VendorCreditService.updateBaseBalance");
       logger.error({

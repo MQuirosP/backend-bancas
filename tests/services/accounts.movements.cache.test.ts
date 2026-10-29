@@ -2,6 +2,7 @@
 import { updateCacheAfterMovement } from '../../src/domain/accounts/accounts.movements';
 import { invalidateAccountStatementCache } from '../../src/utils/accountStatementCache';
 import { CacheService } from '../../src/core/cache.service';
+import { VendorCreditService } from '../../src/domain/credit/vendorCredit.service';
 
 jest.mock('../../src/utils/accountStatementCache', () => ({
   invalidateAccountStatementCache: jest.fn(),
@@ -10,6 +11,12 @@ jest.mock('../../src/utils/accountStatementCache', () => ({
 jest.mock('../../src/core/cache.service', () => ({
   CacheService: {
     invalidateTag: jest.fn(),
+  },
+}));
+
+jest.mock('../../src/domain/credit/vendorCredit.service', () => ({
+  VendorCreditService: {
+    updateBaseBalance: jest.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -53,13 +60,27 @@ describe('updateCacheAfterMovement', () => {
 
     await pending;
     expect(settled).toBe(true);
+    expect(VendorCreditService.updateBaseBalance).toHaveBeenCalledWith('vendedor-1');
   });
 
-  it('does not invalidate a vendor summary tag for window or bank movements', async () => {
+  it('does not invalidate a vendor summary tag or update credit balance for window or bank movements', async () => {
     (invalidateAccountStatementCache as jest.Mock).mockResolvedValue(undefined);
 
     await updateCacheAfterMovement('2026-06-25', 'ventana-1', null, 'banca-1');
 
     expect(CacheService.invalidateTag).not.toHaveBeenCalled();
+    expect(VendorCreditService.updateBaseBalance).not.toHaveBeenCalled();
+  });
+
+  it('handles VendorCreditService.updateBaseBalance errors safely without throwing', async () => {
+    (invalidateAccountStatementCache as jest.Mock).mockResolvedValue(undefined);
+    (CacheService.invalidateTag as jest.Mock).mockResolvedValue(undefined);
+    (VendorCreditService.updateBaseBalance as jest.Mock).mockRejectedValue(new Error('Redis connection error'));
+
+    await expect(
+      updateCacheAfterMovement('2026-06-25', 'ventana-1', 'vendedor-error', 'banca-1')
+    ).resolves.not.toThrow();
+
+    expect(VendorCreditService.updateBaseBalance).toHaveBeenCalledWith('vendedor-error');
   });
 });

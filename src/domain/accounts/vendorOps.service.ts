@@ -379,6 +379,13 @@ export class VendorOpsService {
       });
     }
 
+    if (vendedorId) {
+      try {
+        const { VendorCreditService } = await import('../credit/vendorCredit.service');
+        await VendorCreditService.updateBaseBalance(vendedorId);
+      } catch (_) {}
+    }
+
     // 4. Log de auditoría
     await ActivityService.log({
       userId: performedByUserId || null,
@@ -518,6 +525,13 @@ export class VendorOpsService {
       vendedorId,
       bancaId,
     });
+
+    if (vendedorId) {
+      try {
+        const { VendorCreditService } = await import('../credit/vendorCredit.service');
+        await VendorCreditService.updateBaseBalance(vendedorId);
+      } catch (_) {}
+    }
 
     // Log de auditoría
     await ActivityService.log({

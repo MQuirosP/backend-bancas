@@ -33,7 +33,7 @@ setInterval(() => {
       socketAuthFailCache.delete(key);
     }
   }
-}, 5 * 60 * 1000); // cada 5 minutos
+}, 5 * 60 * 1000).unref(); // cada 5 minutos (unref para no bloquear shutdown ni tests)
 
 function getTokenFingerprint(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex').slice(0, 16);
