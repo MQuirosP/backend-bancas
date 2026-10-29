@@ -62,6 +62,14 @@ router.patch(
   UserController.restore
 );
 
+// Limpiar claves de caché y Redis de un usuario (ADMIN y BANCA solamente)
+router.post(
+  "/:id/clear-cache",
+  restrictTo(Role.ADMIN, Role.BANCA),
+  validateParams(idParamSchema),
+  UserController.clearCache
+);
+
 // Change password (permite que el usuario autenticado cambie su propia contraseña)
 router.put(
   "/me/password",
