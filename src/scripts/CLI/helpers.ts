@@ -40,7 +40,7 @@ export async function callOpsApi(endpoint: string, body: any): Promise<any> {
 
   if (!response.ok) {
     const errorData: any = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(errorData.error || `HTTP ${response.status}`);
+    throw new Error(errorData.error || errorData.message || `HTTP ${response.status}`);
   }
 
   return await response.json();
