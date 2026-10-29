@@ -77,4 +77,24 @@ export const EnvSchema = z.object({
   // BETTER STACK CLICKHOUSE MONITOR (CLI)
   BETTERSTACK_CLICKHOUSE_HOST: z.string().default('us-west-2a-connect.betterstackdata.com'),
   BETTERSTACK_CLICKHOUSE_AUTH: z.string().optional(),
+
+  // OPERACIONES DE SOPORTE PRIVILEGIADAS (/api/v1/ops)
+  OPS_SECRET: z.preprocess((val) => (val === '' ? undefined : val), z.string().min(16, 'OPS_SECRET debe tener al menos 16 caracteres').optional()),
+  OPS_ALLOWED_IPS: z.preprocess((val) => (val === '' ? undefined : val), z.string().optional()),
+}).superRefine((data, ctx) => {
+  if (data.NODE_ENV === 'production') {
+    if (!data.OPS_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'OPS_SECRET es obligatorio en producción.',
+        path: ['OPS_SECRET'],
+      });
+    } else if (data.OPS_SECRET.length < 32) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'OPS_SECRET debe tener al menos 32 caracteres criptográficos en producción.',
+        path: ['OPS_SECRET'],
+      });
+    }
+  }
 });

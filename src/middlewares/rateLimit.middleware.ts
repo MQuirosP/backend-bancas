@@ -145,3 +145,31 @@ export const evaluatedSummaryRateLimiter = createLimiter({
     });
   }
 });
+
+/**
+ * 5. Operaciones de Soporte Privilegiadas (Ops): Máximo 15 peticiones / minuto por IP
+ */
+export const opsRateLimiter = createLimiter({
+  windowMs: 60 * 1000,
+  max: 15,
+  prefix: 'ops',
+  message: 'Demasiadas solicitudes a endpoints de operaciones. Intente de nuevo en un minuto.',
+  useLocalOnly: true,
+  handler: (req, res, _next, limiterOptions) => {
+    logger.warn({
+      layer: 'security',
+      action: 'OPS_RATE_LIMIT_EXCEEDED',
+      payload: {
+        ip: req.ip,
+        path: req.originalUrl,
+        userAgent: req.headers['user-agent']
+      }
+    });
+
+    res.status(429).json({
+      success: false,
+      error: 'Demasiadas solicitudes a endpoints de operaciones. Por favor, espere un minuto.',
+      retryAfter: Math.ceil(limiterOptions.windowMs / 1000)
+    });
+  }
+});
