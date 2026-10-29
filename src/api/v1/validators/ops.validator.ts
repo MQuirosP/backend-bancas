@@ -7,6 +7,20 @@ export const handleSorteoActionSchema = z.object({
   extraMultiplierId: z.string().uuid().nullable().optional(),
 });
 
+export const querySorteosDataSchema = z.object({
+  queryType: z.enum(['LOTERIAS', 'SORTEOS', 'MULTIPLIERS']),
+  dateStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
+  bancaId: z.string().uuid('ID de banca inválido').nullable().optional(),
+  loteriaName: z.string().optional(),
+  loteriaId: z.string().uuid('ID de lotería inválido').optional(),
+});
+
+export const checkCierresSchema = z.object({
+  fromStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
+  toStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
+  bancaId: z.string().uuid('ID de banca inválido').nullable().optional(),
+});
+
 export const checkStatementsSchema = z.object({
   fromStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
   toStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),

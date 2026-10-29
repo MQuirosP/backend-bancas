@@ -1,7 +1,5 @@
 import 'dotenv/config';
-import { formatCRC } from './helpers';
-import prisma from '../../core/prismaClient';
-import { Prisma } from '../../generated/prisma/client';
+import { formatCRC, IS_RENDER, callOpsApi } from './helpers';
 
 /**
  * check-cierres-cli.ts
@@ -21,13 +19,30 @@ export async function runCheckCierres(options?: {
   console.log(`\n======================================================================`);
   console.log(`📈  AUDITORÍA DE CIERRES DIARIOS (RESUMEN CIERRE DIARIO)`);
   console.log(`📅  Rango: ${fromDateStr} a ${toDateStr}`);
-  if (targetBancaId) {
-    const b = await prisma.banca.findUnique({ where: { id: targetBancaId }, select: { name: true } });
-    console.log(`🏛️  Banca Filtrada: ${b?.name || 'ID ' + targetBancaId}`);
-  } else {
-    console.log(`🏛️  Bancas: TODAS`);
-  }
+  console.log(`🏛️  Banca: ${targetBancaId ? 'ID ' + targetBancaId : 'TODAS'}`);
   console.log(`======================================================================\n`);
+
+  if (IS_RENDER) {
+    console.log(`⏳  Auditando cierres diarios vía API interna (Render Mode)...`);
+    const res = await callOpsApi('/cierres/check', { fromStr: fromDateStr, toStr: toDateStr, bancaId: targetBancaId });
+    console.log(`\n======================================================================`);
+    console.log(`📈  RESULTADO AUDITORÍA DE CIERRES:`);
+    console.log(`    Total Grupos Evaluados: ${res.grandTotalGroups}`);
+    console.log(`    Discrepancias Encontradas: ${res.grandTotalDiscrepancies}`);
+    if (res.details && res.details.length > 0) {
+      console.log(`\n    Detalle de discrepancias:`);
+      for (const d of res.details) {
+        console.log(`    - Fecha ${d.dateStr} | Sorteo: ${d.sorteoName} | Vendedor: ${d.vendedorName} | DB: ${formatCRC(d.ventasDB)} vs Real: ${formatCRC(d.ventasReales)}`);
+      }
+    } else {
+      console.log(`    ✅ 100% Coincidencia entre ResumenCierreDiario y Jugadas reales.`);
+    }
+    console.log(`======================================================================\n`);
+    return;
+  }
+
+  const { default: prisma } = await import('../../core/prismaClient');
+  const { Prisma } = await import('../../generated/prisma/client');
 
   // Generar lista de fechas
   const dates: string[] = [];

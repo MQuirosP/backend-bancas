@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { ask, isBack, colors, formatCRC, clearScreen, IS_RENDER, callOpsApi } from './helpers';
-import { TicketsOpsService, TicketPreviewInfo } from '../../domain/ticket/ticketsOps.service';
+import type { TicketPreviewInfo } from '../../domain/ticket/ticketsOps.service';
 
 /**
  * tickets-cli.ts
@@ -49,6 +49,7 @@ export async function runTicketsWizard() {
       const res = await callOpsApi('/tickets/preview', { ticketNumbers });
       previewList = res.tickets || [];
     } else {
+      const { TicketsOpsService } = await import('../../domain/ticket/ticketsOps.service');
       previewList = await TicketsOpsService.findTicketsByNumbers(ticketNumbers);
     }
   } catch (err: any) {
@@ -147,6 +148,7 @@ export async function runTicketsWizard() {
         forceWithPayments
       });
     } else {
+      const { TicketsOpsService } = await import('../../domain/ticket/ticketsOps.service');
       result = await TicketsOpsService.cancelTickets({
         ticketNumbers,
         reason,

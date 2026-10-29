@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { ask, isBack, colors, clearScreen, IS_RENDER, callOpsApi } from './helpers';
-import { RedisOpsService, RedisKeyItem, RedisKeyCategory } from '../../domain/cache/redisOps.service';
+import type { RedisKeyItem, RedisKeyCategory } from '../../domain/cache/redisOps.service';
 
 /**
  * redis-keys-cli.ts
@@ -26,6 +26,7 @@ async function fetchBancas(): Promise<Array<{ id: string; name: string }>> {
     const res = await callOpsApi('/vendor/bancas', {});
     return res.bancas || [];
   }
+  const { RedisOpsService } = await import('../../domain/cache/redisOps.service');
   return await RedisOpsService.listBancas();
 }
 
@@ -34,6 +35,7 @@ async function fetchVentanas(bancaId?: string | null): Promise<Array<{ id: strin
     const res = await callOpsApi('/redis/ventanas', { bancaId });
     return res.ventanas || [];
   }
+  const { RedisOpsService } = await import('../../domain/cache/redisOps.service');
   return await RedisOpsService.listVentanas(bancaId);
 }
 
@@ -42,6 +44,7 @@ async function fetchVendorsApi(query?: string, bancaId?: string | null, ventanaI
     const res = await callOpsApi('/redis/vendors', { query, bancaId, ventanaId });
     return res.vendors || [];
   }
+  const { RedisOpsService } = await import('../../domain/cache/redisOps.service');
   return await RedisOpsService.listVendors(query, bancaId, ventanaId);
 }
 
@@ -54,6 +57,7 @@ async function fetchBancaKeysApi(bancaId: string): Promise<{
     const res = await callOpsApi('/redis/banca/keys', { bancaId });
     return res;
   }
+  const { RedisOpsService } = await import('../../domain/cache/redisOps.service');
   return await RedisOpsService.listBancaKeys(bancaId);
 }
 
@@ -65,6 +69,7 @@ async function deleteBancaKeysApi(params: { keys?: string[]; bancaId: string; de
     const res = await callOpsApi('/redis/banca/delete', params);
     return res;
   }
+  const { RedisOpsService } = await import('../../domain/cache/redisOps.service');
   if (params.deleteAll) {
     return await RedisOpsService.deleteAllBancaKeys(params.bancaId);
   }
@@ -80,6 +85,7 @@ async function fetchVentanaKeysApi(ventanaId: string): Promise<{
     const res = await callOpsApi('/redis/ventana/keys', { ventanaId });
     return res;
   }
+  const { RedisOpsService } = await import('../../domain/cache/redisOps.service');
   return await RedisOpsService.listVentanaKeys(ventanaId);
 }
 
@@ -91,6 +97,7 @@ async function deleteVentanaKeysApi(params: { keys?: string[]; ventanaId: string
     const res = await callOpsApi('/redis/ventana/delete', params);
     return res;
   }
+  const { RedisOpsService } = await import('../../domain/cache/redisOps.service');
   if (params.deleteAll) {
     return await RedisOpsService.deleteAllVentanaKeys(params.ventanaId);
   }
@@ -106,6 +113,7 @@ async function fetchVendorKeysApi(vendedorId: string): Promise<{
     const res = await callOpsApi('/redis/vendor/keys', { vendedorId });
     return res;
   }
+  const { RedisOpsService } = await import('../../domain/cache/redisOps.service');
   return await RedisOpsService.listVendorKeys(vendedorId);
 }
 
@@ -117,6 +125,7 @@ async function deleteVendorKeysApi(params: { keys?: string[]; vendedorId: string
     const res = await callOpsApi('/redis/vendor/delete', params);
     return res;
   }
+  const { RedisOpsService } = await import('../../domain/cache/redisOps.service');
   if (params.deleteAll) {
     return await RedisOpsService.deleteAllVendorKeys(params.vendedorId);
   }

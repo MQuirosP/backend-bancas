@@ -1,10 +1,5 @@
 import 'dotenv/config';
 import { renderProgressBar, IS_RENDER, callOpsApi } from './helpers';
-import prisma from '../../core/prismaClient';
-import { AccountStatementSyncService } from '../../domain/accounts/accounts.sync.service';
-import { recalculateMonthlyClosingForDimension } from '../../domain/accounts/monthlyClosing.service';
-import ActivityService from '../../core/activity.service';
-import { ActivityType } from '../../generated/prisma/client';
 
 /**
  * fix-statements-cli.ts
@@ -26,12 +21,7 @@ export async function runFixStatements(options?: {
   console.log(`\n======================================================================`);
   console.log(`🔧  REPARACIÓN Y RE-SINCRONIZACIÓN DE SALDOS (ACCOUNT STATEMENT & MONTHLY CLOSING)`);
   console.log(`📅  Rango: ${fromDateStr} a ${toDateStr}`);
-  if (targetBancaId) {
-    const b = await prisma.banca.findUnique({ where: { id: targetBancaId }, select: { name: true } });
-    console.log(`🏛️  Banca Filtrada: ${b?.name || 'ID ' + targetBancaId}`);
-  } else {
-    console.log(`🏛️  Bancas: TODAS`);
-  }
+  console.log(`🏛️  Banca: ${targetBancaId ? 'ID ' + targetBancaId : 'TODAS'}`);
   console.log(`======================================================================\n`);
 
   if (IS_RENDER) {
@@ -43,6 +33,12 @@ export async function runFixStatements(options?: {
     console.log(`======================================================================\n`);
     return;
   }
+
+  const { default: prisma } = await import('../../core/prismaClient');
+  const { AccountStatementSyncService } = await import('../../domain/accounts/accounts.sync.service');
+  const { recalculateMonthlyClosingForDimension } = await import('../../domain/accounts/monthlyClosing.service');
+  const { default: ActivityService } = await import('../../core/activity.service');
+  const { ActivityType } = await import('../../generated/prisma/client');
 
   // MODO LOCAL: Conexión Prisma directa sin cambios
   const dates: string[] = [];

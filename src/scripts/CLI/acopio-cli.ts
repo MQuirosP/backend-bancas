@@ -1,9 +1,5 @@
 import 'dotenv/config';
-import prisma from '../../core/prismaClient';
 import { renderProgressBar, colors, ask, formatCRC, IS_RENDER, callOpsApi } from './helpers';
-import { DailyNumberSalesService } from '../../domain/sorteo/dailyNumberSales.service';
-import ActivityService from '../../core/activity.service';
-import { ActivityType } from '../../generated/prisma/client';
 
 /**
  * acopio-cli.ts
@@ -25,12 +21,7 @@ export async function runAcopioSalesRebuild(options?: {
   console.log(`\n======================================================================`);
   console.log(`🧮  AUDITORÍA Y RE-AGREGACIÓN DE ACOPIO DE VENTAS (DAILY NUMBER SALES)`);
   console.log(`📅  Rango: ${fromDateStr} a ${toDateStr}`);
-  if (targetBancaId) {
-    const b = await prisma.banca.findUnique({ where: { id: targetBancaId }, select: { name: true } });
-    console.log(`🏛️  Banca Filtrada: ${b?.name || 'ID ' + targetBancaId}`);
-  } else {
-    console.log(`🏛️  Bancas: TODAS`);
-  }
+  console.log(`🏛️  Banca: ${targetBancaId ? 'ID ' + targetBancaId : 'TODAS'}`);
   console.log(`======================================================================\n`);
 
   if (IS_RENDER) {
@@ -47,6 +38,11 @@ export async function runAcopioSalesRebuild(options?: {
     console.log(`======================================================================\n`);
     return;
   }
+
+  const { default: prisma } = await import('../../core/prismaClient');
+  const { DailyNumberSalesService } = await import('../../domain/sorteo/dailyNumberSales.service');
+  const { default: ActivityService } = await import('../../core/activity.service');
+  const { ActivityType } = await import('../../generated/prisma/client');
 
   // MODO LOCAL: Conexión Prisma directa sin cambios
   const [fromY, fromM, fromD] = fromDateStr.split('-').map(Number);

@@ -5,8 +5,10 @@ import { opsRateLimiter } from '../../../middlewares/rateLimit.middleware';
 import { validateBody } from '../../../middlewares/validate.middleware';
 import {
   handleSorteoActionSchema,
+  querySorteosDataSchema,
   checkStatementsSchema,
   fixStatementsSchema,
+  checkCierresSchema,
   acopioRebuildSchema,
   previewTicketsSchema,
   cancelTicketsSchema,
@@ -35,8 +37,10 @@ router.use(protectOpsHardened);
 
 // 3. Rutas de operaciones con validación de esquema Zod
 router.post('/sorteos/action', validateBody(handleSorteoActionSchema), OpsController.handleSorteoAction);
+router.post('/sorteos/query', validateBody(querySorteosDataSchema), OpsController.querySorteosData);
 router.post('/statements/check', validateBody(checkStatementsSchema), OpsController.checkStatements);
 router.post('/statements/fix', validateBody(fixStatementsSchema), OpsController.fixStatements);
+router.post('/cierres/check', validateBody(checkCierresSchema), OpsController.checkCierres);
 router.post('/acopio/rebuild', validateBody(acopioRebuildSchema), OpsController.auditAndRebuildAcopio);
 router.post('/tickets/preview', validateBody(previewTicketsSchema), OpsController.previewTickets);
 router.post('/tickets/cancel', validateBody(cancelTicketsSchema), OpsController.cancelTickets);

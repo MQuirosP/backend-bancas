@@ -8,10 +8,10 @@
   },
   "scripts": {
     "start": "node --max-old-space-size=300 --max-semi-space-size=16 dist/index.js",
-    "ops": "node --max-old-space-size=100 dist/scripts/CLI/main-wizard.js",
+    "ops": "node --max-old-space-size=40 dist/scripts/CLI/main-wizard.js",
     "ops:dev": "npx tsx src/scripts/CLI/main-wizard.ts",
     "monitor": "node dist/scripts/CLI/monitor-evaluation-cli.js",
-    "cli": "node --max-old-space-size=100 dist/scripts/CLI/main-wizard.js",
+    "cli": "node --max-old-space-size=40 dist/scripts/CLI/main-wizard.js",
     "dev": "nodemon",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
