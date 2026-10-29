@@ -1325,17 +1325,11 @@ export const UserService = {
       deletedKeys: [],
     };
 
+    // Aislamiento estricto: solo se purgan las claves del usuario específico
     if (targetUser.role === Role.VENDEDOR) {
       deleteResult = await RedisOpsService.deleteAllVendorKeys(targetUser.id);
-    } else if (targetUser.role === Role.VENTANA && targetUser.ventanaId) {
-      deleteResult = await RedisOpsService.deleteAllVentanaKeys(targetUser.ventanaId);
-    } else if (targetUser.role === Role.BANCA && targetUser.bancaId) {
-      deleteResult = await RedisOpsService.deleteAllBancaKeys(targetUser.bancaId);
     } else {
-      deleteResult = await RedisOpsService.deleteKeys(
-        [`auth:session:${targetUser.id}`, `user:${targetUser.id}`],
-        targetUser.id
-      );
+      deleteResult = await RedisOpsService.deleteAllUserKeys(targetUser.id);
     }
 
     // 4. Invalidar cachés genéricas L1/L2

@@ -37,6 +37,7 @@ const mockDeleteAllVendorKeys = jest.fn().mockResolvedValue({
 jest.mock('../../src/domain/cache/redisOps.service', () => ({
   RedisOpsService: {
     deleteAllVendorKeys: (...args: any[]) => mockDeleteAllVendorKeys(...args),
+    deleteAllUserKeys: jest.fn().mockResolvedValue({ deletedCount: 1, deletedKeys: [] }),
     deleteAllVentanaKeys: jest.fn().mockResolvedValue({ deletedCount: 2, deletedKeys: [] }),
     deleteAllBancaKeys: jest.fn().mockResolvedValue({ deletedCount: 3, deletedKeys: [] }),
     deleteKeys: jest.fn().mockResolvedValue({ deletedCount: 1, deletedKeys: [] }),

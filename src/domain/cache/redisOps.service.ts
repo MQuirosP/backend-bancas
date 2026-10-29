@@ -512,6 +512,30 @@ export class RedisOpsService {
   }
 
   /**
+   * Purga estrictamente las claves asociadas al ID o username de un usuario
+   */
+  static async deleteAllUserKeys(userId: string): Promise<{
+    deletedCount: number;
+    deletedKeys: string[];
+  }> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true },
+    });
+    if (!user) return { deletedCount: 0, deletedKeys: [] };
+
+    const redis = await this.getReadyClient();
+    const patterns = [`*${user.id}*`];
+    if (user.username && user.username !== user.id) {
+      patterns.push(`*${user.username}*`);
+    }
+
+    const items = await this.scanAndResolveKeys(redis, patterns);
+    const keyNames = items.map((k) => k.key);
+    return await this.deleteKeys(keyNames, user.id);
+  }
+
+  /**
    * Purga todas las claves de un Listero (Ventana) en Redis
    */
   static async deleteAllVentanaKeys(ventanaId: string): Promise<{
