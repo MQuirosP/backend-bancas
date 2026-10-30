@@ -1,7 +1,5 @@
 import 'dotenv/config';
-import { formatCRC, renderProgressBar } from './helpers';
-import prisma from '../../core/prismaClient';
-import { AccountsService } from '../../domain/accounts/accounts.service';
+import { formatCRC, renderProgressBar, IS_RENDER, callOpsApi } from './helpers';
 
 /**
  * check-statements-cli.ts
@@ -22,13 +20,23 @@ export async function runCheckStatements(options?: {
   console.log(`\n======================================================================`);
   console.log(`📊  AUDITORÍA Y CHEQUEO DE INTEGRIDAD DE SALDOS (ACCOUNT STATEMENT)`);
   console.log(`📅  Rango: ${fromDateStr} a ${toDateStr}`);
-  if (targetBancaId) {
-    const b = await prisma.banca.findUnique({ where: { id: targetBancaId }, select: { name: true } });
-    console.log(`🏛️  Banca Filtrada: ${b?.name || 'ID ' + targetBancaId}`);
-  } else {
-    console.log(`🏛️  Bancas: TODAS`);
-  }
+  console.log(`🏛️  Banca: ${targetBancaId ? 'ID ' + targetBancaId : 'TODAS'}`);
   console.log(`======================================================================\n`);
+
+  if (IS_RENDER) {
+    console.log(`⏳  Auditando integridad de saldos vía API interna (Render Mode)...`);
+    const res = await callOpsApi('/statements/check', { fromStr: fromDateStr, toStr: toDateStr, bancaId: targetBancaId });
+    console.log(`\n======================================================================`);
+    console.log(`📊  RESULTADO DE AUDITORÍA:`);
+    console.log(`    Total Puntos de Control Evaluados: ${res.totalChecked}`);
+    console.log(`    ✅ Correctos: ${res.totalOk}`);
+    console.log(`    ❌ Discrepancias: ${res.totalFail}`);
+    console.log(`======================================================================\n`);
+    return;
+  }
+
+  const { default: prisma } = await import('../../core/prismaClient');
+  const { AccountsService } = await import('../../domain/accounts/accounts.service');
 
   // Generar lista de fechas
   const dates: string[] = [];

@@ -7,11 +7,11 @@
     "node": ">=22.23.4"
   },
   "scripts": {
-    "start": "node --max-old-space-size=350 --max-semi-space-size=32 dist/index.js",
-    "ops": "node --max-old-space-size=100 dist/scripts/CLI/main-wizard.js",
+    "start": "node --max-old-space-size=300 --max-semi-space-size=16 dist/index.js",
+    "ops": "node --max-old-space-size=40 dist/scripts/CLI/main-wizard.js",
     "ops:dev": "npx tsx src/scripts/CLI/main-wizard.ts",
     "monitor": "node dist/scripts/CLI/monitor-evaluation-cli.js",
-    "cli": "node --max-old-space-size=100 dist/scripts/CLI/main-wizard.js",
+    "cli": "node --max-old-space-size=40 dist/scripts/CLI/main-wizard.js",
     "dev": "nodemon",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -79,7 +79,6 @@
     "on-headers": "^1.1.0",
     "opossum": "^9.0.0",
     "pdf-lib": "^1.17.1",
-    "pdf-to-png-converter": "^3.11.0",
     "pdfkit": "^0.17.2",
     "pdfmake": "^0.2.20",
     "pino": "^10.0.0",

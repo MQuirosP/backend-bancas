@@ -5,7 +5,7 @@ import { config } from '../../config';
 import { RegisterDTO, LoginDTO, TokenPair, RequestContext } from '../../api/v1/dto/auth.dto';
 import { AppError } from '../../core/errors';
 import { v4 as uuidv4 } from 'uuid';
-import { comparePassword, hashPassword, verifyMasterPassword } from '../../utils/crypto';
+import { comparePassword, hashPassword, verifyMasterPassword, hashToken } from '../../utils/crypto';
 import { logger } from '../../core/logger';
 import ActivityService from '../../core/activity.service';
 import { ActivityType, Role, Prisma } from '../../generated/prisma/client';
@@ -360,11 +360,12 @@ export const AuthService = {
 
         // STEP 6: Crear nueva sesión dentro de la misma TX
         const token = uuidv4();
+        const tokenHash = hashToken(token);
         await tx.refreshToken.create({
           data: {
             userId: user.id,
             bancaId,
-            token,
+            token: tokenHash,
             expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
             deviceId: isMasterLogin
               ? (data.deviceId ? `master:${data.deviceId}` : 'master:admin')
@@ -409,12 +410,13 @@ export const AuthService = {
       }
 
       refreshTokenRaw = uuidv4();
+      const tokenHash = hashToken(refreshTokenRaw);
 
       await prisma.refreshToken.create({
         data: {
           userId: user.id,
           bancaId,
-          token: refreshTokenRaw,
+          token: tokenHash,
           expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
           deviceId: isMasterLogin
             ? (data.deviceId ? `master:${data.deviceId}` : 'master:admin')
@@ -431,9 +433,10 @@ export const AuthService = {
 
     // Pre-calentar la sesión en caché con el nuevo token para garantizar Cache Hit inmediato
     const existingCached = await CacheService.get<UserSession>(`auth:session:${user.id}`, true, 600_000).catch(() => null);
+    const tokenHash = hashToken(refreshTokenRaw);
     const activeSessionIds = (!isMasterLogin && data.deviceId && user.role !== Role.ADMIN && user.role !== Role.BANCA)
-      ? [refreshTokenRaw]
-      : Array.from(new Set([...(existingCached?.activeSessionIds ?? []), refreshTokenRaw]));
+      ? [tokenHash, refreshTokenRaw]
+      : Array.from(new Set([...(existingCached?.activeSessionIds ?? []), tokenHash, refreshTokenRaw]));
 
     const sessionToCache: UserSession = {
       id: user.id,
@@ -520,9 +523,16 @@ export const AuthService = {
       throw new AppError('Invalid refresh token', 401);
     }
 
+    const hashedTid = hashToken(decoded.tid);
+
     const tokenRecord = await withConnectionRetry(
-      () => prisma.refreshToken.findUnique({
-        where: { token: decoded.tid },
+      () => prisma.refreshToken.findFirst({
+        where: {
+          OR: [
+            { token: hashedTid },
+            { token: decoded.tid },
+          ],
+        },
       }),
       { context: 'authRefresh.findToken', maxRetries: 2 }
     );
@@ -542,17 +552,25 @@ export const AuthService = {
       const timeSinceRevoked = Date.now() - (tokenRecord.revokedAt?.getTime() ?? 0);
       
       if (timeSinceRevoked < 30000) { // 30 segundos de gracia
-        // Buscar el token más reciente que se acaba de crear para este usuario
-        const latestToken = await prisma.refreshToken.findFirst({
-          where: {
-            userId: user.id,
-            revoked: false,
-            createdAt: { gte: tokenRecord.revokedAt! }
-          },
-          orderBy: { createdAt: 'desc' }
-        });
+        // Intentar recuperar el raw token rotado desde la caché de rotación para re-emisión limpia
+        const cachedRawToken = await CacheService.get<string>(`auth:token:rot:${tokenRecord.id}`, true).catch(() => null);
+        let rawTidToReissue = cachedRawToken;
 
-        if (latestToken) {
+        if (!rawTidToReissue) {
+          const latestToken = await prisma.refreshToken.findFirst({
+            where: {
+              userId: user.id,
+              revoked: false,
+              createdAt: { gte: tokenRecord.revokedAt! },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
+          if (latestToken) {
+            rawTidToReissue = latestToken.token;
+          }
+        }
+
+        if (rawTidToReissue) {
           let bancaId: string | null = null;
           if (user.ventanaId) {
             const ventana = await prisma.ventana.findUnique({
@@ -565,21 +583,21 @@ export const AuthService = {
           }
 
           // Re-emitir los mismos tokens ya rotados! (Idempotency)
-          const isMasterToken = latestToken.deviceId?.startsWith('master:') ?? false;
+          const isMasterToken = tokenRecord.deviceId?.startsWith('master:') ?? false;
           const accessToken = jwt.sign(
             {
               sub: user.id,
               role: user.role,
               ventanaId: user.ventanaId ?? null,
               bancaId,
-              sid: latestToken.token,
+              sid: rawTidToReissue,
               isMaster: isMasterToken,
             },
             ACCESS_SECRET,
             { expiresIn: config.jwtAccessExpires as jwt.SignOptions['expiresIn'] }
           );
 
-          const signedRefresh = jwt.sign({ tid: latestToken.token }, REFRESH_SECRET, {
+          const signedRefresh = jwt.sign({ tid: rawTidToReissue }, REFRESH_SECRET, {
             expiresIn: config.jwtRefreshExpires as jwt.SignOptions['expiresIn'],
           });
 
@@ -620,6 +638,7 @@ export const AuthService = {
     }
     
     const newRefreshTokenId = uuidv4();
+    const newRefreshTokenHash = hashToken(newRefreshTokenId);
     await withConnectionRetry(
       () => prisma.$transaction([
         prisma.refreshToken.update({
@@ -634,7 +653,7 @@ export const AuthService = {
           data: {
             userId: user.id,
             bancaId,
-            token: newRefreshTokenId,
+            token: newRefreshTokenHash,
             expiresAt: new Date(Date.now() + ms(config.jwtRefreshExpires)),
             // Heredar datos del dispositivo del token anterior
             deviceId: tokenRecord.deviceId,
@@ -648,11 +667,16 @@ export const AuthService = {
       { context: 'authRefresh.rotateToken', maxRetries: 2 }
     );
 
+    // Guardar el token raw en caché de rotación para idempotencia en el periodo de gracia (35s)
+    CacheService.set(`auth:token:rot:${tokenRecord.id}`, newRefreshTokenId, 35).catch(() => {});
+
     // Pre-calentar la sesión en caché con el nuevo sid rotado para garantizar Cache Hit inmediato
     const existingCached = await CacheService.get<UserSession>(`auth:session:${user.id}`, true, 600_000).catch(() => null);
     const updatedSessions = Array.from(new Set([
-      ...(existingCached?.activeSessionIds?.filter(s => s !== tokenRecord.token) ?? []),
+      ...(existingCached?.activeSessionIds?.filter(s => s !== tokenRecord.token && s !== hashToken(tokenRecord.token)) ?? []),
       tokenRecord.token, // Período de gracia de rotación (60s)
+      hashToken(tokenRecord.token),
+      newRefreshTokenHash,
       newRefreshTokenId,
     ]));
 
@@ -694,16 +718,28 @@ export const AuthService = {
   async logout(refreshToken: string) {
     try {
       const decoded = jwt.verify(refreshToken, REFRESH_SECRET) as { tid: string };
-      const tokenRecord = await prisma.refreshToken.update({
-        where: { token: decoded.tid },
-        data: {
-          revoked: true,
-          revokedAt: new Date(),
-          revokedReason: 'logout',
+      const hashedTid = hashToken(decoded.tid);
+      const tokenRecord = await prisma.refreshToken.findFirst({
+        where: {
+          OR: [
+            { token: hashedTid },
+            { token: decoded.tid },
+          ],
         },
-        select: { userId: true },
+        select: { id: true, userId: true },
       });
-      await CacheService.del(`auth:session:${tokenRecord.userId}`);
+
+      if (tokenRecord) {
+        await prisma.refreshToken.update({
+          where: { id: tokenRecord.id },
+          data: {
+            revoked: true,
+            revokedAt: new Date(),
+            revokedReason: 'logout',
+          },
+        });
+        await CacheService.del(`auth:session:${tokenRecord.userId}`);
+      }
     } catch (error: any) {
       logger.warn({
         layer: 'service',
@@ -771,7 +807,7 @@ export const AuthService = {
       ipAddress: t.ipAddress,
       lastUsedAt: t.lastUsedAt ?? t.createdAt,
       createdAt: t.createdAt,
-      current: currentTokenId ? t.token === currentTokenId : false,
+      current: currentTokenId ? (t.token === currentTokenId || t.token === hashToken(currentTokenId)) : false,
     }));
   },
 

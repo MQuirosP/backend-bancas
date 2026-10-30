@@ -290,7 +290,7 @@ export const RestrictionRuleService = {
       maxTotal: data.maxTotal ?? null,
       baseAmount: data.baseAmount ?? null,
       salesPercentage: data.salesPercentage ?? null,
-      appliesToVendedor: data.appliesToVendedor ?? false,
+      appliesToVendedor: data.userId ? true : (data.appliesToVendedor ?? false),
       appliesToDate: data.appliesToDate ?? null,
       appliesToHour: data.appliesToHour ?? null,
       salesCutoffMinutes: data.salesCutoffMinutes ?? null,
@@ -438,8 +438,12 @@ export const RestrictionRuleService = {
       }
     }
 
+    const effectiveUserId = data.userId !== undefined ? data.userId : current.userId;
+    const resolvedAppliesToVendedor = effectiveUserId ? true : (data.appliesToVendedor !== undefined ? data.appliesToVendedor : current.appliesToVendedor);
+
     const payload: UpdateRestrictionRuleInput = {
       ...data,
+      appliesToVendedor: resolvedAppliesToVendedor,
       message:
         data.message === undefined
           ? undefined
@@ -453,13 +457,13 @@ export const RestrictionRuleService = {
     if (finalIsActive) {
       const finalState = {
         number: data.number !== undefined ? data.number : current.number,
-        userId: data.userId !== undefined ? data.userId : current.userId,
+        userId: effectiveUserId,
         ventanaId: data.ventanaId !== undefined ? data.ventanaId : current.ventanaId,
         bancaId: data.bancaId !== undefined ? data.bancaId : current.bancaId,
         loteriaId: loteriaId,
         multiplierId: multiplierId,
         isAutoDate: data.isAutoDate !== undefined ? data.isAutoDate : current.isAutoDate,
-        appliesToVendedor: data.appliesToVendedor !== undefined ? data.appliesToVendedor : current.appliesToVendedor,
+        appliesToVendedor: resolvedAppliesToVendedor,
         appliesToDate: data.appliesToDate !== undefined ? data.appliesToDate : (current.appliesToDate ? new Date(current.appliesToDate) : null),
         appliesToHour: data.appliesToHour !== undefined ? data.appliesToHour : current.appliesToHour,
         salesCutoffMinutes: data.salesCutoffMinutes !== undefined ? data.salesCutoffMinutes : current.salesCutoffMinutes,
@@ -1127,4 +1131,28 @@ export const RestrictionRuleService = {
       vendorSpecific: filteredVendorSpecific.map(cleanRule),
     };
   },
+
+  /**
+   * Invalida la micro-caché L1 en RAM de balances precalculados de restricciones por vendedor/sorteo
+   */
+  invalidateVendorBalancesL1Cache(vendorId?: string, sorteoId?: string): void {
+    if (vendorId && sorteoId) {
+      vendorBalancesL1Cache.delete(`${vendorId}:${sorteoId}`);
+    } else if (sorteoId) {
+      for (const key of vendorBalancesL1Cache.keys()) {
+        if (key.endsWith(`:${sorteoId}`)) {
+          vendorBalancesL1Cache.delete(key);
+        }
+      }
+    } else if (vendorId) {
+      for (const key of vendorBalancesL1Cache.keys()) {
+        if (key.startsWith(`${vendorId}:`)) {
+          vendorBalancesL1Cache.delete(key);
+        }
+      }
+    } else {
+      vendorBalancesL1Cache.clear();
+    }
+  },
 };
+

@@ -1342,6 +1342,9 @@ export class VendorCreditService {
         const { clearStatusMeRamCache } = await import("../../api/v1/controllers/credit.controller");
         clearStatusMeRamCache(vendedorId);
       } catch (_) {}
+
+      // Limpiar micro-caché en memoria de listados de crédito de administrador/ventana
+      this.listScopeCache.clear();
     } catch (err: any) {
       markRedisError("VendorCreditService.updateBaseBalance");
       logger.error({
@@ -1658,6 +1661,35 @@ export class VendorCreditService {
       newStatus,
       { limit: newState.limit, bancaId: newState.bancaId, ventanaId: newState.ventanaId }
     );
+  }
+
+  /**
+   * Helper mono-vendedor para obtener el resumen de crédito (creditInfo)
+   * Reutiliza la caché RAM local y SingleFlight de resolveSingleVendorStatus
+   */
+  static async getVendorCreditInfo(vendedorId: string): Promise<{
+    limit: number | null;
+    effectiveBalance: number;
+    percentageUsed: number;
+    status: CreditStatus;
+  } | null> {
+    if (!config.creditLimit.enabled) return null;
+    try {
+      const resp = await this.getVendorsCreditStatus(
+        { id: vendedorId, role: Role.VENDEDOR },
+        { requestedVendedorIds: [vendedorId] }
+      );
+      const item = resp.items?.[0];
+      if (!item) return null;
+      return {
+        limit: item.creditLimit ?? null,
+        effectiveBalance: item.effectiveBalance,
+        percentageUsed: item.percentageUsed,
+        status: item.status,
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**

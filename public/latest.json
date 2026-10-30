@@ -1,17 +1,17 @@
 {
-  "versionName": "1.0.28",
-  "versionCode": 34,
-  "buildNumber": 34,
-  "minSupportedVersion": "1.0.27",
+  "versionName": "1.0.30",
+  "versionCode": 36,
+  "buildNumber": 36,
+  "minSupportedVersion": "1.0.29",
   "forceUpdate": true,
-  "changelog": "Mejoras de rendimiento y corrección de errores",
-  "releasedAt": "2026-10-21T00:00:00Z",
+  "changelog": "Se ha actualizado la interfaz de usuario para dispositivos Android",
+  "releasedAt": "2026-10-24T00:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "af4ab6eee1658cd9347fab7d8d05dfeb5892ef889fdf02f3d035215aa648d23a"
+      "sha256": "c5ac1abd3ae9f7a27f99ace1672824c80829249e71acd4ce83e540afa8e0db41"
     },
     "arm64-v8a": {
-      "sha256": "af4ab6eee1658cd9347fab7d8d05dfeb5892ef889fdf02f3d035215aa648d23a"
+      "sha256": "c5ac1abd3ae9f7a27f99ace1672824c80829249e71acd4ce83e540afa8e0db41"
     }
   }
 }

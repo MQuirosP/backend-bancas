@@ -63,6 +63,11 @@ export const resilienceMiddleware = (req: Request, res: Response, next: NextFunc
     const requestId = uuidv4();
     activeOperationsService.register(requestId, 'request', `${req.method} ${req.path}`);
 
+    // Las operaciones de soporte interno (/ops) como auditorías y reparaciones contables masivas
+    // requieren ventanas de procesamiento mayores (hasta 5 minutos).
+    const isOps = req.path.startsWith('/api/v1/ops') || (req as any).baseUrl?.startsWith('/api/v1/ops') || req.originalUrl?.startsWith('/api/v1/ops');
+    const effectiveTimeoutMs = isOps ? 300000 : config.hardening.requestTimeoutMs;
+
     let released = false;
     const release = () => {
         if (released) return;
@@ -77,7 +82,7 @@ export const resilienceMiddleware = (req: Request, res: Response, next: NextFunc
             logger.error({
                 layer: 'middleware',
                 action: 'REQUEST_TIMEOUT_EXCEEDED',
-                payload: { path: req.path, timeout: config.hardening.requestTimeoutMs }
+                payload: { path: req.path, timeout: effectiveTimeoutMs }
             });
             release();
             res.status(503).json({
@@ -85,7 +90,7 @@ export const resilienceMiddleware = (req: Request, res: Response, next: NextFunc
                 message: 'Request timed out.'
             });
         }
-    }, config.hardening.requestTimeoutMs);
+    }, effectiveTimeoutMs);
 
     // Limpiar al terminar
     res.on('finish', release);

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { ask, isBack, colors, formatCRC, clearScreen, IS_RENDER, callOpsApi } from './helpers';
-import { VendorOpsService, VendorAuditInfo } from '../../domain/accounts/vendorOps.service';
+import type { VendorAuditInfo } from '../../domain/accounts/vendorOps.service';
 
 /**
  * vendor-ops-cli.ts
@@ -24,6 +24,7 @@ async function fetchBancas(): Promise<Array<{ id: string; name: string }>> {
     const res = await callOpsApi('/vendor/bancas', {});
     return res.bancas || [];
   }
+  const { VendorOpsService } = await import('../../domain/accounts/vendorOps.service');
   return await VendorOpsService.listBancas();
 }
 
@@ -32,6 +33,7 @@ async function fetchVentanas(bancaId: string): Promise<Array<{ id: string; name:
     const res = await callOpsApi('/vendor/ventanas', { bancaId });
     return res.ventanas || [];
   }
+  const { VendorOpsService } = await import('../../domain/accounts/vendorOps.service');
   return await VendorOpsService.listVentanas(bancaId);
 }
 
@@ -40,6 +42,7 @@ async function searchVendorsApi(query?: string, bancaId?: string | null): Promis
     const res = await callOpsApi('/vendor/search', { query, bancaId });
     return res.vendors || [];
   }
+  const { VendorOpsService } = await import('../../domain/accounts/vendorOps.service');
   return await VendorOpsService.searchVendors(query, bancaId);
 }
 
@@ -48,6 +51,7 @@ async function getVendorAuditApi(vendedorId: string): Promise<VendorAuditInfo> {
     const res = await callOpsApi('/vendor/audit', { vendedorId });
     return res.audit;
   }
+  const { VendorOpsService } = await import('../../domain/accounts/vendorOps.service');
   return await VendorOpsService.getVendorAudit(vendedorId);
 }
 
@@ -56,6 +60,7 @@ async function transferVendorApi(params: any): Promise<any> {
     const res = await callOpsApi('/vendor/transfer', params);
     return res.result;
   }
+  const { VendorOpsService } = await import('../../domain/accounts/vendorOps.service');
   return await VendorOpsService.transferVendor(params);
 }
 
@@ -64,6 +69,7 @@ async function adjustVendorBalanceApi(params: any): Promise<any> {
     const res = await callOpsApi('/vendor/adjust-balance', params);
     return res.result;
   }
+  const { VendorOpsService } = await import('../../domain/accounts/vendorOps.service');
   return await VendorOpsService.adjustBalance(params);
 }
 

@@ -1,12 +1,12 @@
 import 'dotenv/config';
-import prisma from '../../core/prismaClient';
 import { crDateService } from '../../utils/crDateService';
-import SorteoRepository from '../../repositories/sorteo.repository';
-import { SorteoEvaluationCoordinator } from '../../domain/sorteo/sorteoEvaluation.coordinator';
-import { AccountStatementSyncService } from '../../domain/accounts/accounts.sync.service';
-import ActivityService from '../../core/activity.service';
-import { SorteoStatus, ActivityType } from '../../generated/prisma/client';
 import { ask, isBack, colors, colorizeStatus, colorizeSorteoId, colorizeWinningNumber, clearScreen, IS_RENDER, callOpsApi } from './helpers';
+
+const SorteoStatus = {
+  OPEN: 'OPEN',
+  EVALUATED: 'EVALUATED',
+  CLOSED: 'CLOSED'
+};
 
 /**
  * sorteos-cli.ts
@@ -60,11 +60,17 @@ export async function runSorteosWizard() {
       console.log(`🎰  ${colors.bold}${colors.brightCyan}ASISTENTE DE SORTEOS │ FECHA: ${targetDate}${colors.reset}`);
       console.log(`======================================================================\n`);
 
-      bancas = await prisma.banca.findMany({
-        where: { isActive: true },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' }
-      });
+      if (IS_RENDER) {
+        const res = await callOpsApi('/vendor/bancas', {});
+        bancas = res.bancas || [];
+      } else {
+        const { default: prisma } = await import('../../core/prismaClient');
+        bancas = await prisma.banca.findMany({
+          where: { isActive: true },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' }
+        });
+      }
 
       console.log(`2. Seleccione la Banca Multi-Tenant:`);
       console.log(`   [0] Todas las Bancas / Global`);
@@ -91,16 +97,26 @@ export async function runSorteosWizard() {
       console.log(`🎰  ${colors.bold}${colors.brightCyan}ASISTENTE DE SORTEOS │ FECHA: ${targetDate} │ BANCA: ${selectedBanca ? selectedBanca.name : 'TODAS'}${colors.reset}`);
       console.log(`======================================================================\n`);
 
-      loteriasRaw = await prisma.loteria.findMany({
-        where: {
-          isActive: true,
-          ...(selectedBanca ? { OR: [{ bancaId: selectedBanca.id }, { bancaId: null }] } : {})
-        },
-        select: { id: true, name: true, bancaId: true },
-        orderBy: { name: 'asc' }
-      });
+      if (IS_RENDER) {
+        const res = await callOpsApi('/sorteos/query', {
+          queryType: 'LOTERIAS',
+          bancaId: selectedBanca ? selectedBanca.id : undefined
+        });
+        loteriasRaw = res.loteriasRaw || [];
+        uniqueLoteriaNames = res.uniqueNames || [];
+      } else {
+        const { default: prisma } = await import('../../core/prismaClient');
+        loteriasRaw = await prisma.loteria.findMany({
+          where: {
+            isActive: true,
+            ...(selectedBanca ? { OR: [{ bancaId: selectedBanca.id }, { bancaId: null }] } : {})
+          },
+          select: { id: true, name: true, bancaId: true },
+          orderBy: { name: 'asc' }
+        });
 
-      uniqueLoteriaNames = Array.from(new Set(loteriasRaw.map(l => l.name))).sort();
+        uniqueLoteriaNames = Array.from(new Set(loteriasRaw.map(l => l.name))).sort();
+      }
 
       console.log(`3. Seleccione la Lotería:`);
       console.log(`   [0] Todas las Loterías`);
@@ -131,20 +147,31 @@ export async function runSorteosWizard() {
       console.log(`📋  ${colors.bold}SORTEOS ENCONTRADOS PARA EL ${targetDate} │ BANCA: ${selectedBanca ? selectedBanca.name : 'TODAS'} │ LOTERÍA: ${selectedLoteriaName || 'TODAS'}${colors.reset}`);
       console.log(`======================================================================\n`);
 
-      sorteos = await prisma.sorteo.findMany({
-        where: {
-          scheduledAt: { gte: startOfDayUTC, lte: endOfDayUTC },
-          isActive: true,
-          ...(selectedBanca ? { bancaId: selectedBanca.id } : {}),
-          ...(matchingLoteriaIds.length > 0 ? { loteriaId: { in: matchingLoteriaIds } } : {}),
-        },
-        include: {
-          loteria: { select: { id: true, name: true } },
-          banca: { select: { id: true, name: true } },
-          extraMultiplier: { select: { id: true, name: true, valueX: true } }
-        },
-        orderBy: { scheduledAt: 'asc' }
-      });
+      if (IS_RENDER) {
+        const res = await callOpsApi('/sorteos/query', {
+          queryType: 'SORTEOS',
+          dateStr: targetDate,
+          bancaId: selectedBanca ? selectedBanca.id : undefined,
+          loteriaName: selectedLoteriaName || undefined
+        });
+        sorteos = res.sorteos || [];
+      } else {
+        const { default: prisma } = await import('../../core/prismaClient');
+        sorteos = await prisma.sorteo.findMany({
+          where: {
+            scheduledAt: { gte: startOfDayUTC, lte: endOfDayUTC },
+            isActive: true,
+            ...(selectedBanca ? { bancaId: selectedBanca.id } : {}),
+            ...(matchingLoteriaIds.length > 0 ? { loteriaId: { in: matchingLoteriaIds } } : {}),
+          },
+          include: {
+            loteria: { select: { id: true, name: true } },
+            banca: { select: { id: true, name: true } },
+            extraMultiplier: { select: { id: true, name: true, valueX: true } }
+          },
+          orderBy: { scheduledAt: 'asc' }
+        });
+      }
 
       if (sorteos.length === 0) {
         console.log(`⚠️  No se encontraron sorteos para los criterios seleccionados.`);
@@ -220,15 +247,26 @@ export async function runSorteosWizard() {
           continue;
         }
 
-        const extraMultipliers = await prisma.loteriaMultiplier.findMany({
-          where: {
+        let extraMultipliers: any[] = [];
+        if (IS_RENDER) {
+          const res = await callOpsApi('/sorteos/query', {
+            queryType: 'MULTIPLIERS',
             loteriaId: targetSorteo.loteriaId,
-            kind: 'REVENTADO',
-            isActive: true,
-            OR: [{ bancaId: targetSorteo.bancaId }, { bancaId: null }]
-          },
-          select: { id: true, name: true, valueX: true }
-        });
+            bancaId: targetSorteo.bancaId || undefined
+          });
+          extraMultipliers = res.extraMultipliers || [];
+        } else {
+          const { default: prisma } = await import('../../core/prismaClient');
+          extraMultipliers = await prisma.loteriaMultiplier.findMany({
+            where: {
+              loteriaId: targetSorteo.loteriaId,
+              kind: 'REVENTADO',
+              isActive: true,
+              OR: [{ bancaId: targetSorteo.bancaId }, { bancaId: null }]
+            },
+            select: { id: true, name: true, valueX: true }
+          });
+        }
 
         let chosenMultiplierId: string | undefined = undefined;
         if (extraMultipliers.length > 0) {
@@ -254,6 +292,8 @@ export async function runSorteosWizard() {
           });
           console.log(`\n🎉  ${colors.bold}${colors.brightGreen}${res.message || 'EVALUACIÓN COMPLETADA'}.${colors.reset}`);
         } else {
+          const { SorteoEvaluationCoordinator } = await import('../../domain/sorteo/sorteoEvaluation.coordinator');
+          const { default: SorteoRepository } = await import('../../repositories/sorteo.repository');
           const { extraOutcomeCode } = await SorteoEvaluationCoordinator.validate(
             targetSorteo.id,
             { winningNumber, extraMultiplierId: chosenMultiplierId || null },
@@ -294,6 +334,11 @@ export async function runSorteosWizard() {
           const res = await callOpsApi('/sorteos/action', { action: 'REVERT', sorteoId: targetSorteo.id });
           console.log(`\n🎉  ${colors.bold}${colors.brightGreen}${res.message || 'REVERSIÓN COMPLETADA'}.${colors.reset}`);
         } else {
+          const { default: SorteoRepository } = await import('../../repositories/sorteo.repository');
+          const { AccountStatementSyncService } = await import('../../domain/accounts/accounts.sync.service');
+          const { default: ActivityService } = await import('../../core/activity.service');
+          const { ActivityType } = await import('../../generated/prisma/client');
+
           await SorteoRepository.revertEvaluation(targetSorteo.id);
           await AccountStatementSyncService.syncSorteoStatements(targetSorteo.id, targetSorteo.scheduledAt);
           await ActivityService.log({
@@ -325,6 +370,10 @@ export async function runSorteosWizard() {
           const res = await callOpsApi('/sorteos/action', { action: 'CLOSE', sorteoId: targetSorteo.id });
           console.log(`\n🎉  ${colors.bold}${colors.brightGreen}${res.message || 'SORTEO CERRADO'}.${colors.reset}`);
         } else {
+          const { default: SorteoRepository } = await import('../../repositories/sorteo.repository');
+          const { default: ActivityService } = await import('../../core/activity.service');
+          const { ActivityType } = await import('../../generated/prisma/client');
+
           const { ticketsAffected } = await SorteoRepository.closeWithCascade(targetSorteo.id);
           await ActivityService.log({
             action: ActivityType.SORTEO_CLOSE,
@@ -360,6 +409,10 @@ export async function runSorteosWizard() {
           const res = await callOpsApi('/sorteos/action', { action: 'REOPEN', sorteoId: targetSorteo.id });
           console.log(`\n🎉  ${colors.bold}${colors.brightGreen}${res.message || 'SORTEO REABIERTO'}.${colors.reset}`);
         } else {
+          const { default: SorteoRepository } = await import('../../repositories/sorteo.repository');
+          const { default: ActivityService } = await import('../../core/activity.service');
+          const { ActivityType } = await import('../../generated/prisma/client');
+
           await SorteoRepository.restore(targetSorteo.id);
           await ActivityService.log({
             action: ActivityType.SORTEO_REOPEN,

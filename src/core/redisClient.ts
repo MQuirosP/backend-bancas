@@ -138,11 +138,11 @@ export async function initRedisClient(): Promise<void> {
         };
 
         const retryStrategy = (times: number) => {
-            if (times > 3) {
-                logger.warn({ layer: 'redis', action: 'MAX_RETRIES_REACHED', payload: { attempts: times } });
-                return null;
+            if (times === 4 || times % 15 === 0) {
+                logger.warn({ layer: 'redis', action: 'RECONNECT_RETRYING', payload: { attempts: times } });
             }
-            return Math.min(times * 200, 2000);
+            // Nunca retornar null: retornar null aborta permanentemente la reconexión de ioredis
+            return Math.min(times * 200, 3000);
         };
 
         // 1. Cliente Fast-Path exclusivo de Ventas y /status/me en caliente
@@ -150,7 +150,7 @@ export async function initRedisClient(): Promise<void> {
             ...baseRedisOptions,
             retryStrategy,
             maxRetriesPerRequest: 1,
-            commandTimeout: 500,     // 500ms: tolera pausas de GC sin degradar en falso
+            commandTimeout: 1500,    // 1500ms: tolera pausas de CPU/Event-Loop lag sin degradar en falso
             enableOfflineQueue: false,
         });
 

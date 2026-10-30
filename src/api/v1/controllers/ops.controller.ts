@@ -598,15 +598,110 @@ export class OpsController {
   }
 
   /**
-   * Lista vendedores para el módulo de Redis (por banca o query)
+   * Lista listeros (ventanas) para el módulo de Redis
+   */
+  static async listRedisVentanas(req: Request, res: Response): Promise<void> {
+    try {
+      const { bancaId } = req.body;
+      const ventanas = await RedisOpsService.listVentanas(bancaId);
+      res.json({ success: true, ventanas });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista vendedores para el módulo de Redis (por banca, listero o query)
    */
   static async listRedisVendors(req: Request, res: Response): Promise<void> {
     try {
-      const { query, bancaId } = req.body;
-      const vendors = await RedisOpsService.listVendors(query, bancaId);
+      const { query, bancaId, ventanaId } = req.body;
+      const vendors = await RedisOpsService.listVendors(query, bancaId, ventanaId);
       res.json({ success: true, vendors });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista las claves de Redis asociadas a una Banca
+   */
+  static async listBancaRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { bancaId } = req.body;
+      if (!bancaId) {
+        res.status(400).json({ success: false, error: 'bancaId es requerido' });
+        return;
+      }
+      const data = await RedisOpsService.listBancaKeys(bancaId);
+      res.json({ success: true, ...data });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Elimina claves de Redis asociadas a una Banca
+   */
+  static async deleteBancaRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { keys, bancaId, deleteAll } = req.body;
+      if (!bancaId && (!keys || keys.length === 0)) {
+        res.status(400).json({ success: false, error: 'Parámetros obligatorios incompletos' });
+        return;
+      }
+
+      if (deleteAll && bancaId) {
+        const result = await RedisOpsService.deleteAllBancaKeys(bancaId);
+        res.json({ success: true, ...result });
+        return;
+      }
+
+      const result = await RedisOpsService.deleteKeys(keys || [], { bancaId });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Lista las claves de Redis asociadas a un Listero (Ventana)
+   */
+  static async listVentanaRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { ventanaId } = req.body;
+      if (!ventanaId) {
+        res.status(400).json({ success: false, error: 'ventanaId es requerido' });
+        return;
+      }
+      const data = await RedisOpsService.listVentanaKeys(ventanaId);
+      res.json({ success: true, ...data });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Elimina claves de Redis asociadas a un Listero (Ventana)
+   */
+  static async deleteVentanaRedisKeys(req: Request, res: Response): Promise<void> {
+    try {
+      const { keys, ventanaId, deleteAll } = req.body;
+      if (!ventanaId && (!keys || keys.length === 0)) {
+        res.status(400).json({ success: false, error: 'Parámetros obligatorios incompletos' });
+        return;
+      }
+
+      if (deleteAll && ventanaId) {
+        const result = await RedisOpsService.deleteAllVentanaKeys(ventanaId);
+        res.json({ success: true, ...result });
+        return;
+      }
+
+      const result = await RedisOpsService.deleteKeys(keys || [], { ventanaId });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
     }
   }
 
@@ -644,10 +739,222 @@ export class OpsController {
         return;
       }
 
-      const result = await RedisOpsService.deleteKeys(keys || [], vendedorId);
+      const result = await RedisOpsService.deleteKeys(keys || [], { vendedorId });
       res.json({ success: true, ...result });
     } catch (err: any) {
       res.status(err.statusCode || 500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Consulta datos de soporte para sorteos (Loterías, Sorteos por Fecha, Multiplicadores)
+   */
+  static async querySorteosData(req: Request, res: Response): Promise<void> {
+    try {
+      const { queryType, dateStr, bancaId, loteriaName, loteriaId } = req.body;
+
+      if (queryType === 'LOTERIAS') {
+        const loteriasRaw = await prisma.loteria.findMany({
+          where: {
+            isActive: true,
+            ...(bancaId ? { OR: [{ bancaId }, { bancaId: null }] } : {})
+          },
+          select: { id: true, name: true, bancaId: true },
+          orderBy: { name: 'asc' }
+        });
+        const uniqueNames = Array.from(new Set(loteriasRaw.map(l => l.name))).sort();
+        res.json({ success: true, loteriasRaw, uniqueNames });
+        return;
+      }
+
+      if (queryType === 'SORTEOS') {
+        const [year, month, day] = (dateStr || new Date().toISOString().slice(0, 10)).split('-').map(Number);
+        const startOfDayUTC = new Date(Date.UTC(year, month - 1, day, 6, 0, 0, 0));
+        const endOfDayUTC = new Date(Date.UTC(year, month - 1, day + 1, 5, 59, 59, 999));
+
+        let matchingLoteriaIds: string[] = [];
+        if (loteriaName) {
+          const matching = await prisma.loteria.findMany({
+            where: { name: loteriaName, isActive: true },
+            select: { id: true }
+          });
+          matchingLoteriaIds = matching.map(m => m.id);
+        }
+
+        const sorteos = await prisma.sorteo.findMany({
+          where: {
+            scheduledAt: { gte: startOfDayUTC, lte: endOfDayUTC },
+            isActive: true,
+            ...(bancaId ? { bancaId } : {}),
+            ...(matchingLoteriaIds.length > 0 ? { loteriaId: { in: matchingLoteriaIds } } : {}),
+          },
+          include: {
+            loteria: { select: { id: true, name: true } },
+            banca: { select: { id: true, name: true } },
+            extraMultiplier: { select: { id: true, name: true, valueX: true } }
+          },
+          orderBy: { scheduledAt: 'asc' }
+        });
+
+        res.json({ success: true, sorteos });
+        return;
+      }
+
+      if (queryType === 'MULTIPLIERS') {
+        const extraMultipliers = await prisma.loteriaMultiplier.findMany({
+          where: {
+            loteriaId,
+            kind: 'REVENTADO',
+            isActive: true,
+            OR: [{ bancaId: bancaId || null }, { bancaId: null }]
+          },
+          select: { id: true, name: true, valueX: true }
+        });
+
+        res.json({ success: true, extraMultipliers });
+        return;
+      }
+
+      res.status(400).json({ success: false, error: 'queryType no soportado' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Auditoría de ResumenCierreDiario vs Jugadas reales
+   */
+  static async checkCierres(req: Request, res: Response): Promise<void> {
+    try {
+      const { fromStr, toStr, bancaId } = req.body;
+      const fromDateStr = fromStr || new Date().toISOString().slice(0, 10);
+      const toDateStr = toStr || fromDateStr;
+      const targetBancaId = bancaId || null;
+
+      const dates: string[] = [];
+      let curr = new Date(fromDateStr + 'T00:00:00Z');
+      const end = new Date(toDateStr + 'T00:00:00Z');
+      while (curr <= end) {
+        dates.push(curr.toISOString().slice(0, 10));
+        curr.setUTCDate(curr.getUTCDate() + 1);
+      }
+
+      let grandTotalGroups = 0;
+      let grandTotalDiscrepancies = 0;
+      const details: any[] = [];
+
+      for (const dateStr of dates) {
+        const rcdBancaWhere = targetBancaId
+          ? Prisma.sql`AND rcd."bancaId" = ${targetBancaId}::uuid`
+          : Prisma.empty;
+
+        const tBancaWhere = targetBancaId
+          ? Prisma.sql`AND t."bancaId" = ${targetBancaId}::uuid`
+          : Prisma.empty;
+
+        const storedRollups = await prisma.$queryRaw<Array<{
+          sorteoId: string;
+          vendedorId: string;
+          sorteoName: string;
+          vendedorName: string;
+          bancaName: string;
+          ventasDB: number;
+          premiosDB: number;
+          comisionDB: number;
+        }>>`
+          SELECT 
+            rcd."sorteoId",
+            rcd."vendedorId",
+            COALESCE(s.name, 'Sorteo ' || rcd."sorteoId"::text) AS "sorteoName",
+            COALESCE(u.name, 'Vendedor ' || rcd."vendedorId"::text) AS "vendedorName",
+            COALESCE(b.name, 'Global') AS "bancaName",
+            COALESCE(SUM(rcd."totalVendida"), 0)::float AS "ventasDB",
+            COALESCE(SUM(rcd."ganado"), 0)::float AS "premiosDB",
+            COALESCE(SUM(rcd."comisionTotal"), 0)::float AS "comisionDB"
+          FROM "ResumenCierreDiario" rcd
+          LEFT JOIN "Sorteo" s ON s.id = rcd."sorteoId"
+          LEFT JOIN "User" u ON u.id = rcd."vendedorId"
+          LEFT JOIN "Banca" b ON b.id = rcd."bancaId"
+          WHERE rcd."businessDate" = ${dateStr}::date
+            ${rcdBancaWhere}
+          GROUP BY rcd."sorteoId", rcd."vendedorId", s.name, u.name, b.name
+        `;
+
+        if (storedRollups.length === 0) continue;
+
+        const liveAggregates = await prisma.$queryRaw<Array<{
+          sorteoId: string;
+          vendedorId: string;
+          ventasReales: number;
+          premiosReales: number;
+          comisionReales: number;
+        }>>`
+          WITH relevant_tickets AS (
+            SELECT 
+              t.id,
+              t."vendedorId",
+              t."sorteoId",
+              t."totalAmount",
+              t."totalPayout",
+              t."totalListeroCommission"
+            FROM "Ticket" t
+            WHERE t."businessDate" = ${dateStr}::date
+              AND t."deletedAt" IS NULL
+              AND t."isActive" = true
+              AND t.status IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+              ${tBancaWhere}
+          )
+          SELECT
+            rt."sorteoId",
+            rt."vendedorId",
+            COALESCE(SUM(rt."totalAmount"), 0)::float AS "ventasReales",
+            COALESCE(SUM(rt."totalPayout"), 0)::float AS "premiosReales",
+            COALESCE(SUM(rt."totalListeroCommission"), 0)::float AS "comisionReales"
+          FROM relevant_tickets rt
+          GROUP BY rt."sorteoId", rt."vendedorId"
+        `;
+
+        const liveMap = new Map<string, { ventas: number; premios: number; comision: number }>();
+        for (const row of liveAggregates) {
+          liveMap.set(`${row.sorteoId}_${row.vendedorId}`, {
+            ventas: Number(row.ventasReales || 0),
+            premios: Number(row.premiosReales || 0),
+            comision: Number(row.comisionReales || 0)
+          });
+        }
+
+        for (const stored of storedRollups) {
+          grandTotalGroups++;
+          const live = liveMap.get(`${stored.sorteoId}_${stored.vendedorId}`) || { ventas: 0, premios: 0, comision: 0 };
+          const diffVentas = Math.abs(stored.ventasDB - live.ventas);
+          const diffPremios = Math.abs(stored.premiosDB - live.premios);
+          const diffComision = Math.abs(stored.comisionDB - live.comision);
+
+          if (diffVentas > 0.01 || diffPremios > 0.01 || diffComision > 0.01) {
+            grandTotalDiscrepancies++;
+            details.push({
+              dateStr,
+              sorteoName: stored.sorteoName,
+              vendedorName: stored.vendedorName,
+              bancaName: stored.bancaName,
+              diffVentas,
+              diffPremios,
+              diffComision,
+              ventasDB: stored.ventasDB,
+              ventasReales: live.ventas
+            });
+          }
+        }
+      }
+
+      res.json({
+        success: true,
+        grandTotalGroups,
+        grandTotalDiscrepancies,
+        details
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
     }
   }
 }

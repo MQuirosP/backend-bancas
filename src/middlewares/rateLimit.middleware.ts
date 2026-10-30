@@ -89,6 +89,17 @@ export const authRateLimiter = createLimiter({
 });
 
 /**
+ * 2b. Auth (Refresh Token): Máximo 30 peticiones / minuto por IP
+ * Margen holgado para múltiples pestañas o reconexiones mientras protege la DB
+ */
+export const authRefreshRateLimiter = createLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  prefix: 'auth-refresh',
+  message: 'Demasiadas solicitudes de actualización de sesión. Por favor, espera un momento.'
+});
+
+/**
  * 3. Ventas (Tickets): 20 tickets / minuto por UserID (o IP si no hay user)
  */
 export const salesRateLimiter = createLimiter({
@@ -131,6 +142,34 @@ export const evaluatedSummaryRateLimiter = createLimiter({
       statusCode: 429,
       message: 'Demasiadas solicitudes de reporte. Espere unos segundos.',
       error: 'Demasiadas solicitudes de reporte. Espere unos segundos.'
+    });
+  }
+});
+
+/**
+ * 5. Operaciones de Soporte Privilegiadas (Ops): Máximo 15 peticiones / minuto por IP
+ */
+export const opsRateLimiter = createLimiter({
+  windowMs: 60 * 1000,
+  max: 15,
+  prefix: 'ops',
+  message: 'Demasiadas solicitudes a endpoints de operaciones. Intente de nuevo en un minuto.',
+  useLocalOnly: true,
+  handler: (req, res, _next, limiterOptions) => {
+    logger.warn({
+      layer: 'security',
+      action: 'OPS_RATE_LIMIT_EXCEEDED',
+      payload: {
+        ip: req.ip,
+        path: req.originalUrl,
+        userAgent: req.headers['user-agent']
+      }
+    });
+
+    res.status(429).json({
+      success: false,
+      error: 'Demasiadas solicitudes a endpoints de operaciones. Por favor, espere un minuto.',
+      retryAfter: Math.ceil(limiterOptions.windowMs / 1000)
     });
   }
 });

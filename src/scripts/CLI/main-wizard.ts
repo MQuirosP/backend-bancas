@@ -8,8 +8,7 @@ if (fs.existsSync(envLocalPath)) {
   dotenv.config({ path: envLocalPath });
 }
 dotenv.config();
-import { ask, isBack, rl, clearScreen } from './helpers';
-import prisma from '../../core/prismaClient';
+import { ask, isBack, rl, clearScreen, IS_RENDER, callOpsApi } from './helpers';
 import { crDateService } from '../../utils/crDateService';
 import { runCheckStatements } from './check-statements-cli';
 import { runFixStatements } from './fix-statements-cli';
@@ -28,16 +27,24 @@ import { runRedisKeysWizard } from './redis-keys-cli';
  * Punto de entrada único para ejecutar auditorías, reparaciones y operaciones sobre sorteos.
  *
  * USO:
- *   node --max-old-space-size=100 dist/scripts/CLI/main-wizard.js
+ *   node --max-old-space-size=40 dist/scripts/CLI/main-wizard.js
  *   npm run ops
  */
 
 async function selectBancaPrompt(): Promise<{ id: string | null; name: string; isBack: boolean }> {
-  const bancas = await prisma.banca.findMany({
-    where: { isActive: true },
-    select: { id: true, name: true },
-    orderBy: { name: 'asc' }
-  });
+  let bancas: Array<{ id: string; name: string }> = [];
+
+  if (IS_RENDER) {
+    const res = await callOpsApi('/vendor/bancas', {});
+    bancas = res.bancas || [];
+  } else {
+    const { default: prisma } = await import('../../core/prismaClient');
+    bancas = await prisma.banca.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' }
+    });
+  }
 
   console.log(`\n🏛️  Seleccione la Banca:`);
   console.log(`   [0] Todas las Bancas / Global`);
@@ -151,12 +158,23 @@ async function main() {
   }
 
   rl.close();
-  await prisma.$disconnect();
+  if (!IS_RENDER) {
+    try {
+      const { default: prisma } = await import('../../core/prismaClient');
+      await prisma.$disconnect();
+    } catch (e) {}
+  }
   process.exit(0);
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(`\n❌  ERROR FATAL: ${err.message}`);
   rl.close();
-  prisma.$disconnect().then(() => process.exit(1));
+  if (!IS_RENDER) {
+    try {
+      const { default: prisma } = await import('../../core/prismaClient');
+      await prisma.$disconnect();
+    } catch (e) {}
+  }
+  process.exit(1);
 });

@@ -32,29 +32,32 @@ export function categorizeRedisKey(key: string): { category: RedisKeyCategory; d
   if (key.startsWith('auth:session:')) {
     return { category: 'SESION', description: 'Sesión activa JWT y estado de autenticación' };
   }
-  if (key.includes(':credit:') || key.startsWith('vendedor:') && key.includes(':credit')) {
+  if (key.includes(':credit:') || (key.startsWith('vendedor:') && key.includes(':credit'))) {
     if (key.endsWith(':cfg')) return { category: 'CREDITO', description: 'Configuración de tope de crédito' };
     if (key.endsWith(':base')) return { category: 'CREDITO', description: 'Saldo base acumulado de caja' };
     if (key.endsWith(':open_by_sorteo')) return { category: 'CREDITO', description: 'Ventas en sorteos abiertos' };
     if (key.endsWith(':lock')) return { category: 'CREDITO', description: 'Lock de hidratación de crédito' };
     return { category: 'CREDITO', description: 'Datos de límite de crédito y caja' };
   }
-  if (key.includes(':summary:') || key.startsWith('banca:') && key.includes(':vendedor:') || key.startsWith('dashboard:')) {
+  if (key.includes(':summary:') || (key.startsWith('banca:') && key.includes(':vendedor:')) || key.startsWith('dashboard:')) {
     return { category: 'RESUMEN', description: 'Resumen de ventas y comisiones (evaluatedSummary / dashboard)' };
   }
-  if (key.includes('comm_policy') || key.includes('commissions:policy')) {
-    return { category: 'COMISION', description: 'Política de comisiones del vendedor' };
+  if (key.includes(':scope:') && (key.includes(':total_sales') || key.includes(':acumulados'))) {
+    return { category: 'RESUMEN', description: 'Totales de venta acumulados en sorteo por scope (Banca / Listero)' };
   }
-  if (key.startsWith('cutoff:') || key.includes(':cutoff:')) {
+  if (key.includes('comm_policy') || key.includes('commissions:policy') || key.includes('commission')) {
+    return { category: 'COMISION', description: 'Política de comisiones (Vendedor / Listero / Banca)' };
+  }
+  if (key.startsWith('cutoff:') || key.includes(':cutoff:') || key.includes('cutoff')) {
     return { category: 'CUTOFF', description: 'Hora de corte y cierre de ventas' };
   }
-  if (key.startsWith('restrictions:') || key.includes('restrictions')) {
+  if (key.startsWith('restrictions:') || key.includes('restrictions') || key.startsWith('rules:') || key.includes(':rules:')) {
     return { category: 'RESTRICCION', description: 'Topes de números y reglas de restricción' };
   }
-  if (key.startsWith('multiplier:')) {
-    return { category: 'MULTIPLICADOR', description: 'Multiplicadores resueltos para el vendedor' };
+  if (key.startsWith('multiplier:') || key.includes(':multiplier:')) {
+    return { category: 'MULTIPLICADOR', description: 'Multiplicadores resueltos' };
   }
-  if (key.startsWith('account:')) {
+  if (key.startsWith('account:') || key.includes('account:statement')) {
     return { category: 'ESTADO_CUENTA', description: 'Caché de estados de cuenta y balances' };
   }
   if (key.includes('sales_flags:')) {
@@ -63,7 +66,7 @@ export function categorizeRedisKey(key: string): { category: RedisKeyCategory; d
   if (key.startsWith('tag:')) {
     return { category: 'TAG', description: 'Set de claves dependientes para invalidación reactiva' };
   }
-  return { category: 'OTRO', description: 'Clave general vinculada al vendedor' };
+  return { category: 'OTRO', description: 'Clave general en Redis' };
 }
 
 export class RedisOpsService {
@@ -120,15 +123,44 @@ export class RedisOpsService {
   }
 
   /**
-   * Lista vendedores pertenecientes a una banca (o global si bancaId es null)
+   * Lista listeros (ventanas) activas de una banca o globales
    */
-  static async listVendors(query?: string, bancaId?: string | null): Promise<any[]> {
+  static async listVentanas(bancaId?: string | null): Promise<Array<{ id: string; name: string; bancaId: string; bancaName: string }>> {
+    const where: any = { isActive: true };
+    if (bancaId) {
+      where.bancaId = bancaId;
+    }
+    const ventanas = await prisma.ventana.findMany({
+      where,
+      select: {
+        id: true,
+        name: true,
+        bancaId: true,
+        banca: { select: { name: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    return ventanas.map((v) => ({
+      id: v.id,
+      name: v.name,
+      bancaId: v.bancaId,
+      bancaName: v.banca?.name || 'Sin Banca',
+    }));
+  }
+
+  /**
+   * Lista vendedores pertenecientes a una banca o ventana (o global si bancaId es null)
+   */
+  static async listVendors(query?: string, bancaId?: string | null, ventanaId?: string | null): Promise<any[]> {
     const where: any = {
       role: Role.VENDEDOR,
       deletedAt: null,
     };
 
-    if (bancaId) {
+    if (ventanaId) {
+      where.ventanaId = ventanaId;
+    } else if (bancaId) {
       where.OR = [
         { bancaId },
         { ventana: { bancaId } },
@@ -188,8 +220,81 @@ export class RedisOpsService {
       bancaId: v.ventana?.bancaId || v.bancaId,
       bancaName: v.ventana?.banca?.name || v.banca?.name || 'Sin Banca',
       ventanaId: v.ventanaId,
-      ventanaName: v.ventana?.name || 'Sin Ventana',
+      ventanaName: v.ventana?.name || 'Sin Listero',
     }));
+  }
+
+  /**
+   * Método interno para escanear y procesar claves con Type y TTL en pipeline
+   */
+  private static async scanAndResolveKeys(redis: any, patterns: string[]): Promise<RedisKeyItem[]> {
+    const keyPrefix = (redis as any).options?.keyPrefix || '';
+    const rawFoundKeys = new Set<string>();
+
+    for (const pattern of patterns) {
+      let cursor = '0';
+      do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 250);
+        cursor = nextCursor;
+        for (const k of keys) {
+          rawFoundKeys.add(k);
+        }
+      } while (cursor !== '0');
+    }
+
+    const cleanKeyMap = new Map<string, string>(); // cleanKey -> rawKey
+    for (const rawKey of Array.from(rawFoundKeys)) {
+      let cleanKey = rawKey;
+      if (keyPrefix && rawKey.startsWith(keyPrefix)) {
+        cleanKey = rawKey.slice(keyPrefix.length);
+      } else if (rawKey.startsWith('prod:')) {
+        cleanKey = rawKey.slice(5);
+      } else if (rawKey.startsWith('local:')) {
+        cleanKey = rawKey.slice(6);
+      }
+      cleanKeyMap.set(cleanKey, rawKey);
+    }
+
+    const items: RedisKeyItem[] = [];
+    const entries = Array.from(cleanKeyMap.entries());
+
+    if (entries.length > 0) {
+      const pipeline = redis.pipeline();
+      for (const [, rawKey] of entries) {
+        pipeline.type(rawKey);
+        pipeline.ttl(rawKey);
+      }
+      const results = await pipeline.exec();
+
+      if (results) {
+        for (let i = 0; i < entries.length; i++) {
+          const [cleanKey, rawKey] = entries[i];
+          const typeErr = results[i * 2]?.[0];
+          const typeVal = (results[i * 2]?.[1] as string) || 'unknown';
+          const ttlErr = results[i * 2 + 1]?.[0];
+          const ttlVal = typeof results[i * 2 + 1]?.[1] === 'number' ? (results[i * 2 + 1][1] as number) : -1;
+
+          if (!typeErr && typeVal !== 'none') {
+            const { category, description } = categorizeRedisKey(cleanKey);
+            items.push({
+              key: cleanKey,
+              rawKey,
+              type: typeVal,
+              ttl: ttlVal,
+              category,
+              description,
+            });
+          }
+        }
+      }
+    }
+
+    items.sort((a, b) => {
+      if (a.category !== b.category) return a.category.localeCompare(b.category);
+      return a.key.localeCompare(b.key);
+    });
+
+    return items;
   }
 
   /**
@@ -224,84 +329,12 @@ export class RedisOpsService {
     }
 
     const redis = await this.getReadyClient();
-    const keyPrefix = (redis as any).options?.keyPrefix || '';
-
-    // Patrones de búsqueda específicos y globales para este vendedor
-    const patterns = [
-      `*${vendor.id}*`,
-    ];
+    const patterns = [`*${vendor.id}*`];
     if (vendor.username && vendor.username !== vendor.id) {
       patterns.push(`*${vendor.username}*`);
     }
 
-    const rawFoundKeys = new Set<string>();
-
-    for (const pattern of patterns) {
-      let cursor = '0';
-      do {
-        // En ioredis, SCAN con MATCH devuelve las claves con o sin prefijo según configuración
-        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
-        cursor = nextCursor;
-        for (const k of keys) {
-          rawFoundKeys.add(k);
-        }
-      } while (cursor !== '0');
-    }
-
-    // Normalizar claves (remover prefijos prod: / local: para visualización amigable)
-    const cleanKeyMap = new Map<string, string>(); // cleanKey -> rawKey
-    for (const rawKey of Array.from(rawFoundKeys)) {
-      let cleanKey = rawKey;
-      if (keyPrefix && rawKey.startsWith(keyPrefix)) {
-        cleanKey = rawKey.slice(keyPrefix.length);
-      } else if (rawKey.startsWith('prod:')) {
-        cleanKey = rawKey.slice(5);
-      } else if (rawKey.startsWith('local:')) {
-        cleanKey = rawKey.slice(6);
-      }
-      cleanKeyMap.set(cleanKey, rawKey);
-    }
-
-    const items: RedisKeyItem[] = [];
-    const entries = Array.from(cleanKeyMap.entries());
-
-    if (entries.length > 0) {
-      // Pipeline para obtener tipo y TTL de todas las claves en 1 solo round-trip usando la clave real en Redis
-      const pipeline = redis.pipeline();
-      for (const [, rawKey] of entries) {
-        pipeline.type(rawKey);
-        pipeline.ttl(rawKey);
-      }
-      const results = await pipeline.exec();
-
-      if (results) {
-        for (let i = 0; i < entries.length; i++) {
-          const [cleanKey, rawKey] = entries[i];
-          const typeErr = results[i * 2]?.[0];
-          const typeVal = results[i * 2]?.[1] as string || 'unknown';
-          const ttlErr = results[i * 2 + 1]?.[0];
-          const ttlVal = typeof results[i * 2 + 1]?.[1] === 'number' ? results[i * 2 + 1][1] as number : -1;
-
-          if (!typeErr && typeVal !== 'none') {
-            const { category, description } = categorizeRedisKey(cleanKey);
-            items.push({
-              key: cleanKey,
-              rawKey,
-              type: typeVal,
-              ttl: ttlVal,
-              category,
-              description,
-            });
-          }
-        }
-      }
-    }
-
-    // Ordenar por categoría y luego por clave
-    items.sort((a, b) => {
-      if (a.category !== b.category) return a.category.localeCompare(b.category);
-      return a.key.localeCompare(b.key);
-    });
+    const items = await this.scanAndResolveKeys(redis, patterns);
 
     return {
       vendor: {
@@ -310,7 +343,76 @@ export class RedisOpsService {
         username: vendor.username,
         code: vendor.code,
         bancaName: vendor.ventana?.banca?.name || vendor.banca?.name || 'Sin Banca',
-        ventanaName: vendor.ventana?.name || 'Sin Ventana',
+        ventanaName: vendor.ventana?.name || 'Sin Listero',
+      },
+      totalKeys: items.length,
+      keys: items,
+    };
+  }
+
+  /**
+   * Escanea y recopila todas las claves existentes en Redis asociadas a un Listero (Ventana)
+   */
+  static async listVentanaKeys(ventanaId: string): Promise<{
+    ventana: { id: string; name: string; bancaId: string; bancaName: string };
+    totalKeys: number;
+    keys: RedisKeyItem[];
+  }> {
+    const ventana = await prisma.ventana.findUnique({
+      where: { id: ventanaId },
+      select: {
+        id: true,
+        name: true,
+        bancaId: true,
+        banca: { select: { name: true } },
+      },
+    });
+
+    if (!ventana) {
+      throw new AppError('Listero no encontrado', 404, 'VENTANA_NOT_FOUND');
+    }
+
+    const redis = await this.getReadyClient();
+    const patterns = [`*${ventana.id}*`];
+    const items = await this.scanAndResolveKeys(redis, patterns);
+
+    return {
+      ventana: {
+        id: ventana.id,
+        name: ventana.name,
+        bancaId: ventana.bancaId,
+        bancaName: ventana.banca?.name || 'Sin Banca',
+      },
+      totalKeys: items.length,
+      keys: items,
+    };
+  }
+
+  /**
+   * Escanea y recopila todas las claves existentes en Redis asociadas a una Banca
+   */
+  static async listBancaKeys(bancaId: string): Promise<{
+    banca: { id: string; name: string };
+    totalKeys: number;
+    keys: RedisKeyItem[];
+  }> {
+    const banca = await prisma.banca.findUnique({
+      where: { id: bancaId },
+      select: { id: true, name: true },
+    });
+
+    if (!banca) {
+      throw new AppError('Banca no encontrada', 404, 'BANCA_NOT_FOUND');
+    }
+
+    const redis = await this.getReadyClient();
+    const patterns = [`*${banca.id}*`];
+    const items = await this.scanAndResolveKeys(redis, patterns);
+
+    return {
+      banca: {
+        id: banca.id,
+        name: banca.name,
       },
       totalKeys: items.length,
       keys: items,
@@ -320,7 +422,10 @@ export class RedisOpsService {
   /**
    * Elimina una lista de claves de Redis y limpia la memoria local L1
    */
-  static async deleteKeys(keys: string[], vendedorId?: string): Promise<{
+  static async deleteKeys(
+    keys: string[],
+    targetIds?: string | { vendedorId?: string; ventanaId?: string; bancaId?: string }
+  ): Promise<{
     deletedCount: number;
     deletedKeys: string[];
   }> {
@@ -361,17 +466,27 @@ export class RedisOpsService {
       }
     }
 
-    // Si se pasó vendedorId, purgar la entrada L1 del usuario
-    if (vendedorId) {
-      await CacheService.del(`auth:session:${vendedorId}`).catch(() => {});
-      await CacheService.invalidateTag(`user:${vendedorId}`).catch(() => {});
+    // Normalizar targets de invalidación L1
+    const vId = typeof targetIds === 'string' ? targetIds : targetIds?.vendedorId;
+    const ventId = typeof targetIds === 'object' ? targetIds.ventanaId : undefined;
+    const bId = typeof targetIds === 'object' ? targetIds.bancaId : undefined;
+
+    if (vId) {
+      await CacheService.del(`auth:session:${vId}`).catch(() => {});
+      await CacheService.invalidateTag(`user:${vId}`).catch(() => {});
+    }
+    if (ventId) {
+      await CacheService.invalidateTag(`ventana:${ventId}`).catch(() => {});
+    }
+    if (bId) {
+      await CacheService.invalidateTag(`banca:${bId}`).catch(() => {});
     }
 
     logger.info({
       layer: 'ops',
       action: 'REDIS_KEYS_DELETED_MANUAL',
       payload: {
-        vendedorId,
+        targetIds,
         keysCount: unlinkedTargets.length,
         unlinkedCount: totalUnlinked,
         sampleKeys: unlinkedTargets.slice(0, 5),
@@ -393,6 +508,54 @@ export class RedisOpsService {
   }> {
     const { keys } = await this.listVendorKeys(vendedorId);
     const keyNames = keys.map((k) => k.key);
-    return await this.deleteKeys(keyNames, vendedorId);
+    return await this.deleteKeys(keyNames, { vendedorId });
+  }
+
+  /**
+   * Purga estrictamente las claves asociadas al ID o username de un usuario
+   */
+  static async deleteAllUserKeys(userId: string): Promise<{
+    deletedCount: number;
+    deletedKeys: string[];
+  }> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true },
+    });
+    if (!user) return { deletedCount: 0, deletedKeys: [] };
+
+    const redis = await this.getReadyClient();
+    const patterns = [`*${user.id}*`];
+    if (user.username && user.username !== user.id) {
+      patterns.push(`*${user.username}*`);
+    }
+
+    const items = await this.scanAndResolveKeys(redis, patterns);
+    const keyNames = items.map((k) => k.key);
+    return await this.deleteKeys(keyNames, user.id);
+  }
+
+  /**
+   * Purga todas las claves de un Listero (Ventana) en Redis
+   */
+  static async deleteAllVentanaKeys(ventanaId: string): Promise<{
+    deletedCount: number;
+    deletedKeys: string[];
+  }> {
+    const { keys } = await this.listVentanaKeys(ventanaId);
+    const keyNames = keys.map((k) => k.key);
+    return await this.deleteKeys(keyNames, { ventanaId });
+  }
+
+  /**
+   * Purga todas las claves de una Banca en Redis
+   */
+  static async deleteAllBancaKeys(bancaId: string): Promise<{
+    deletedCount: number;
+    deletedKeys: string[];
+  }> {
+    const { keys } = await this.listBancaKeys(bancaId);
+    const keyNames = keys.map((k) => k.key);
+    return await this.deleteKeys(keyNames, { bancaId });
   }
 }

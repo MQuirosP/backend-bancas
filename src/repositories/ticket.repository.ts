@@ -108,6 +108,7 @@ export async function calculateDynamicLimit(
     salesPercentage?: number | null;
     appliesToVendedor?: boolean | null;
     ruleUserId?: string | null;
+    userId?: string | null;
     bancaId?: string | null;   //  NUEVO: Para alcance de banca
     ventanaId?: string | null; //  NUEVO: Para alcance de ventana
   },
@@ -163,28 +164,27 @@ export async function calculateDynamicLimit(
     let cacheKey = "";
     let scopeId = "";
 
-    //  LÓGICA DE ALCANCE JERÁRQUICO
-    //  Prioriza el alcance más específico definido en la regla
-    if (rule.ruleUserId || rule.appliesToVendedor) {
-      // 1. Vendedor Individual (Personal o Automático/Masivo)
-      where.vendedorId = context.userId;
-      cacheKey = `USER:${context.userId}`;
-      scopeId = context.userId;
+    //  LÓGICA DE ALCANCE JERÁRQUICO DE VENTAS PARA EL CÁLCULO DEL PORCENTAJE
+    //  appliesToVendedor = true o regla con userId/ruleUserId: ventas individuales del vendedor
+    //  appliesToVendedor = false / no especificado sin userId: ventas globales de la banca (o ventana)
+    const effectiveTargetUserId = rule.userId || rule.ruleUserId;
+    if (rule.appliesToVendedor === true || !!effectiveTargetUserId) {
+      // 1. Vendedor Individual
+      const effectiveUserId = effectiveTargetUserId || context.userId;
+      where.vendedorId = effectiveUserId;
+      cacheKey = `USER:${effectiveUserId}`;
+      scopeId = effectiveUserId;
     } else if (rule.ventanaId) {
-      // 2. Ventana Específica
+      // 2. Ventana Específica (Listero)
       where.ventanaId = rule.ventanaId;
       cacheKey = `VENTANA:${rule.ventanaId}`;
       scopeId = rule.ventanaId;
-    } else if (rule.bancaId) {
-      // 3. Banca Completa (Filtra todas las ventanas de la banca)
-      where.ventana = { bancaId: rule.bancaId };
-      cacheKey = `BANCA:${rule.bancaId}`;
-      scopeId = rule.bancaId;
     } else {
-      // Fallback: Ventana actual (Seguridad para reglas globales sin scope explícito en registro)
-      where.ventanaId = context.ventanaId;
-      cacheKey = `VENTANA:${context.ventanaId}`;
-      scopeId = context.ventanaId;
+      // 3. Banca Completa / Global
+      const bancaId = rule.bancaId || context.bancaId;
+      where.ventana = { bancaId };
+      cacheKey = `BANCA:${bancaId}`;
+      scopeId = bancaId;
     }
 
     // 2. Intentar obtener de caché L1 en memoria (ScopeCache)
@@ -210,7 +210,7 @@ export async function calculateDynamicLimit(
               const hydratedKey = `sorteo:${context.sorteoId}:hydrated`;
               const [redisVal, isHydrated] = await redis.mget(redisKey, hydratedKey);
               if (redisVal !== null && redisVal !== undefined) {
-                return parseFloat(redisVal) || 0;
+                return Math.max(0, parseFloat(redisVal) || 0);
               }
               if (isHydrated === "true") {
                 // Sorteo ya fue hidratado en Redis: si este scope no tiene acumulado registrado, sus ventas son 0.
@@ -260,17 +260,12 @@ export async function calculateDynamicLimit(
       }
     }
 
-    const percentageAmount = (sorteoSales * rule.salesPercentage!) / 100;
+    const safeSales = Math.max(0, sorteoSales || 0);
+    const percentageAmount = (safeSales * rule.salesPercentage!) / 100;
 
-    // base actúa como piso garantizado: aunque el % sea menor, siempre se puede vender hasta la base
-    // Cuando el % supera la base, el % es el límite total
-    // Ejemplo: base=2500, 3% de 93950=2818.50 → límite=max(2500,2818.50)=2818.50 → disponible=2818.50-1300=1518.50
-    // Ejemplo: base=2500, 3% de 10000=300 → límite=max(2500,300)=2500 → disponible=2500
-    dynamicLimit = baseAmt > 0
-      ? Math.max(baseAmt, percentageAmount)
-      : percentageAmount;
-
-    const gano = percentageAmount >= baseAmt ? 'porcentaje' : 'base';
+    // Fórmula de negocio: El porcentaje de ventas SUMA sobre la base establecida
+    // Ejemplo: base=2000, 3% de 50000=1500 → límite = 2000 + 1500 = 3500
+    dynamicLimit = baseAmt + percentageAmount;
 
     logger.debug({
       layer: 'repository',
@@ -280,8 +275,8 @@ export async function calculateDynamicLimit(
         sorteoId: context.sorteoId,
         base: `₡${baseAmt.toLocaleString()}`,
         ventas: `₡${sorteoSales.toLocaleString()}`,
-        calculo: `${rule.salesPercentage}% × ${sorteoSales.toLocaleString()} = ₡${percentageAmount.toFixed(2)}`,
-        limite: `₡${dynamicLimit.toFixed(2)} (ganó ${gano})`,
+        calculo: `Base ₡${baseAmt.toLocaleString()} + (${rule.salesPercentage}% × ₡${sorteoSales.toLocaleString()}) = ₡${dynamicLimit.toFixed(2)}`,
+        limite: `₡${dynamicLimit.toFixed(2)}`,
       },
     });
   } else if (baseAmt > 0) {
@@ -1366,6 +1361,17 @@ export const TicketRepository = {
               }
             }
 
+            // 3. Restar de la clave de ventas totales del sorteo por alcance (Fast-Path para límites dinámicos)
+            const ticketTotal = Number(ticket.totalAmount || 0);
+            if (ticketTotal > 0) {
+              for (const sc of scopes) {
+                if (!sc.id) continue;
+                const totalSalesKey = `sorteo:${sorteoId}:scope:${sc.id}:total_sales`;
+                pipeline.incrbyfloat(totalSalesKey, -ticketTotal);
+                keysToExpire.add(totalSalesKey);
+              }
+            }
+
             // Aplicar expiración una sola vez por clave única
             for (const key of keysToExpire) {
               pipeline.expire(key, 43200);
@@ -1557,26 +1563,52 @@ export const TicketRepository = {
   /**
    * Obtiene los saldos disponibles para todos los números (00-99 o 000-999) de un sorteo específico.
    * Evalúa todas las reglas de restricción (MaxTotal) y límites dinámicos aplicables.
+  /**
+   * Invalida selectivamente la micro-caché L1 en RAM de balances de sorteo
+   */
+  invalidateSorteoBalancesL1Cache(sorteoId: string, vendedorId?: string): void {
+    if (vendedorId) {
+      for (const key of sorteoBalancesL1Cache.keys()) {
+        if (key.startsWith(`${sorteoId}:${vendedorId}:`)) {
+          sorteoBalancesL1Cache.delete(key);
+        }
+      }
+    } else {
+      for (const key of sorteoBalancesL1Cache.keys()) {
+        if (key.startsWith(`${sorteoId}:`)) {
+          sorteoBalancesL1Cache.delete(key);
+        }
+      }
+    }
+  },
+
+  /**
+   * Obtiene los saldos disponibles y acumulados para los números 00-99 en un sorteo específico.
    */
   async getSorteoBalances(params: {
     sorteoId: string;
     vendedorId: string;
     bancaId?: string;
     actorRole?: Role;
+    bypassL1Cache?: boolean;
   }): Promise<Record<string, { remaining: number; limit: number; accumulated: number }>> {
-    const { sorteoId, vendedorId, bancaId, actorRole } = params;
+    const { sorteoId, vendedorId, bancaId, actorRole, bypassL1Cache } = params;
 
     const cacheKey = `${sorteoId}:${vendedorId}:${actorRole || 'NONE'}`;
     const nowMs = Date.now();
-    const cached = sorteoBalancesL1Cache.get(cacheKey);
-    if (cached && cached.expiresAt > nowMs) {
-      return cached.data;
+    if (!bypassL1Cache) {
+      const cached = sorteoBalancesL1Cache.get(cacheKey);
+      if (cached && cached.expiresAt > nowMs) {
+        return cached.data;
+      }
     }
 
     return await SingleFlight.do(cacheKey, async () => {
-      const doubleCheck = sorteoBalancesL1Cache.get(cacheKey);
-      if (doubleCheck && doubleCheck.expiresAt > Date.now()) {
-        return doubleCheck.data;
+      if (!bypassL1Cache) {
+        const doubleCheck = sorteoBalancesL1Cache.get(cacheKey);
+        if (doubleCheck && doubleCheck.expiresAt > Date.now()) {
+          return doubleCheck.data;
+        }
       }
 
       const calculated = await withConnectionRetry(async () => {
@@ -1661,35 +1693,32 @@ export const TicketRepository = {
       const totalNumbers = Math.pow(10, maxDigits);
       const numbers = Array.from({ length: totalNumbers }, (_, i) => String(i).padStart(maxDigits, '0'));
 
-      // 5. Calcular acumulados actuales de forma paralela
-      const [bancaAccumulated, ventanaAccumulated, userAccumulated] = await Promise.all([
-        calculateAccumulatedByNumbersAndScope(prisma as any, {
-          numbers,
-          scopeType: ReportDimension.BANCA,
-          scopeId: effectiveBancaId,
-          sorteoId,
-        }),
-        calculateAccumulatedByNumbersAndScope(prisma as any, {
-          numbers,
-          scopeType: ReportDimension.VENTANA,
-          scopeId: user.ventanaId,
-          sorteoId,
-        }),
-        calculateAccumulatedByNumbersAndScope(prisma as any, {
-          numbers,
-          scopeType: ReportDimension.VENDEDOR,
-          scopeId: vendedorId,
-          sorteoId,
-        }),
-      ]);
-
-      // 6. Pre-calcular límites dinámicos
-      const dynamicLimits = new Map<string, number>();
-
+      // 5. Inicializar cache de ámbitos y pre-cargar acumulados masivos (Banca, Ventana, Vendedor)
+      // OPTIMIZACIÓN: calculateAccumulatedForMultipleScopes usa un único pipeline en Redis L2 (o un solo query agrupado en DB)
       const cache: ScopeCache = {
         salesTotals: new Map<string, number>(),
         numberTotals: new Map<string, Map<string, number>>(),
       };
+
+      const scopes = [
+        { scopeType: ReportDimension.BANCA, scopeId: effectiveBancaId },
+        { scopeType: ReportDimension.VENTANA, scopeId: user.ventanaId },
+        { scopeType: ReportDimension.VENDEDOR, scopeId: vendedorId },
+      ];
+
+      await calculateAccumulatedForMultipleScopes(prisma as any, {
+        numbers,
+        sorteoId,
+        scopes,
+        cache,
+      });
+
+      const bancaAccumulated = cache.numberTotals.get(`${ReportDimension.BANCA}:${effectiveBancaId}:${sorteoId}:NONE`) ?? new Map<string, number>();
+      const ventanaAccumulated = cache.numberTotals.get(`${ReportDimension.VENTANA}:${user.ventanaId}:${sorteoId}:NONE`) ?? new Map<string, number>();
+      const userAccumulated = cache.numberTotals.get(`${ReportDimension.VENDEDOR}:${vendedorId}:${sorteoId}:NONE`) ?? new Map<string, number>();
+
+      // 6. Pre-calcular límites dinámicos
+      const dynamicLimits = new Map<string, number>();
 
       // Pre-poblar cache.salesTotals desde Redis para que calculateDynamicLimit
       // use la misma fuente en memoria que los acumulados por número, eliminando race condition.
@@ -1700,18 +1729,17 @@ export const TicketRepository = {
             const prefetchedLabels = new Set<string>();
             for (const rule of applicableRules) {
               if (!(rule.salesPercentage != null && rule.salesPercentage > 0)) continue;
-              const scopeId =
-                rule.appliesToVendedor || rule.userId
-                  ? vendedorId
-                  : rule.ventanaId ?? rule.bancaId ?? user.ventanaId;
-              const cacheLabel =
-                rule.appliesToVendedor || rule.userId
-                  ? `USER:${vendedorId}`
-                  : rule.ventanaId
-                    ? `VENTANA:${rule.ventanaId}`
-                    : rule.bancaId
-                      ? `BANCA:${rule.bancaId}`
-                      : `VENTANA:${user.ventanaId}`;
+              const isPerVendedor = rule.appliesToVendedor === true;
+              const scopeId = isPerVendedor
+                ? vendedorId
+                : rule.ventanaId
+                  ? rule.ventanaId
+                  : effectiveBancaId;
+              const cacheLabel = isPerVendedor
+                ? `USER:${vendedorId}`
+                : rule.ventanaId
+                  ? `VENTANA:${rule.ventanaId}`
+                  : `BANCA:${effectiveBancaId}`;
               if (!scopeId || prefetchedLabels.has(cacheLabel)) continue;
               prefetchedLabels.add(cacheLabel);
               const hashKey = `sorteo:${sorteoId}:scope:${scopeId}:acumulados`;
@@ -1749,7 +1777,20 @@ export const TicketRepository = {
         }
       }
 
-      // 7. Evaluar reglas por número
+      // 7. Pre-calcular O(1) los números permitidos por cada regla con filtro de número
+      // OPTIMIZACIÓN CRÍTICA: Resuelve los números UNA SOLA VEZ fuera del bucle de 100 números,
+      // eliminando miles de llamadas a timezone/regex/logger y allocations de memoria en el Event Loop.
+      const ruleNumbersMap = new Map<string, Set<string>>();
+      for (const rule of applicableRules) {
+        if (rule.number) {
+          const ruleNumbers = resolveNumbersToValidate(rule, now);
+          if (ruleNumbers.length > 0) {
+            ruleNumbersMap.set(rule.id, new Set(ruleNumbers));
+          }
+        }
+      }
+
+      // 8. Evaluar reglas por número (O(1) Set lookups, cero asignaciones de memoria)
       const balances: Record<string, { remaining: number; limit: number; accumulated: number }> = {};
       for (const num of numbers) {
         let minRemaining = Infinity;
@@ -1759,8 +1800,8 @@ export const TicketRepository = {
 
         for (const rule of applicableRules) {
           if (rule.number) {
-            const ruleNumbers = resolveNumbersToValidate(rule, now);
-            if (ruleNumbers.length > 0 && !ruleNumbers.includes(num)) continue;
+            const ruleNumbers = ruleNumbersMap.get(rule.id);
+            if (ruleNumbers && !ruleNumbers.has(num)) continue;
           }
 
           const scopeType = (rule.appliesToVendedor || rule.userId) ? ReportDimension.VENDEDOR : rule.ventanaId ? ReportDimension.VENTANA : ReportDimension.BANCA;

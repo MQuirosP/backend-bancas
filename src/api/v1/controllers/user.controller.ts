@@ -269,6 +269,31 @@ export const UserController = {
 
     return success(res, result.data, result.meta);
   },
+
+  /**
+   * POST /api/v1/users/:id/clear-cache
+   * Purga todas las claves de Redis asociadas a un usuario y sincroniza su estado
+   * Requiere rol ADMIN o BANCA.
+   */
+  async clearCache(req: AuthenticatedRequest, res: Response) {
+    const actor = req.user!;
+    const { id } = req.params;
+
+    const result = await UserService.clearCache(id, {
+      id: actor.id,
+      role: actor.role as Role,
+      bancaId: actor.bancaId,
+    });
+
+    (req as any)?.logger?.info({
+      layer: "controller",
+      action: "USER_CLEAR_CACHE",
+      userId: actor.id,
+      payload: { targetUserId: id, deletedKeysCount: result.deletedCount },
+    });
+
+    return success(res, result);
+  },
 };
 
 export default UserController;

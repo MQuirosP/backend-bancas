@@ -17,13 +17,17 @@ try {
 }
 
 export const IS_RENDER = process.env.RENDER === 'true' || process.env.NODE_ENV === 'production';
-const OPS_SECRET = process.env.OPS_SECRET || 'ops-backend-secret-key-2026';
+const OPS_SECRET = process.env.OPS_SECRET;
 const PORT = process.env.PORT || 3000;
 
 /**
  * Petición HTTP ultraliviana enviada al servidor interno (Solo activa en Render)
  */
 export async function callOpsApi(endpoint: string, body: any): Promise<any> {
+  if (!OPS_SECRET) {
+    throw new Error('ERROR: La variable de entorno OPS_SECRET no está configurada. Debe definirla en su entorno (.env o en Render) para utilizar la suite CLI.');
+  }
+
   const url = `http://127.0.0.1:${PORT}/api/v1/ops${endpoint}`;
   const response = await fetch(url, {
     method: 'POST',
@@ -36,7 +40,7 @@ export async function callOpsApi(endpoint: string, body: any): Promise<any> {
 
   if (!response.ok) {
     const errorData: any = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(errorData.error || `HTTP ${response.status}`);
+    throw new Error(errorData.error || errorData.message || `HTTP ${response.status}`);
   }
 
   return await response.json();

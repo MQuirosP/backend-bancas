@@ -98,4 +98,12 @@ export const config = {
     degradedDbTimeoutMs: parsed.data.CREDIT_DEGRADED_DB_TIMEOUT_MS,
   },
   enableAtomicTicketRpc: parsed.data.ENABLE_ATOMIC_TICKET_RPC ?? false,
+  ops: {
+    secret: parsed.data.OPS_SECRET,
+    allowedIps: parsed.data.OPS_ALLOWED_IPS
+      ? parsed.data.OPS_ALLOWED_IPS.split(',')
+          .map((ip) => ip.trim())
+          .filter(Boolean)
+      : [],
+  },
 }

@@ -1272,6 +1272,119 @@ export const UserService = {
       message: 'Contraseña actualizada correctamente',
     };
   },
+
+  /**
+   * Limpia todas las claves de caché y Redis asociadas a un usuario y sincroniza su estado de crédito
+   * Restringido a roles ADMIN y BANCA (con verificación de asignación de banca).
+   */
+  async clearCache(
+    targetUserId: string,
+    actor: { id: string; role: Role; bancaId?: string | null }
+  ) {
+    // 1. Verificar existencia del usuario
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: {
+        id: true,
+        name: true,
+        username: true,
+        role: true,
+        bancaId: true,
+        ventanaId: true,
+        ventana: { select: { bancaId: true } },
+      },
+    });
+
+    if (!targetUser) {
+      throw new AppError('Usuario no encontrado', 404, 'USER_NOT_FOUND');
+    }
+
+    // 2. Validación de RBAC (Solo ADMIN o BANCA asignada)
+    if (actor.role === Role.BANCA) {
+      const targetBancaId = targetUser.bancaId || targetUser.ventana?.bancaId;
+      const assignedBancas = await prisma.userBanca.findMany({
+        where: { userId: actor.id },
+        select: { bancaId: true },
+      }).then((rows: any[]) => rows.map((r: any) => r.bancaId));
+
+      if (actor.bancaId && !assignedBancas.includes(actor.bancaId)) {
+        assignedBancas.push(actor.bancaId);
+      }
+
+      if (!targetBancaId || !assignedBancas.includes(targetBancaId)) {
+        throw new AppError('No tienes permiso para gestionar usuarios fuera de tu banca', 403, 'FORBIDDEN');
+      }
+    } else if (actor.role !== Role.ADMIN) {
+      throw new AppError('Solo usuarios con rol ADMIN o BANCA pueden limpiar la caché', 403, 'FORBIDDEN');
+    }
+
+    // 3. Purgar claves de Redis según el rol del usuario objetivo
+    const { RedisOpsService } = await import('../cache/redisOps.service');
+    let deleteResult: { deletedCount: number; deletedKeys: string[] } = {
+      deletedCount: 0,
+      deletedKeys: [],
+    };
+
+    // Aislamiento estricto: solo se purgan las claves del usuario específico
+    if (targetUser.role === Role.VENDEDOR) {
+      deleteResult = await RedisOpsService.deleteAllVendorKeys(targetUser.id);
+    } else {
+      deleteResult = await RedisOpsService.deleteAllUserKeys(targetUser.id);
+    }
+
+    // 4. Invalidar cachés genéricas L1/L2
+    await Promise.all([
+      CacheService.del(`auth:session:${targetUser.id}`).catch(() => {}),
+      CacheService.invalidateTag(`user:${targetUser.id}`).catch(() => {}),
+    ]);
+
+    // 5. Si es VENDEDOR, rehidratar su saldo base de crédito inmediatamente
+    let creditStatus: any = undefined;
+    if (targetUser.role === Role.VENDEDOR) {
+      try {
+        const { VendorCreditService } = await import('../credit/vendorCredit.service');
+        await VendorCreditService.updateBaseBalance(targetUser.id);
+        const statusRes = await VendorCreditService.getVendorsCreditStatus(
+          {
+            id: actor.id,
+            role: actor.role,
+            bancaId: actor.bancaId,
+          },
+          { requestedVendedorIds: [targetUser.id] }
+        );
+        creditStatus = statusRes.items?.[0];
+      } catch (creditErr: any) {
+        logger.warn({
+          layer: 'service',
+          action: 'USER_CLEAR_CACHE_CREDIT_SYNC_WARN',
+          payload: { userId: targetUser.id, error: creditErr?.message || String(creditErr) },
+        });
+      }
+    }
+
+    // 6. Auditoría
+    await ActivityService.log({
+      userId: actor.id,
+      action: ActivityType.USER_UPDATE,
+      targetType: 'USER',
+      targetId: targetUser.id,
+      details: {
+        action: 'USER_CLEAR_CACHE',
+        targetUsername: targetUser.username,
+        targetRole: targetUser.role,
+        deletedCount: deleteResult.deletedCount,
+      },
+    });
+
+    return {
+      userId: targetUser.id,
+      username: targetUser.username,
+      role: targetUser.role,
+      deletedCount: deleteResult.deletedCount,
+      deletedKeys: deleteResult.deletedKeys,
+      creditStatus,
+    };
+  },
 };
 
 export default UserService;
