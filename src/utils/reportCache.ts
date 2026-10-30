@@ -1,8 +1,6 @@
 import { getRedisClient, isRedisAvailable } from '../core/redisClient';
 import logger from '../core/logger';
-
-// Mapa de promesas en vuelo para Request Coalescing (Single-Flight Anti-Stampede)
-const inFlightReports = new Map<string, Promise<any>>();
+import { SingleFlight } from './concurrency';
 
 export class ReportCache {
   /**
@@ -37,39 +35,26 @@ export class ReportCache {
       }
     }
 
-    // 2. Request Coalescing (Single-Flight): Si ya hay un cálculo en vuelo para esta misma clave, reutilizar la promesa existente
-    const inFlight = inFlightReports.get(cacheKey);
-    if (inFlight) {
-      return inFlight as Promise<T>;
-    }
+    // 2. Request Coalescing mediante SingleFlight estandarizado
+    return SingleFlight.do(cacheKey, async () => {
+      const result = await computeFn();
 
-    // 3. Ejecutar función de cálculo y guardar resultado en Redis
-    const promise = (async () => {
-      try {
-        const result = await computeFn();
-
-        if (isRedisAvailable()) {
-          const redis = getRedisClient();
-          if (redis) {
-            try {
-              await redis.set(cacheKey, JSON.stringify(result), 'EX', ttlSeconds);
-            } catch (err: any) {
-              logger.warn({
-                layer: 'cache',
-                action: 'REPORT_CACHE_SET_ERROR',
-                payload: { cacheKey, error: err.message },
-              });
-            }
+      if (isRedisAvailable()) {
+        const redis = getRedisClient();
+        if (redis) {
+          try {
+            await redis.set(cacheKey, JSON.stringify(result), 'EX', ttlSeconds);
+          } catch (err: any) {
+            logger.warn({
+              layer: 'cache',
+              action: 'REPORT_CACHE_SET_ERROR',
+              payload: { cacheKey, error: err.message },
+            });
           }
         }
-
-        return result;
-      } finally {
-        inFlightReports.delete(cacheKey);
       }
-    })();
 
-    inFlightReports.set(cacheKey, promise);
-    return promise;
+      return result;
+    });
   }
 }

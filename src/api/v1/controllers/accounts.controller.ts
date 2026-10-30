@@ -1,7 +1,7 @@
 // src/api/v1/controllers/accounts.controller.ts
 import { Response } from "express";
 import { createHash } from "crypto";
-import { AccountsService } from "../services/accounts.service";
+import { AccountsService } from "../../../domain/accounts/accounts.service";
 import { AccountsExportService } from "../services/accounts-export.service";
 import { AuthenticatedRequest } from "../../../core/types";
 import { success } from "../../../utils/responses";
@@ -12,6 +12,7 @@ import prisma from "../../../core/prismaClient";
 import ActivityService from "../../../core/activity.service";
 import logger from "../../../core/logger";
 import { AccountPaymentRepository } from "../../../repositories/accountPayment.repository";
+import { AccountStatementRepository } from "../../../repositories/accountStatement.repository";
 import { applyRbacFilters, AuthContext } from "../../../utils/rbac";
 import { ExportFormat } from "../types/accounts-export.types";
 import { StatementResponse } from "../../../domain/accounts/accounts.types";
@@ -716,37 +717,8 @@ export const AccountsController = {
       return success(res, { vendedores: [], ventanas: [] });
     }
 
-    // 1. Obtener los vendedores con historial en esta banca
-    const statementVendedores = await prisma.accountStatement.findMany({
-      where: { bancaId, vendedorId: { not: null } },
-      select: {
-        vendedor: {
-          select: { id: true, name: true, username: true, code: true }
-        }
-      },
-      distinct: ['vendedorId']
-    });
-
-    const vendedores = statementVendedores
-      .map(s => s.vendedor)
-      .filter(v => v !== null);
-
-    // 2. Obtener las ventanas con historial en esta banca
-    const statementVentanas = await prisma.accountStatement.findMany({
-      where: { bancaId, ventanaId: { not: null } },
-      select: {
-        ventana: {
-          select: { id: true, name: true, code: true }
-        }
-      },
-      distinct: ['ventanaId']
-    });
-
-    const ventanas = statementVentanas
-      .map(s => s.ventana)
-      .filter(v => v !== null);
-
-    return success(res, { vendedores, ventanas });
+    const result = await AccountStatementRepository.findHistoricalEntities(bancaId);
+    return success(res, result);
   },
 
   /**

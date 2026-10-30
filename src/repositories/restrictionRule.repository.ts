@@ -5,7 +5,6 @@ import logger from "../core/logger";
 import { Role } from "../generated/prisma/client";
 import { getCRLocalComponents } from "../utils/businessDate";
 import { SalesService } from "../api/v1/services/sales.service";
-import { restrictionCacheV2 } from "../utils/restrictionCacheV2";
 import { invalidateRestrictionRulesCache } from "./ticket.repository";
 import { bumpRestrictionsVersion } from "../utils/restrictionCompiledCache";
 import { CacheService, CacheEvents } from "../core/cache.service";
@@ -184,14 +183,7 @@ export const RestrictionRuleRepository = {
       { context: 'RestrictionRuleRepository.create' }
     );
 
-    //  OPTIMIZACIÓN: Invalidar AMBOS cachés cuando se crea una restricción
-    // 1. Caché V2 (Redis/en-memoria centralizado)
-    await restrictionCacheV2.invalidateRestrictionCaches({
-      bancaId: rule.bancaId || undefined,
-      ventanaId: rule.ventanaId || undefined,
-      userId: rule.userId || undefined,
-    });
-    // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
+    // Invalidación reactiva de reglas de riesgo (L1, L2 y versiones)
     await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
     await bumpRestrictionsVersion(rule.bancaId || null);
@@ -233,14 +225,7 @@ export const RestrictionRuleRepository = {
       { context: 'RestrictionRuleRepository.update' }
     );
 
-    //  OPTIMIZACIÓN: Invalidar AMBOS cachés cuando se actualiza una restricción
-    // 1. Caché V2 (Redis/en-memoria centralizado)
-    await restrictionCacheV2.invalidateRestrictionCaches({
-      bancaId: rule.bancaId || undefined,
-      ventanaId: rule.ventanaId || undefined,
-      userId: rule.userId || undefined,
-    });
-    // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
+    // Invalidación reactiva de reglas de riesgo (L1, L2 y versiones)
     await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
     await bumpRestrictionsVersion(rule.bancaId || null);
@@ -263,14 +248,7 @@ export const RestrictionRuleRepository = {
       { context: 'RestrictionRuleRepository.softDelete' }
     );
 
-    //  OPTIMIZACIÓN: Invalidar AMBOS cachés cuando se elimina (inactiva) una restricción
-    // 1. Caché V2 (Redis/en-memoria centralizado)
-    await restrictionCacheV2.invalidateRestrictionCaches({
-      bancaId: rule.bancaId || undefined,
-      ventanaId: rule.ventanaId || undefined,
-      userId: rule.userId || undefined,
-    });
-    // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
+    // Invalidación reactiva de reglas de riesgo (L1, L2 y versiones)
     await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
     await bumpRestrictionsVersion(rule.bancaId || null);
@@ -288,14 +266,7 @@ export const RestrictionRuleRepository = {
       { context: 'RestrictionRuleRepository.restore' }
     );
 
-    //  OPTIMIZACIÓN: Invalidar AMBOS cachés cuando se restaura una restricción
-    // 1. Caché V2 (Redis/en-memoria centralizado)
-    await restrictionCacheV2.invalidateRestrictionCaches({
-      bancaId: rule.bancaId || undefined,
-      ventanaId: rule.ventanaId || undefined,
-      userId: rule.userId || undefined,
-    });
-    // 2. Caché local de validación de balances (ticket.repository) y L1 de Cutoff
+    // Invalidación reactiva de reglas de riesgo (L1, L2 y versiones)
     await clearL1CutoffCache(rule.bancaId || undefined);
     await invalidateRestrictionRulesCache();
     await bumpRestrictionsVersion(rule.bancaId || null);
@@ -592,15 +563,6 @@ export const RestrictionRuleRepository = {
     const { bancaId, ventanaId, userId, loteriaId, multiplierId } = params;
     let number = params.number?.trim() || null;
 
-    // Intentar obtener de caché si no hay filtros específicos (loteria/multiplier) que no estén contemplados en la key
-    // Por ahora, la key de caché solo contempla banca/ventana/user/number.
-    // Si hay loteriaId o multiplierId, evitamos el caché por ahora o extendemos la key.
-    const isCacheable = !loteriaId && !multiplierId;
-    if (isCacheable) {
-      const cached = await restrictionCacheV2.getCachedRestrictions({ bancaId, ventanaId, userId, number });
-      if (cached) return cached;
-    }
-
     const at = params.at ?? new Date();
     const { hour, year, month, day } = getCRLocalComponents(at);
 
@@ -729,10 +691,6 @@ export const RestrictionRuleRepository = {
       salesPercentage: primaryRule.salesPercentage ?? null,
       appliesToVendedor: primaryRule.appliesToVendedor ?? null,
     };
-
-    if (isCacheable) {
-      await restrictionCacheV2.setCachedRestrictions({ bancaId, ventanaId, userId, number }, result);
-    }
 
     return result;
   },
@@ -877,9 +835,6 @@ export const RestrictionRuleRepository = {
             message: `Resolved cutoff: ${resolvedResult.minutes} min from ${resolvedResult.source}`,
           },
         });
-
-        // Mantener compatibilidad con restrictionCacheV2 si otros consumidores lo leen
-        await restrictionCacheV2.setCachedCutoff({ bancaId, ventanaId, userId }, resolvedResult).catch(() => {});
 
         return resolvedResult;
       },

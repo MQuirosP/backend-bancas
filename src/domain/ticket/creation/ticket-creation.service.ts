@@ -205,34 +205,7 @@ export class TicketCreationService {
             L1_TTL_ENTITY_MS,
           ),
           initialVentanaId
-            ? CacheService.wrap(
-                `ventana:${initialVentanaId}`,
-                () =>
-                  withConnectionRetry(
-                    () =>
-                      salesPrisma.ventana.findUnique({
-                        where: { id: initialVentanaId },
-                        select: {
-                          id: true,
-                          bancaId: true,
-                          isActive: true,
-                          commissionPolicyJson: true,
-                          name: true,
-                          code: true,
-                          phone: true,
-                          settings: true,
-                          banca: {
-                            select: { id: true, commissionPolicyJson: true },
-                          },
-                        },
-                      }),
-                    { context: "TicketCreationService.create.ventana" },
-                  ),
-                86400,
-                [`ventana:${initialVentanaId}`],
-                true,
-                L1_TTL_ENTITY_MS,
-              )
+            ? TicketPrefetchService.fetchVentanaWithBanca(initialVentanaId, L1_TTL_ENTITY_MS)
             : Promise.resolve(null),
           requestedVendedorId && requestedVendedorId !== userId
             ? CacheService.wrap(
@@ -296,33 +269,9 @@ export class TicketCreationService {
         resolvedVentanaWithBanca.id !== ventanaId
       ) {
         const t_fallback_start = performance.now();
-        resolvedVentanaWithBanca = await CacheService.wrap(
-          `ventana:${ventanaId}`,
-          () =>
-            withConnectionRetry(
-              () =>
-                salesPrisma.ventana.findUnique({
-                  where: { id: ventanaId },
-                  select: {
-                    id: true,
-                    bancaId: true,
-                    isActive: true,
-                    commissionPolicyJson: true,
-                    name: true,
-                    code: true,
-                    phone: true,
-                    settings: true,
-                    banca: {
-                      select: { id: true, commissionPolicyJson: true },
-                    },
-                  },
-                }),
-              { context: "TicketCreationService.create.ventana" },
-            ),
-          86400,
-          [`ventana:${ventanaId}`],
-          true,
-          L1_TTL_ENTITY_MS,
+        resolvedVentanaWithBanca = await TicketPrefetchService.fetchVentanaWithBanca(
+          ventanaId,
+          L1_TTL_ENTITY_MS
         );
         try {
           if (timingCollector.prefetch_breakdown) {

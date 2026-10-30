@@ -2,6 +2,7 @@ import { getRedisClient, isRedisAvailable, redisSubscriber } from './redisClient
 import { config } from '../config';
 import logger from './logger';
 import { ResilienceService } from './resilience.service';
+import { SingleFlight } from '../utils/concurrency';
 import { EventEmitter } from 'events';
 
 export const CacheEvents = new EventEmitter();
@@ -52,7 +53,6 @@ interface L1Entry { data: any; expiresAt: number; tags?: string[]; }
 const l1Cache = new Map<string, L1Entry>();
 const l1TagMap = new Map<string, Set<string>>(); // tag -> Set of keys
 const MAX_L1_SIZE = 200; // Límite estricto de seguridad para evitar OOM en contenedor de 512MB
-const inFlightPromises = new Map<string, Promise<any>>();
 
 // TTLs para L1: restricciones de vendedor 30s, cutoffs 30 min (con invalidación reactiva por eventos)
 export const L1_TTL_RESTRICTIONS_MS = 30_000;      // 30 segundos — bloqueos de números rápidos
@@ -409,7 +409,10 @@ export class CacheService {
             }
         }
         for (const key of Array.from(l1Cache.keys())) {
-            if (key.includes(tag)) deleteL1Entry(key);
+            // Evitar colisiones por subcadena: match exacto o token delimitado por dos puntos
+            if (key === tag || key.startsWith(`${tag}:`) || key.includes(`:${tag}:`) || key.endsWith(`:${tag}`)) {
+                deleteL1Entry(key);
+            }
         }
 
         if (!isRedisAvailable()) return;
@@ -458,41 +461,33 @@ export class CacheService {
         l1TtlMs?: number,
         forceRefresh: boolean = false
     ): Promise<T> {
-        // 1. Coalescing: Si hay una promesa en vuelo para esta misma clave, reutilizarla (salvo forceRefresh)
-        if (!forceRefresh) {
-            const existingPromise = inFlightPromises.get(key);
-            if (existingPromise) {
-                return existingPromise as Promise<T>;
-            }
-        }
-
         const effectiveL1TtlMs = l1TtlMs ?? (ttlSeconds * 1000);
 
-        const promise = (async () => {
-            try {
-                // 2. Intentar obtener de caché (L1 RAM primero, luego Redis L2), omitir si es forceRefresh
-                if (!forceRefresh) {
-                    const cached = await this.get<T>(key, useL1, effectiveL1TtlMs);
-                    if (cached !== null) return cached;
-                }
-
-                // 3. Si no hay caché o es refresco forzado, ejecutar fetcher
-                const result = await fetcher();
-
-                // 4. Guardar en caché y asegurar persistencia en L1 RAM y Redis L2
-                await this.set(key, result, ttlSeconds, tags, useL1, effectiveL1TtlMs).catch((err) => {
-                    logger.warn({ layer: 'cache', action: 'WRAP_SET_ERROR', payload: { key, error: err.message } });
-                });
-
-                return result;
-            } finally {
-                // Limpiar de promesas en vuelo al terminar
-                inFlightPromises.delete(key);
+        const execute = async (): Promise<T> => {
+            // 1. Intentar obtener de caché (L1 RAM primero, luego Redis L2), omitir si es forceRefresh
+            if (!forceRefresh) {
+                const cached = await this.get<T>(key, useL1, effectiveL1TtlMs);
+                if (cached !== null) return cached;
             }
-        })();
 
-        inFlightPromises.set(key, promise);
-        return promise;
+            // 2. Si no hay caché o es refresco forzado, ejecutar fetcher
+            const result = await fetcher();
+
+            // 3. Guardar en caché y asegurar persistencia en L1 RAM y Redis L2
+            await this.set(key, result, ttlSeconds, tags, useL1, effectiveL1TtlMs).catch((err) => {
+                logger.warn({ layer: 'cache', action: 'WRAP_SET_ERROR', payload: { key, error: err.message } });
+            });
+
+            return result;
+        };
+
+        // Si es refresco forzado, ejecutar directamente sin reusar promesas concurrentes
+        if (forceRefresh) {
+            return execute();
+        }
+
+        // Coalescing estandarizado mediante SingleFlight (Anti-Stampede)
+        return SingleFlight.do(key, execute);
     }
 
     /**

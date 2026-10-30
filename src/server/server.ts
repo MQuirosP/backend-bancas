@@ -10,7 +10,6 @@ import { startMonthlyClosingJob, stopMonthlyClosingJob } from '../jobs/monthlyCl
 import { startRefreshTokenCleanupJob, stopRefreshTokenCleanupJob } from '../jobs/refreshTokenCleanup.job'
 import { initRedisClient, closeRedisClient } from '../core/redisClient'
 import { initCacheSubscriber } from '../core/cache.service'
-import { restrictionCacheV2 } from '../utils/restrictionCacheV2'
 import { activeOperationsService } from '../core/activeOperations.service'
 import { warmupConnection } from '../core/connectionWarmup'
 import { SocketService } from '../core/socket.service'
@@ -158,24 +157,6 @@ server.listen(config.port, 511, async () => {
     })
   }
 
-  // Iniciar warming process de restriction cache V2
-  try {
-    restrictionCacheV2.startWarmingProcess()
-    logger.info({
-      layer: 'server',
-      action: 'RESTRICTION_CACHE_V2_WARMING_STARTED',
-      requestId: null,
-      payload: { message: 'Warming process de restriction cache V2 iniciado' },
-    })
-  } catch (error: unknown) {
-    logger.error({
-      layer: 'server',
-      action: 'RESTRICTION_CACHE_V2_WARMING_START_ERROR',
-      requestId: null,
-      meta: { error: error instanceof Error ? error.message : String(error) },
-    })
-  }
-
   // Precalentar workers de renderizado térmico en segundo plano
   WorkerService.warmupWorkers().catch((error: unknown) => {
     logger.warn({
@@ -209,7 +190,6 @@ const gracefulShutdown = async (signal: string) => {
   try { stopAccountStatementSettlementJob(); } catch (e) {}
   try { stopMonthlyClosingJob(); } catch (e) {}
   try { stopRefreshTokenCleanupJob(); } catch (e) {}
-  try { restrictionCacheV2.stopWarmingProcess(); } catch (e) {}
   try { resourceMonitorService.stop(); } catch (e) {}
   try { memoryMonitorService.stop(); } catch (e) {}
   try { await SocketService.close(); } catch (e) {}

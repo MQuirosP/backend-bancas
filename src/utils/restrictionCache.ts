@@ -48,7 +48,7 @@ export async function getCachedCutoff(params: {
     userId?: string | null;
 }): Promise<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" } | null> {
     const key = getCutoffCacheKey(params);
-    // useL1: true + 60s TTL para cutoffs (más estables que restricciones de número)
+    // Zero-L1 (useL1=false): Solo Redis L2 para cutoffs para garantizar consistencia entre réplicas
     const result = await CacheService.get<{ minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }>(key, false);
     if (!result) {
         logger.info({
@@ -72,7 +72,7 @@ export async function setCachedCutoff(
     value: { minutes: number; source: "USER" | "VENTANA" | "BANCA" | "DEFAULT" }
 ): Promise<void> {
     const key = getCutoffCacheKey(params);
-    // useL1: true + 60s TTL para cutoffs
+    // Zero-L1 (useL1=false): Redis L2 directo
     await CacheService.set(key, value, CUTOFF_TTL, [], false);
 }
 
@@ -87,7 +87,7 @@ export async function getCachedRestrictions(params: {
     number?: string | null;
 }): Promise<any | null> {
     const key = getRestrictionsCacheKey(params);
-    // useL1: true + 30s TTL para restricciones de vendedor (bloqueos de números deben propagarse rápido)
+    // Zero-L1 (useL1=false): Solo Redis L2 para que bloqueos de números se propaguen inmediatamente
     const result = await CacheService.get<any>(key, false);
     if (!result) {
         logger.warn({
@@ -111,7 +111,7 @@ export async function setCachedRestrictions(
     value: any
 ): Promise<void> {
     const key = getRestrictionsCacheKey(params);
-    // useL1: true + 30s TTL para restricciones
+    // Zero-L1 (useL1=false): Redis L2 directo
     await CacheService.set(key, value, RESTRICTIONS_TTL, [], false);
 }
 

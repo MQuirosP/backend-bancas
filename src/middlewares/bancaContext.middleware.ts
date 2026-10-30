@@ -185,7 +185,11 @@ export async function bancaContextMiddleware(
       action: 'BANCA_CONTEXT_ERROR',
       payload: { error: (error as Error).message, userId: req.user?.id },
     });
-    next();
+    next(
+      error instanceof AppError
+        ? error
+        : new AppError('Error al resolver contexto de banca', 500, 'TENANT_CONTEXT_ERROR')
+    );
   }
 }
 

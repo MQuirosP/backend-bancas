@@ -6,6 +6,7 @@ import { isRedisSalesAvailable } from "../../../core/redisClient";
 import { acquireLock, releaseLock } from "../../../repositories/helpers/ticket-restriction.helper";
 import { buildRulesCacheKey, getCachedRestrictionRules } from "../../../repositories/ticket.repository";
 import { CreateTicketOptions, TicketLockHandle } from "./ticket.types";
+import { TicketPrefetchService } from "./TicketPrefetchService";
 
 export class TicketConcurrencyManager {
   /**
@@ -24,11 +25,12 @@ export class TicketConcurrencyManager {
     if (isRedisSalesAvailable()) {
       let targetBancaId = options?.preFetched?.ventana?.bancaId;
       if (!targetBancaId) {
-        const vent = await salesPrisma.ventana.findUnique({
-          where: { id: ventanaId },
-          select: { bancaId: true },
-        });
+        const vent = await TicketPrefetchService.fetchVentanaWithBanca(ventanaId);
         targetBancaId = vent?.bancaId;
+        if (vent && options) {
+          if (!options.preFetched) options.preFetched = {};
+          options.preFetched.ventana = vent;
+        }
       }
 
       // Evaluar dinámicamente si existe alguna regla activa de Monto Compartido a nivel de Ventana o Banca (appliesToVendedor = false)

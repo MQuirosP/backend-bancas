@@ -1,6 +1,7 @@
 import prisma from "../core/prismaClient";
 import { Prisma } from "../generated/prisma/client";
 import logger from "../core/logger";
+import { withConnectionRetry } from "../core/withConnectionRetry";
 
 export const AccountStatementRepository = {
   /**
@@ -393,6 +394,50 @@ export const AccountStatementRepository = {
         payments: true, // Incluir todos los pagos para validación completa
       },
     });
+  },
+
+  /**
+   * Obtiene la lista de entidades (vendedores, ventanas) con historial en la banca
+   */
+  async findHistoricalEntities(bancaId: string): Promise<{
+    vendedores: Array<{ id: string; name: string; username: string; code: string | null }>;
+    ventanas: Array<{ id: string; name: string; code: string }>;
+  }> {
+    return withConnectionRetry(
+      async () => {
+        const [statementVendedores, statementVentanas] = await Promise.all([
+          prisma.accountStatement.findMany({
+            where: { bancaId, vendedorId: { not: null } },
+            select: {
+              vendedor: {
+                select: { id: true, name: true, username: true, code: true },
+              },
+            },
+            distinct: ['vendedorId'],
+          }),
+          prisma.accountStatement.findMany({
+            where: { bancaId, ventanaId: { not: null } },
+            select: {
+              ventana: {
+                select: { id: true, name: true, code: true },
+              },
+            },
+            distinct: ['ventanaId'],
+          }),
+        ]);
+
+        const vendedores = statementVendedores
+          .map((s) => s.vendedor)
+          .filter((v): v is { id: string; name: string; username: string; code: string | null } => v !== null);
+
+        const ventanas = statementVentanas
+          .map((s) => s.ventana)
+          .filter((v): v is { id: string; name: string; code: string } => v !== null);
+
+        return { vendedores, ventanas };
+      },
+      { context: 'AccountStatementRepository.findHistoricalEntities' }
+    );
   },
 };
 

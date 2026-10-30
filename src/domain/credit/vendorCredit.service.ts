@@ -5,6 +5,7 @@ import { getRedisClient, getRedisSalesClient, isRedisAvailable, isRedisSalesAvai
 import { SocketService } from "../../core/socket.service";
 import { tz } from "../../utils/timezone";
 import { Role } from "../../generated/prisma/client";
+import { CACHE_TTL_SECONDS, CACHE_TTL_MS } from "../../config/cache.constants";
 
 export type CreditStatus = "NORMAL" | "WARNING" | "BLOCKED" | "EXCEEDED_ALERT_ONLY";
 
@@ -46,7 +47,7 @@ export interface CreditStatusResponse {
   truncated?: boolean;
 }
 
-const DEFAULT_TTL_SECONDS = 86400; // 24 horas (cubre la jornada operativa completa)
+const DEFAULT_TTL_SECONDS = CACHE_TTL_SECONDS.MASTER_ENTITY_24H; // 24 horas (cubre la jornada operativa completa)
 const REDIS_COMMAND_TIMEOUT_MS = 150; // Timeout defensivo estricto de comando Redis Fast-Path
 
 // ─────────────────────────────────────────────────────────────────────────────
