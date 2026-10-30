@@ -137,6 +137,10 @@ export async function bancaContextMiddleware(
         }
       }
 
+      if (!resolvedBancaId) {
+        throw new AppError("El usuario no tiene una banca asignada o activa", 403, "TENANT_ACCESS_DENIED");
+      }
+
       return runWithTenant(
         { bancaId: resolvedBancaId, role: user.role as Role, userId: user.id, ventanaId, bypassIsolation: false },
         () => next()
@@ -165,7 +169,7 @@ export async function bancaContextMiddleware(
     }
 
     // Si llegamos aquí, el rol no es BANCA ni VENTANA (normalmente es ADMIN)
-    const isGlobalAdmin = roleStr === 'ADMIN';
+    const isGlobalAdmin = user.role === Role.ADMIN;
     let finalBancaId = activeBancaId || (isGlobalAdmin ? undefined : null);
 
     req.bancaContext = {
