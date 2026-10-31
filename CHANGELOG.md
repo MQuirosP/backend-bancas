@@ -27,6 +27,12 @@
 ### 📊 5. Auditoría de Rendimiento en Supabase / PostgreSQL
 - **Auditoría de Índices y Prevención de Sobreindexación (Regla 13):** Validación exhaustiva mediante `EXPLAIN (ANALYZE, BUFFERS)` y `pg_stat_user_indexes` sobre las consultas de mayor impacto de `pg_stat_statements` (Sorteo `526554f6-168a-4595-88b4-07677a282b5a`, Banca `da3545ac-fb10-4674-a345-6b66c9f89146`). Se demostró que las consultas de agregación analítica ya están cubiertas eficientemente por índices compuestos existentes (`idx_tickets_ventana_vendedor_date`, `idx_ticket_sorteo_business_active`, `idx_jugada_bancaid_multiplier_counts` con Index Only Scan en ~23-41 ms), evitando la sobreindexación de `Jugada` (16.3M de filas) y preservando la latencia de 10.6 ms en la emisión de boletos (`fn_crear_ticket_venta`).
 
+### 🧹 6. Saneamiento de Scripts Operativos y Depuración de package.json
+- **Consolidación en Suite CLI (`npm run ops`):** Todas las tareas operativas quedan formalmente gobernadas por `src/scripts/CLI/main-wizard.ts`.
+- **Archivado de Scripts de Emergencia Históricos:** Traslado de scripts heredados de backfills y parches manuales (`scripts/STATEMENTS`, `scripts/SORTEOS`, `scripts/TICKETS`, etc.) al directorio segregado `scripts/archive/legacy_2025_2026/`.
+- **Depuración de `package.json`:** Eliminadas 10 entradas huérfanas de scripts en desuso que apuntaban a archivos inexistentes (`test:ticket-numbers`, `diagnose:ticket-numbers`, `apply:missing-indexes`, etc.).
+- **Limpieza de Almacenamiento Local:** Eliminación del volcado de base de datos binario desactualizado de 64 MB en `scripts/backups/`.
+
 ---
 
 ## v1.4.1 - Desacoplamiento de Crédito Operativo y Blindaje Anti-Estampida en Evaluaciones

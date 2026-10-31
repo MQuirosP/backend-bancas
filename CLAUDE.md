@@ -57,10 +57,10 @@ src/
   jobs/             # Cron jobs (sorteos auto, settlement, monthly closing)
   config/           # Zod env schema, configuración de app
 scripts/
-  DEPLOY/           # Validadores pre-deploy/migrate
-  SORTEOS/          # Scripts de emergencia y backfill de sorteos
-  STATEMENTS/       # Diagnóstico y corrección de AccountStatements
-  TICKETS/          # Diagnóstico y migración de tickets
+  db/               # Scripts DDL y rollbacks SQL versionados
+  archive/          # Utilidades históricas y backfills pasados (legacy 2025/2026)
+src/scripts/
+  CLI/              # Suite interactiva unificada de operaciones (npm run ops)
 prisma/
   schema.prisma     # Modelos, enums, relaciones
   migrations/       # Migraciones históricas
