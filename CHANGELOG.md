@@ -33,6 +33,12 @@
 - **Depuración de `package.json`:** Eliminadas 10 entradas huérfanas de scripts en desuso que apuntaban a archivos inexistentes (`test:ticket-numbers`, `diagnose:ticket-numbers`, `apply:missing-indexes`, etc.).
 - **Limpieza de Almacenamiento Local:** Eliminación del volcado de base de datos binario desactualizado de 64 MB en `scripts/backups/`.
 
+### 🗂️ 7. Saneamiento de la Raíz del Proyecto
+- **Eliminación de Volcados Binarios Pesados:** Eliminado el archivo `supabase_prod_fresco.dump` (540.8 MB) y archivos temporales (`fn_def.sql`), liberando más de medio gigabyte en disco.
+- **Depuración de Scripts Scratch y Logs en Git:** Eliminación de scripts de prueba obsoletos de la raíz (`scratch.js`, `scratch.ts`, `scratch_analyze_tonight.js`) y logs antiguos trackeados (`logs/banca-filter-debug.log`).
+- **Reubicación de Planes y Documentación:** Traslado de los planes de escalabilidad, réplicas y auditorías de autenticación (`GUIA_ESCALADO.md`, `PLAN_*.md`, `READ_REPLICA.md`, `auth_audit.md`, `load-test-local.yml`) a sus respectivas carpetas bajo `docs/` (`architecture/`, `database/`, `auth/`, `ops/`).
+- **Blindaje en `.gitignore`:** Adición de reglas de exclusión para volcados (`*.dump`) y utilidades locales de Windows (`*.bat`, `redis-cli.exe`).
+
 ---
 
 ## v1.4.1 - Desacoplamiento de Crédito Operativo y Blindaje Anti-Estampida en Evaluaciones
