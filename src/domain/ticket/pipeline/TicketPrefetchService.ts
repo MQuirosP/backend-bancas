@@ -1,5 +1,6 @@
 import { BetType, Prisma } from "../../../generated/prisma/client";
 import { salesPrisma } from "../../../core/prismaClient";
+import { withConnectionRetry } from "../../../core/withConnectionRetry";
 import { AppError } from "../../../core/errors";
 import { getBusinessDateCRInfo } from "../../../utils/businessDate";
 import { resolveBaseMultiplierX } from "../../../repositories/ticket.repository";
@@ -80,6 +81,40 @@ export class TicketPrefetchService {
   }
 
   /**
+   * Resuelve y cachea los metadatos de la Ventana y su Banca asociada (L1 + Redis L2, 24h).
+   */
+  static async fetchVentanaWithBanca(ventanaId: string, l1TtlMs = 300_000): Promise<any> {
+    return CacheService.wrap(
+      `ventana:${ventanaId}`,
+      () =>
+        withConnectionRetry(
+          () =>
+            salesPrisma.ventana.findUnique({
+              where: { id: ventanaId },
+              select: {
+                id: true,
+                bancaId: true,
+                isActive: true,
+                commissionPolicyJson: true,
+                name: true,
+                code: true,
+                phone: true,
+                settings: true,
+                banca: {
+                  select: { id: true, commissionPolicyJson: true },
+                },
+              },
+            }),
+          { context: "TicketPrefetchService.fetchVentanaWithBanca" }
+        ),
+      86400,
+      [`ventana:${ventanaId}`],
+      true,
+      l1TtlMs
+    );
+  }
+
+  /**
    * FAST-PATH PRE-TX: Resuelve entidades estáticas FUERA de la transacción interactiva.
    */
   static async resolvePreTxMetadata(
@@ -126,17 +161,7 @@ export class TicketPrefetchService {
             }),
         options?.preFetched?.ventana
           ? Promise.resolve(options.preFetched.ventana)
-          : salesPrisma.ventana.findUnique({
-              where: { id: ventanaId },
-              select: {
-                id: true,
-                bancaId: true,
-                commissionPolicyJson: true,
-                banca: {
-                  select: { commissionPolicyJson: true },
-                },
-              },
-            }),
+          : TicketPrefetchService.fetchVentanaWithBanca(ventanaId),
         options?.preFetched?.vendedor
           ? Promise.resolve(options.preFetched.vendedor)
           : salesPrisma.user.findUnique({
@@ -207,6 +232,13 @@ export class TicketPrefetchService {
             userId,
             ventanaId,
           });
+
+    if (options) {
+      if (!options.preFetched) options.preFetched = {};
+      if (!options.preFetched.ventana) {
+        options.preFetched.ventana = ventana;
+      }
+    }
 
     return {
       loteria,

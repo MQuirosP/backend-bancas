@@ -4,7 +4,6 @@ import { Prisma, TicketStatus, BetType, SorteoStatus, Role } from '../../generat
 import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
 import { getCRLocalComponents } from "../../utils/businessDate";
-import { restrictionCacheV2 } from "../../utils/restrictionCacheV2";
 import { getRedisClient, getRedisSalesClient, isRedisAvailable, isRedisSalesAvailable, markRedisError } from "../../core/redisClient";
 import { rehydrateSorteoSalesCounters } from "../../utils/sorteoSalesCounters";
 import prisma from "../../core/prismaClient";

@@ -1,6 +1,7 @@
 import { CacheService } from '../core/cache.service';
 import logger from '../core/logger';
 import { randomUUID } from 'crypto';
+import { Role } from '../generated/prisma/enums';
 
 /**
  *  OPTIMIZACIÓN: Caché de estados de cuenta
@@ -63,7 +64,7 @@ function getStatementCacheKey(params: {
         params.ventanaId || 'null',
         params.vendedorId || 'null',
         params.bancaId || 'null',
-        params.userRole || 'ADMIN',
+        params.userRole || Role.ADMIN,
         params.sort || 'desc',
         params.cacheVersion || 'legacy',
     ];
@@ -88,7 +89,7 @@ function getDayStatementCacheKey(params: {
         params.ventanaId || 'null',
         params.vendedorId || 'null',
         params.bancaId || 'null',
-        params.userRole || 'ADMIN',
+        params.userRole || Role.ADMIN,
     ];
     return parts.join(':');
 }

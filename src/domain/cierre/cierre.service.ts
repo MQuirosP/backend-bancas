@@ -1,18 +1,12 @@
 import { Prisma, BetType, TicketStatus, SorteoStatus } from '../../generated/prisma/client';
 import prisma from '../../core/prismaClient';
 import { CacheService } from '../../core/cache.service';
+import { SingleFlight } from '../../utils/concurrency';
 import crypto from 'crypto';
 
-const _cierreInFlight = new Map<string, Promise<any>>();
-
 function cierreWrap<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {
-  const inFlight = _cierreInFlight.get(key);
-  if (inFlight) return inFlight;
-  //  USO DE TAG GLOBAL: 'cierre' permite invalidar todo el reporte closure de una vez
-  const promise = CacheService.wrap(key, fn, ttl, ['cierre']);
-  _cierreInFlight.set(key, promise);
-  promise.finally(() => _cierreInFlight.delete(key));
-  return promise;
+  // Coalescing estandarizado mediante SingleFlight
+  return SingleFlight.do(key, () => CacheService.wrap(key, fn, ttl, ['cierre']));
 }
 import {
   CierreFilters,

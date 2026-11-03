@@ -62,7 +62,7 @@ router.post("/reverse-payment", validateReversePaymentBody, AccountsController.r
 
 // 5) Eliminar un estado de cuenta (solo ADMIN, solo si está vacío)
 // DELETE /accounts/statement/:id
-router.delete("/statement/:id", AccountsController.deleteStatement);
+router.delete("/statement/:id", restrictTo(Role.ADMIN), AccountsController.deleteStatement);
 
 // 6) Obtener balance acumulado actual de la ventana (solo VENTANA)
 // GET /accounts/balance/current

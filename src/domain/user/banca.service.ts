@@ -1,5 +1,6 @@
 // AHORA
 import prisma from "../../core/prismaClient";
+import logger from "../../core/logger";
 import { AppError } from "../../core/errors";
 import ActivityService from "../../core/activity.service";
 import BancaRepository from "../../repositories/banca.repository";
@@ -20,7 +21,12 @@ export const BancaService = {
       if (existingUser) throw new AppError(`El nombre de usuario "${data.username}" ya está en uso`, 400);
     }
 
-    console.log(`[BancaService] Creando banca: ${data.name}, importBaseLoterias: ${data.importBaseLoterias}`);
+    logger.info({
+      layer: "service",
+      action: "BANCA_CREATE_START",
+      userId,
+      payload: { name: data.name, code: data.code, importBaseLoterias: data.importBaseLoterias },
+    });
 
     // 2. Ejecutar creación en transacción para asegurar consistencia
     const result = await prisma.$transaction(async (tx) => {
@@ -144,7 +150,12 @@ export const BancaService = {
         },
       });
 
-      console.log(`[BancaService] VENDOR_LIMIT_REDUCED_LOGOUT: bancaId=${id}, revokedSessions=${revoked.count}`);
+      logger.info({
+        layer: "service",
+        action: "VENDOR_LIMIT_REDUCED_LOGOUT",
+        userId,
+        payload: { bancaId: id, revokedSessions: revoked.count },
+      });
     }
 
     await CacheService.invalidateTag(`banca:${id}`);

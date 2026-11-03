@@ -2,6 +2,7 @@ import CircuitBreaker from 'opossum';
 import logger from './logger';
 import { config } from '../config';
 import { metricsService } from './metrics.service';
+import { SingleFlight } from '../utils/concurrency';
 
 /**
  * Errores transitorios de Prisma que activan el Circuit Breaker
@@ -24,7 +25,6 @@ export class ResilienceService {
     private static redisBreaker: CircuitBreaker;
     private static l1Cache = new Map<string, RedisL1CacheEntry>();
     private static MAX_L1_SIZE = 1000; // Límite de seguridad para evitar fuga de memoria
-    private static inflightRedisRequests = new Map<string, Promise<any>>();
     private static initialized = false;
 
     /**
@@ -160,32 +160,25 @@ export class ResilienceService {
             return cached.value;
         }
 
-        // 2. Promise Coalescing (Anti-Stampede)
-        if (this.inflightRedisRequests.has(key)) {
-            return this.inflightRedisRequests.get(key);
-        }
-
-        // 3. Ejecutar a través del Breaker
-        const promise = this.redisBreaker.fire(action).then(result => {
-            if (memoize && result !== undefined) {
-                if (this.l1Cache.size >= this.MAX_L1_SIZE) {
-                    this.evictOldestL1Entry(); // Desalojo FIFO: evita cache stampede
+        // 2. Promise Coalescing mediante SingleFlight estandarizado
+        return SingleFlight.do(key, async () => {
+            try {
+                const result = await this.redisBreaker.fire(action);
+                if (memoize && result !== undefined) {
+                    if (this.l1Cache.size >= this.MAX_L1_SIZE) {
+                        this.evictOldestL1Entry(); // Desalojo FIFO: evita cache stampede
+                    }
+                    this.l1Cache.set(key, {
+                        value: result,
+                        expiry: Date.now() + (ttl * 1000)
+                    });
                 }
-                this.l1Cache.set(key, {
-                    value: result,
-                    expiry: Date.now() + (ttl * 1000)
-                });
+                return result;
+            } catch (err) {
+                if (cached) return cached.value;
+                throw err;
             }
-            this.inflightRedisRequests.delete(key);
-            return result;
-        }).catch(err => {
-            this.inflightRedisRequests.delete(key);
-            if (cached) return cached.value;
-            throw err;
         });
-
-        this.inflightRedisRequests.set(key, promise);
-        return promise as Promise<T>;
     }
 
     /**

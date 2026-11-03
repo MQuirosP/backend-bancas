@@ -136,6 +136,9 @@ src/generated/
 # Local Utilities / Binaries
 redis-cli.exe
 *.exe
+start-redis.bat
+stop-redis.bat
+*.dump
 
 # Clinic.js output
 .clinic/

@@ -1,6 +1,8 @@
 import { Prisma, Role } from "../../generated/prisma/client";
 import prisma from "../../core/prismaClient";
 import logger from "../../core/logger";
+import { withConnectionRetry } from "../../core/withConnectionRetry";
+import { AppError } from "../../core/errors";
 import { getCachedPreviousMonthBalance, setCachedPreviousMonthBalance } from "../../utils/accountStatementCache";
 import { crDateService } from "../../utils/crDateService";
 import { tz } from "../../utils/timezone";
@@ -229,10 +231,10 @@ export async function getPreviousMonthFinalBalance(
 
         let balanceResetAtDayStr: string | null = null;
         if (vendedorId && !ignoreReset) {
-            const user = await prisma.user.findUnique({
+            const user = await withConnectionRetry(() => prisma.user.findUnique({
                 where: { id: vendedorId },
                 select: { settings: true }
-            });
+            }));
             if (user?.settings && (user.settings as Record<string, any>).balanceResetAt) {
                 const balanceResetAt = new Date((user.settings as Record<string, any>).balanceResetAt);
                 balanceResetAtDayStr = crDateService.dateUTCToCRString(balanceResetAt);
@@ -278,11 +280,11 @@ export async function getPreviousMonthFinalBalance(
 
         if (!isConsolidated) {
             // Buscar el último statement del mes anterior (sin importar si está asentado)
-            const lastStatement = await prisma.accountStatement.findFirst({
+            const lastStatement = await withConnectionRetry(() => prisma.accountStatement.findFirst({
                 where,
                 orderBy: { date: "desc" },
                 select: { accumulatedBalance: true, remainingBalance: true },
-            });
+            }));
 
             if (lastStatement) {
                 const balance = Number(lastStatement.remainingBalance) || Number(lastStatement.accumulatedBalance) || 0;
@@ -291,12 +293,12 @@ export async function getPreviousMonthFinalBalance(
             }
         } else {
             // Para consolidados, sumar los remainingBalance o accumulatedBalance del último día de cada entidad
-            const statements = await prisma.accountStatement.findMany({
+            const statements = await withConnectionRetry(() => prisma.accountStatement.findMany({
                 where,
                 orderBy: { date: "desc" },
                 distinct: dimension === "vendedor" ? ["vendedorId"] : dimension === "ventana" ? ["ventanaId"] : ["bancaId"],
                 select: { accumulatedBalance: true, remainingBalance: true },
-            });
+            }));
 
             if (statements.length > 0) {
                 const total = statements.reduce((sum, s) => sum + (Number(s.remainingBalance) || Number(s.accumulatedBalance) || 0), 0);
@@ -315,7 +317,14 @@ export async function getPreviousMonthFinalBalance(
             action: "GET_PREVIOUS_MONTH_FINAL_BALANCE_ERROR",
             payload: { effectiveMonth, dimension, error: error instanceof Error ? error.message : String(error) },
         });
-        return 0;
+        if (error instanceof AppError) {
+            throw error;
+        }
+        throw new AppError(
+            `Error al obtener el saldo del mes anterior: ${error instanceof Error ? error.message : String(error)}`,
+            500,
+            "PREVIOUS_BALANCE_FETCH_FAILED"
+        );
     }
 }
 

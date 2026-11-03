@@ -38,14 +38,15 @@ import { bumpRestrictionsVersion } from "../utils/restrictionCompiledCache";
 import { appendSalesCounterOps } from "../utils/sorteoSalesCounters";
 import { VendorCreditService } from "../domain/credit/vendorCredit.service";
 import { SingleFlight } from "../utils/concurrency";
+import { CACHE_TTL_SECONDS, CACHE_TTL_MS } from "../config/cache.constants";
 
 export type { CreateTicketInput, CreateTicketOptions, TicketWarning };
 
 // Micro-caché L1 en RAM (4s) y coalescing para saldos de validación por sorteo/vendedor
 const sorteoBalancesL1Cache = new Map<string, { data: Record<string, { remaining: number; limit: number; accumulated: number }>; expiresAt: number }>();
-const SORTEO_BALANCES_L1_TTL_MS = 4000;
+const SORTEO_BALANCES_L1_TTL_MS = CACHE_TTL_MS.L1_CREDIT_STATUS_BASE_MS;
 
-const RULES_CACHE_TTL_SECONDS = 86400; // 24 horas en Redis L2 (Event-Driven: invalidación por mutación de reglas)
+const RULES_CACHE_TTL_SECONDS = CACHE_TTL_SECONDS.MASTER_ENTITY_24H; // 24 horas en Redis L2 (Event-Driven: invalidación por mutación de reglas)
 
 export function buildRulesCacheKey(params: {
   userId: string;
@@ -193,12 +194,7 @@ export async function calculateDynamicLimit(
       sorteoSales = context.cache.salesTotals.get(cacheKey);
     }
 
-    // 2.1 Deduplicación de promesas en vuelo para el mismo alcance (Thundering Herd Protection)
-    if (sorteoSales === undefined && context.cache?.salesInFlight?.has(cacheKey)) {
-      sorteoSales = await context.cache.salesInFlight.get(cacheKey)!;
-    }
-
-    // 2.2 Si no está en L1, resolver vía L2 Redis o L3 DB protegiendo con salesInFlight
+    // 2.2 Si no está en L1, resolver vía L2 Redis o L3 DB con SingleFlight Coalescing
     if (sorteoSales === undefined) {
       const fetchSalesTotal = async (): Promise<number> => {
         // A) Intentar obtener de Redis L2 Fast-Path (< 0.5 ms)
@@ -243,20 +239,9 @@ export async function calculateDynamicLimit(
         return dbSales;
       };
 
+      sorteoSales = await SingleFlight.do(cacheKey, fetchSalesTotal);
       if (context.cache) {
-        if (!context.cache.salesInFlight) {
-          context.cache.salesInFlight = new Map();
-        }
-        const promise = fetchSalesTotal();
-        context.cache.salesInFlight.set(cacheKey, promise);
-        try {
-          sorteoSales = await promise;
-          context.cache.salesTotals.set(cacheKey, sorteoSales);
-        } finally {
-          context.cache.salesInFlight.delete(cacheKey);
-        }
-      } else {
-        sorteoSales = await fetchSalesTotal();
+        context.cache.salesTotals.set(cacheKey, sorteoSales);
       }
     }
 
@@ -454,6 +439,31 @@ export async function resolveBaseMultiplierX(
 }
 
 // Garantiza que exista un multiplicador "Base" (para linkear en jugadas NUMERO)
+function recordPrefetchTiming(
+  options: CreateTicketOptions | undefined,
+  metric: string,
+  startMs: number,
+  extra?: Record<string, any>
+): void {
+  try {
+    const bd = options?.timingCollector?.prefetch_breakdown;
+    if (bd) {
+      if ((bd as any)[metric] === undefined) {
+        (bd as any)[metric] = Math.round((performance.now() - startMs) * 100) / 100;
+      }
+      if (extra) {
+        Object.assign(bd, extra);
+      }
+    }
+  } catch (err: any) {
+    logger.debug({
+      layer: "repository",
+      action: "PREFETCH_TIMING_METRIC_WARN",
+      payload: { metric, error: err?.message || String(err) },
+    });
+  }
+}
+
 export const TicketRepository = {
   /**
    * Facade (Director de Orquesta) para la creación optimizada de tickets.
@@ -474,6 +484,10 @@ export const TicketRepository = {
       degraded?: boolean;
     } | null;
   }> {
+    if (options && !options.preFetched) {
+      options.preFetched = {};
+    }
+
     const dynamicTimeout = TicketTimeoutCalculator.calculate(data.jugadas.length);
     let lock: any = null;
     try {
@@ -487,27 +501,16 @@ export const TicketRepository = {
               options,
               data.loteriaId
             );
-      try {
-        if (options?.timingCollector?.prefetch_breakdown) {
-          if (options.timingCollector.prefetch_breakdown.t_multipliers === undefined) {
-            options.timingCollector.prefetch_breakdown.t_multipliers = Math.round((performance.now() - t_mult_start) * 100) / 100;
-          }
-        }
-      } catch {}
+      recordPrefetchTiming(options, 't_multipliers', t_mult_start);
 
-      if (options) {
-        if (!options.preFetched) options.preFetched = {};
+      if (options?.preFetched) {
         options.preFetched.multipliers = preFetchedMultipliers;
       }
 
       // 2. [PRE-TX] Resolver entidades estáticas y reglas FUERA de la transacción interactiva
       const t_meta_start = performance.now();
       const preTxMeta = await TicketPrefetchService.resolvePreTxMetadata(data, userId, options);
-      try {
-        if (options?.timingCollector?.prefetch_breakdown) {
-          options.timingCollector.prefetch_breakdown.t_pre_tx_meta = Math.round((performance.now() - t_meta_start) * 100) / 100;
-        }
-      } catch {}
+      recordPrefetchTiming(options, 't_pre_tx_meta', t_meta_start);
 
       const t_rules_start = performance.now();
       const prefecthedRules =
@@ -518,17 +521,10 @@ export const TicketRepository = {
               ventanaId: data.ventanaId,
               bancaId: preTxMeta.bancaId,
             });
-      if (options) {
-        if (!options.preFetched) options.preFetched = {};
+      if (options?.preFetched) {
         options.preFetched.rules = prefecthedRules;
       }
-      try {
-        if (options?.timingCollector?.prefetch_breakdown) {
-          if (options.timingCollector.prefetch_breakdown.t_rules === undefined) {
-            options.timingCollector.prefetch_breakdown.t_rules = Math.round((performance.now() - t_rules_start) * 100) / 100;
-          }
-        }
-      } catch {}
+      recordPrefetchTiming(options, 't_rules', t_rules_start);
 
       // 2.3. [PRE-TX] Pre-calcular ScopeCache y DynamicLimits FUERA de la transacción interactiva
       const t_risk_prefetch_start = performance.now();
@@ -540,29 +536,20 @@ export const TicketRepository = {
           options,
           candidateRules: prefecthedRules,
         });
-      if (options) {
-        if (!options.preFetched) options.preFetched = {};
+      if (options?.preFetched) {
         options.preFetched.cache = prefetchedCache;
         options.preFetched.dynamicLimits = prefetchedDynamicLimits;
       }
-      try {
-        if (options?.timingCollector?.prefetch_breakdown) {
-          options.timingCollector.prefetch_breakdown.t_risk_prefetch =
-            Math.round((performance.now() - t_risk_prefetch_start) * 100) / 100;
-        }
-      } catch {}
+      recordPrefetchTiming(options, 't_risk_prefetch', t_risk_prefetch_start);
 
       // 2.4. [LOCK] Adquirir el Lock Distribuido ÚNICAMENTE tras resolver todo el prefetch y validaciones
       // Esto minimiza el hold-time del lock en Redis a prácticamente solo la transacción interactiva
       const t_lock_start = performance.now();
       lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
-      try {
-        if (options?.timingCollector?.prefetch_breakdown) {
-          options.timingCollector.prefetch_breakdown.t_lock_acquire = Math.round((performance.now() - t_lock_start) * 100) / 100;
-          options.timingCollector.prefetch_breakdown.lock_wait_ms = lock?.waitDurationMs ?? 0;
-          options.timingCollector.prefetch_breakdown.lock_attempts = lock?.attempts ?? 0;
-        }
-      } catch {}
+      recordPrefetchTiming(options, 't_lock_acquire', t_lock_start, {
+        lock_wait_ms: lock?.waitDurationMs ?? 0,
+        lock_attempts: lock?.attempts ?? 0,
+      });
 
       // 2.6. [PRE-TX] Validación de Límite de Crédito del Vendedor en Redis (Atomic Lua)
       let creditReservedAmount = 0;
@@ -1320,10 +1307,10 @@ export const TicketRepository = {
           const vendedorId = ticket.vendedorId;
           const ventanaId = ticket.ventanaId;
 
-          // Obtener la bancaId real para el decremento
-          let targetBancaId = null;
-          if (ventanaId) {
-            const vent = await prisma.ventana.findUnique({
+          // Obtener la bancaId real para el decremento (directamente del ticket persistido)
+          let targetBancaId = (ticket as any).bancaId || bancaId || null;
+          if (!targetBancaId && ventanaId) {
+            const vent = await salesPrisma.ventana.findUnique({
               where: { id: ventanaId },
               select: { bancaId: true },
             });

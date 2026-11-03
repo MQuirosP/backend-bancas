@@ -5,6 +5,42 @@
 
 ---
 
+## v1.4.2 - Remediación de Deuda Técnica, Blindaje Multi-Tenant y Optimización DDL de Cierre
+
+ **Fecha:** 2026-10-29  
+ **Rama:** `refactor/technical-debt-remediation`
+
+### 🔒 1. Seguridad y Hard Boundary Multi-Tenant
+- **Cierre del "Modo Permisivo" en `bancaContextMiddleware`:** Se eliminó la tolerancia que permitía a tokens heredados con roles `VENTANA` o `VENDEDOR` operar con `bancaId = null` si no se resolvía su asignación. Ante cualquier fallo en la resolución de banca, el middleware ahora aborta estrictamente con error HTTP 403 (`TENANT_ACCESS_DENIED`), erradicando cualquier posibilidad de comportamiento *fail-open*.
+
+### 💰 2. Integridad Contable y Eliminación de Fallbacks Silenciosos
+- **Eliminación del `return 0` silencioso en `getPreviousMonthFinalBalance`:** Ante fallos de conexión o caídas en la base de datos, el cálculo de saldos arrastrados anteriormente retornaba 0, enmascarando caídas de infraestructura y borrando deudas históricas de vendedores. Ahora las consultas utilizan `withConnectionRetry` con reintentos exponenciales y propagan un `AppError` (`PREVIOUS_BALANCE_FETCH_FAILED`) en caso de fallo irrecuperable. El saldo 0 queda estrictamente reservado para entidades sin histórico contable previo en `AccountStatement`.
+
+### 🧮 3. Cumplimiento de Regla 16 y Optimización DDL en Cierre Diario
+- **Alineación DDL de `ResumenCierreDiario.id`:** Se estandarizó la columna `id` de la tabla `ResumenCierreDiario` asignándole `DEFAULT gen_random_uuid()` nativo en PostgreSQL (script registrado en `migration_scripts/align_resumen_cierre_diario_id_default.sql`).
+- **Eliminación de `gen_random_uuid()` en `cierre.rollup.service.ts`:** Se retiró la columna `"id"` y la computación criptográfica `gen_random_uuid()` dentro de la proyección `SELECT` del rollup masivo diario. PostgreSQL ahora asigna el UUID nativamente vía `DEFAULT` solo a las tuplas que se insertan, eliminando saturación innecesaria de CPU y WAL.
+- **Sincronización de Esquema Prisma:** Actualizado `ResumenCierreDiario.id` con `@default(dbgenerated("gen_random_uuid()"))` en `prisma/schema.prisma` y regenerado el cliente Prisma con `npm run prisma:generate`.
+
+### 🛡️ 4. Eliminación de Magic Strings y Tipado Fuerte
+- **Normalización de Roles en Cache de Estados de Cuenta:** En `src/utils/accountStatementCache.ts`, sustitución de magic strings (`'ADMIN'`) por el enum tipado `Role.ADMIN`.
+
+### 📊 5. Auditoría de Rendimiento en Supabase / PostgreSQL
+- **Auditoría de Índices y Prevención de Sobreindexación (Regla 13):** Validación exhaustiva mediante `EXPLAIN (ANALYZE, BUFFERS)` y `pg_stat_user_indexes` sobre las consultas de mayor impacto de `pg_stat_statements` (Sorteo `526554f6-168a-4595-88b4-07677a282b5a`, Banca `da3545ac-fb10-4674-a345-6b66c9f89146`). Se demostró que las consultas de agregación analítica ya están cubiertas eficientemente por índices compuestos existentes (`idx_tickets_ventana_vendedor_date`, `idx_ticket_sorteo_business_active`, `idx_jugada_bancaid_multiplier_counts` con Index Only Scan en ~23-41 ms), evitando la sobreindexación de `Jugada` (16.3M de filas) y preservando la latencia de 10.6 ms en la emisión de boletos (`fn_crear_ticket_venta`).
+
+### 🧹 6. Saneamiento de Scripts Operativos y Depuración de package.json
+- **Consolidación en Suite CLI (`npm run ops`):** Todas las tareas operativas quedan formalmente gobernadas por `src/scripts/CLI/main-wizard.ts`.
+- **Archivado de Scripts de Emergencia Históricos:** Traslado de scripts heredados de backfills y parches manuales (`scripts/STATEMENTS`, `scripts/SORTEOS`, `scripts/TICKETS`, etc.) al directorio segregado `scripts/archive/legacy_2025_2026/`.
+- **Depuración de `package.json`:** Eliminadas 10 entradas huérfanas de scripts en desuso que apuntaban a archivos inexistentes (`test:ticket-numbers`, `diagnose:ticket-numbers`, `apply:missing-indexes`, etc.).
+- **Limpieza de Almacenamiento Local:** Eliminación del volcado de base de datos binario desactualizado de 64 MB en `scripts/backups/`.
+
+### 🗂️ 7. Saneamiento de la Raíz del Proyecto
+- **Eliminación de Volcados Binarios Pesados:** Eliminado el archivo `supabase_prod_fresco.dump` (540.8 MB) y archivos temporales (`fn_def.sql`), liberando más de medio gigabyte en disco.
+- **Depuración de Scripts Scratch y Logs en Git:** Eliminación de scripts de prueba obsoletos de la raíz (`scratch.js`, `scratch.ts`, `scratch_analyze_tonight.js`) y logs antiguos trackeados (`logs/banca-filter-debug.log`).
+- **Reubicación de Planes y Documentación:** Traslado de los planes de escalabilidad, réplicas y auditorías de autenticación (`GUIA_ESCALADO.md`, `PLAN_*.md`, `READ_REPLICA.md`, `auth_audit.md`, `load-test-local.yml`) a sus respectivas carpetas bajo `docs/` (`architecture/`, `database/`, `auth/`, `ops/`).
+- **Blindaje en `.gitignore`:** Adición de reglas de exclusión para volcados (`*.dump`) y utilidades locales de Windows (`*.bat`, `redis-cli.exe`).
+
+---
+
 ## v1.4.1 - Desacoplamiento de Crédito Operativo y Blindaje Anti-Estampida en Evaluaciones
 
  **Fecha:** 2026-10-19  

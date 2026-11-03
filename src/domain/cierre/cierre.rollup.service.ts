@@ -178,12 +178,12 @@ export class CierreRollupService {
                WHERE j."isActive" = true AND j."deletedAt" IS NULL AND j."isExcluded" = false
              )
              INSERT INTO "ResumenCierreDiario" (
-                "id", "bancaId", "businessDate", "vendedorId", "ventanaId", 
+                "bancaId", "businessDate", "vendedorId", "ventanaId", 
                 "loteriaId", "sorteoId", "tipo", "banda", "totalVendida", 
                 "ganado", "comisionTotal", "comisionVendedor", "ticketsCount", "jugadasCount", 
                 "createdAt", "updatedAt"
              )
-             SELECT gen_random_uuid(),
+             SELECT
                 "bancaId",
                 "businessDate",
                 "vendedorId",
