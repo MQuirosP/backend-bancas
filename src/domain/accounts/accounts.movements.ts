@@ -11,6 +11,7 @@ import { crDateService } from "../../utils/crDateService";
 import { recalculateMonthlyClosingForDimension } from "./monthlyClosing.service";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
 import { AccountStatementSyncService } from "./accounts.sync.service";
+import { buildTicketDateFilter } from "./accounts.dates.utils";
 import ActivityService from "../../core/activity.service";
 import logger from "../../core/logger";
 
@@ -134,55 +135,24 @@ export async function registerPayment(data: {
         }
     }
 
-    // Buscar o crear el AccountStatement de forma segura
-    let statement;
+    // Determinar dimensión para el sync service y resolución de entidades
+    const dimension: "banca" | "ventana" | "vendedor" = data.vendedorId ? "vendedor" : (finalVentanaId ? "ventana" : "banca");
+    const entityId = data.vendedorId || finalVentanaId || finalBancaId;
+
+    if (!entityId) {
+        throw new AppError("No se pudo obtener o crear el estado de cuenta. Se requiere al menos un ID de Vendedor, Ventana o Banca.", 400, "MISSING_DIMENSION");
+    }
+
+    // Buscar el AccountStatement existente
+    let statement = null;
     if (data.vendedorId) {
-        // Buscar por date y vendedorId (constraint único: date + vendedorId)
-        // NO filtrar por ventanaId porque pueden existir statements históricos con ventanaId != null
         statement = await prisma.accountStatement.findFirst({
             where: {
                 date: paymentDate,
                 vendedorId: data.vendedorId,
             },
         });
-        if (!statement) {
-            try {
-                statement = await prisma.accountStatement.create({
-                    data: {
-                        date: paymentDate,
-                        month,
-                        ventanaId: null, // Nuevos statements de vendedor siempre con ventanaId=null
-                        vendedorId: data.vendedorId,
-                        bancaId: finalBancaId ?? null,
-                        ticketCount: 0,
-                        totalSales: 0,
-                        totalPayouts: 0,
-                        listeroCommission: 0,
-                        vendedorCommission: 0,
-                        balance: 0,
-                        totalPaid: 0,
-                        totalCollected: 0,
-                        remainingBalance: 0,
-                        isSettled: false,
-                        canEdit: true,
-                    },
-                });
-            } catch (err: any) {
-                if (err.code === 'P2002') {
-                    // Retry: buscar sin filtro de ventanaId (puede ser statement histórico)
-                    statement = await prisma.accountStatement.findFirst({
-                        where: {
-                            date: paymentDate,
-                            vendedorId: data.vendedorId,
-                        },
-                    });
-                } else {
-                    throw err;
-                }
-            }
-        }
     } else if (finalVentanaId) {
-        // Buscar por date y ventanaId (vendedorId debe ser null)
         statement = await prisma.accountStatement.findFirst({
             where: {
                 date: paymentDate,
@@ -190,45 +160,7 @@ export async function registerPayment(data: {
                 vendedorId: null,
             },
         });
-        if (!statement) {
-            try {
-                statement = await prisma.accountStatement.create({
-                    data: {
-                        date: paymentDate,
-                        month,
-                        ventanaId: finalVentanaId,
-                        vendedorId: null,
-                        bancaId: finalBancaId ?? null,
-                        ticketCount: 0,
-                        totalSales: 0,
-                        totalPayouts: 0,
-                        listeroCommission: 0,
-                        vendedorCommission: 0,
-                        balance: 0,
-                        totalPaid: 0,
-                        totalCollected: 0,
-                        remainingBalance: 0,
-                        isSettled: false,
-                        canEdit: true,
-                    },
-                });
-            } catch (err: any) {
-                if (err.code === 'P2002') {
-                    statement = await prisma.accountStatement.findFirst({
-                        where: {
-                            date: paymentDate,
-                            ventanaId: finalVentanaId,
-                            vendedorId: null,
-                        },
-                    });
-                } else {
-                    throw err;
-                }
-            }
-        }
     } else if (finalBancaId) {
-        // NUEVO: Soporte para pagos directos a BANCA (ventanaId=null, vendedorId=null)
-        // Buscar por date y bancaId (ventanaId=null, vendedorId=null)
         statement = await prisma.accountStatement.findFirst({
             where: {
                 date: paymentDate,
@@ -237,41 +169,57 @@ export async function registerPayment(data: {
                 vendedorId: null,
             },
         });
-        if (!statement) {
-            try {
-                statement = await prisma.accountStatement.create({
-                    data: {
-                        date: paymentDate,
-                        month,
-                        bancaId: finalBancaId,
-                        ventanaId: null,
-                        vendedorId: null,
-                        ticketCount: 0,
-                        totalSales: 0,
-                        totalPayouts: 0,
-                        listeroCommission: 0,
-                        vendedorCommission: 0,
-                        balance: 0,
-                        totalPaid: 0,
-                        totalCollected: 0,
-                        remainingBalance: 0,
-                        isSettled: false,
-                        canEdit: true,
-                    },
+    }
+
+    // Si el statement no existe O si existe pero nació en blanco con 0 ventas/tickets,
+    // sincronizarlo mediante AccountStatementSyncService para que refleje los tickets reales y saldo previo
+    if (!statement) {
+        await AccountStatementSyncService.syncDayStatement(paymentDate, dimension, entityId, { force: true });
+        
+        // Re-obtener el statement recién creado y sincronizado
+        if (data.vendedorId) {
+            statement = await prisma.accountStatement.findFirst({
+                where: { date: paymentDate, vendedorId: data.vendedorId }
+            });
+        } else if (finalVentanaId) {
+            statement = await prisma.accountStatement.findFirst({
+                where: { date: paymentDate, ventanaId: finalVentanaId, vendedorId: null }
+            });
+        } else if (finalBancaId) {
+            statement = await prisma.accountStatement.findFirst({
+                where: { date: paymentDate, bancaId: finalBancaId, ventanaId: null, vendedorId: null }
+            });
+        }
+    } else if (statement.ticketCount === 0 && statement.totalSales === 0) {
+        // Validación preventiva: si existe pero tiene ventas en 0, verificar si existen tickets evaluados para sincronizarlos
+        const hasEvaluatedTickets = await prisma.ticket.findFirst({
+            where: {
+                ...buildTicketDateFilter(paymentDate),
+                deletedAt: null,
+                isActive: true,
+                status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
+                sorteo: { status: "EVALUATED", deletedAt: null },
+                ...(data.vendedorId ? { vendedorId: data.vendedorId } : {}),
+                ...(finalVentanaId && !data.vendedorId ? { ventanaId: finalVentanaId } : {}),
+                ...(finalBancaId && !data.vendedorId && !finalVentanaId ? { ventana: { bancaId: finalBancaId } } : {}),
+            },
+            select: { id: true },
+        });
+
+        if (hasEvaluatedTickets) {
+            await AccountStatementSyncService.syncDayStatement(paymentDate, dimension, entityId, { force: true });
+            if (data.vendedorId) {
+                statement = await prisma.accountStatement.findFirst({
+                    where: { date: paymentDate, vendedorId: data.vendedorId }
                 });
-            } catch (err: any) {
-                if (err.code === 'P2002') {
-                    statement = await prisma.accountStatement.findFirst({
-                        where: {
-                            date: paymentDate,
-                            bancaId: finalBancaId,
-                            ventanaId: null,
-                            vendedorId: null,
-                        },
-                    });
-                } else {
-                    throw err;
-                }
+            } else if (finalVentanaId) {
+                statement = await prisma.accountStatement.findFirst({
+                    where: { date: paymentDate, ventanaId: finalVentanaId, vendedorId: null }
+                });
+            } else if (finalBancaId) {
+                statement = await prisma.accountStatement.findFirst({
+                    where: { date: paymentDate, bancaId: finalBancaId, ventanaId: null, vendedorId: null }
+                });
             }
         }
     }
@@ -279,10 +227,6 @@ export async function registerPayment(data: {
     if (!statement) {
         throw new AppError("No se pudo obtener o crear el estado de cuenta. Se requiere al menos un ID de Vendedor, Ventana o Banca.", 500, "STATEMENT_NOT_FOUND");
     }
-
-    // Determinar dimensión para el sync service
-    const dimension: "banca" | "ventana" | "vendedor" = data.vendedorId ? "vendedor" : (finalVentanaId ? "ventana" : "banca");
-    const entityId = data.vendedorId || finalVentanaId || finalBancaId;
 
     // Envolver en transacción: crear pago y actualizar statement atómicamente en una sola transacción (< 20ms)
     let payment: any = undefined;
@@ -691,17 +635,26 @@ export async function reversePayment(
  * Helper para invalidar caché después de un movimiento
  */
 export async function updateCacheAfterMovement(date: string, ventanaId?: string | null, vendedorId?: string | null, bancaId?: string | null) {
-    await Promise.all([
+    const invalidations: Promise<any>[] = [
         invalidateAccountStatementCache({
             date,
             ventanaId: ventanaId || null,
             vendedorId: vendedorId || null,
             bancaId: bancaId || null,
         }),
-        vendedorId
-            ? CacheService.invalidateTag(`vendedor:${vendedorId}`)
-            : Promise.resolve(),
-    ]);
+    ];
+
+    if (vendedorId) {
+        invalidations.push(CacheService.invalidateTag(`vendedor:${vendedorId}`));
+    }
+    if (ventanaId) {
+        invalidations.push(CacheService.invalidateTag(`ventana:${ventanaId}`));
+    }
+    if (bancaId) {
+        invalidations.push(CacheService.invalidateTag(`banca:${bancaId}`));
+    }
+
+    await Promise.all(invalidations);
 
     if (vendedorId) {
         try {
