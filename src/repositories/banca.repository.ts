@@ -146,8 +146,9 @@ const BancaRepository = {
       data: toPrismaUpdate(data),
     });
     
-    // Invalida caché de metadatos de la banca
+    // Invalida caché de metadatos y configuración de la banca
     await CacheService.invalidateTag(`banca:${id}`).catch(() => {});
+    await CacheService.invalidateTag(`banca-setting:${id}`).catch(() => {});
     if (typeof data.salesCutoffMinutes === 'number') {
       await CacheService.invalidateTag(`cutoff:${id}`).catch(() => {});
     }
@@ -171,8 +172,9 @@ const BancaRepository = {
       },
     });
 
-    // Invalida caché de metadatos de la banca
+    // Invalida caché de metadatos y configuración de la banca
     await CacheService.invalidateTag(`banca:${id}`).catch(() => {});
+    await CacheService.invalidateTag(`banca-setting:${id}`).catch(() => {});
 
     logger.warn({
       layer: "repository",
@@ -256,8 +258,9 @@ const BancaRepository = {
       },
     });
 
-    // Invalida caché de metadatos de la banca
+    // Invalida caché de metadatos y configuración de la banca
     await CacheService.invalidateTag(`banca:${id}`).catch(() => {});
+    await CacheService.invalidateTag(`banca-setting:${id}`).catch(() => {});
 
     logger.info({
       layer: "repository",

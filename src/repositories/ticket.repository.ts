@@ -430,6 +430,7 @@ export async function resolveBaseMultiplierX(
     [
       `user-override:${userId}`,
       `ventana-override:${ventanaId}`,
+      `banca:${bancaId}`,
       `banca-setting:${bancaId}`,
       `loteria:${loteriaId}`
     ],

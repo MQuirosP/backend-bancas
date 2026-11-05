@@ -159,6 +159,7 @@ export const BancaService = {
     }
 
     await CacheService.invalidateTag(`banca:${id}`);
+    await CacheService.invalidateTag(`banca-setting:${id}`).catch(() => {});
     if (typeof data.salesCutoffMinutes === 'number') {
       await CacheService.invalidateTag(`cutoff:${id}`).catch(() => {});
     }
@@ -187,6 +188,7 @@ export const BancaService = {
 
     const banca = await BancaRepository.softDelete(id, userId, reason);
     await CacheService.invalidateTag(`banca:${id}`);
+    await CacheService.invalidateTag(`banca-setting:${id}`).catch(() => {});
 
     await ActivityService.log({
       userId,
