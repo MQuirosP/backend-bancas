@@ -510,17 +510,21 @@ export class CacheService {
         if (!redis) return null;
 
         try {
+            const prefix = (redis as any).options?.keyPrefix || '';
+            const scanPattern = prefix && !pattern.startsWith(prefix) && !pattern.startsWith('*')
+                ? `${prefix}${pattern}`
+                : pattern;
+
             const allKeys: string[] = [];
             let cursor = '0';
 
             do {
-                const [newCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+                const [newCursor, keys] = await redis.scan(cursor, 'MATCH', scanPattern, 'COUNT', 100);
                 cursor = newCursor;
                 allKeys.push(...keys);
             } while (cursor !== '0');
 
             if (allKeys.length > 0) {
-                const prefix = (redis as any).options?.keyPrefix || '';
                 const cleanKeys = allKeys.map(k => prefix && k.startsWith(prefix) ? k.slice(prefix.length) : k);
 
                 const BATCH_SIZE = 100;
@@ -572,7 +576,8 @@ export class CacheService {
 
             const wildcardIndex = commonPrefix.indexOf('*');
             const scanPrefix = wildcardIndex < 0 ? commonPrefix : commonPrefix.slice(0, wildcardIndex);
-            const scanPattern = `${scanPrefix}*`;
+            const prefix = (redis as any).options?.keyPrefix || '';
+            const scanPattern = prefix && !scanPrefix.startsWith(prefix) ? `${prefix}${scanPrefix}*` : `${scanPrefix}*`;
             const scannedKeys: string[] = [];
             let cursor = '0';
 

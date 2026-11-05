@@ -52,6 +52,7 @@ function getStatementCacheKey(params: {
     bancaId?: string | null;
     userRole?: string;
     sort?: string;
+    ignoreReset?: boolean;
     cacheVersion?: string;
 }): string {
     const parts = [
@@ -66,6 +67,7 @@ function getStatementCacheKey(params: {
         params.bancaId || 'null',
         params.userRole || Role.ADMIN,
         params.sort || 'desc',
+        params.ignoreReset ? '1' : '0',
         params.cacheVersion || 'legacy',
     ];
     return parts.join(':');
@@ -143,6 +145,7 @@ export async function getCachedStatement<T>(params: {
     bancaId?: string | null;
     userRole?: string;
     sort?: string;
+    ignoreReset?: boolean;
     cacheVersion?: string;
 }): Promise<T | null> {
     const key = getStatementCacheKey(params);
@@ -189,6 +192,7 @@ export async function setCachedStatement<T>(
         bancaId?: string | null;
         userRole?: string;
         sort?: string;
+        ignoreReset?: boolean;
         cacheVersion?: string;
     },
     value: T,
@@ -259,16 +263,15 @@ export async function invalidateAccountStatementCache(params: {
             `account:bySorteo:${params.date}:*`,
         ];
 
-        // Si hay IDs específicos, invalidar solo esos (más específico)
-        // Estructura de clave: account:statement:month:date:fromDate:toDate:dimension:ventanaId:vendedorId:bancaId:role:sort
+        // Si hay IDs específicos, invalidar con patrones globales precisos
         if (params.ventanaId) {
-            patterns.push(`account:statement:*:*:*:*:*:*:${params.ventanaId}:*`); // pos 6
+            patterns.push(`account:statement:*${params.ventanaId}*`);
         }
         if (params.vendedorId) {
-            patterns.push(`account:statement:*:*:*:*:*:*:*:${params.vendedorId}:*`); // pos 7
+            patterns.push(`account:statement:*${params.vendedorId}*`);
         }
         if (params.bancaId) {
-            patterns.push(`account:statement:*:*:*:*:*:*:*:*:${params.bancaId}:*`); // pos 8
+            patterns.push(`account:statement:*${params.bancaId}*`);
         }
 
         const deletedKeys = await CacheService.delPatterns(patterns);
@@ -378,6 +381,9 @@ export async function invalidateCacheForSorteo(
     }>
 ): Promise<void> {
     try {
+        // Rotación atómica de versión para invalidar O(1) todos los estados de cuenta cacheados
+        await rotateAccountStatementCacheVersion();
+
         // Obtener fecha del sorteo en hora local de Costa Rica
         const { tz } = await import('./timezone');
         const dateStr = sorteo.scheduledAt ? tz.toDateStr(sorteo.scheduledAt) : tz.toDateStr();

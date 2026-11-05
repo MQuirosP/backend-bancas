@@ -484,6 +484,7 @@ export const AccountsService = {
             bancaId: bancaId || null,
             userRole: filters.userRole || "ADMIN",
             sort: sort || "desc",
+            ignoreReset: Boolean(filters.ignoreReset),
             cacheVersion,
         };
 
@@ -1010,7 +1011,12 @@ export const AccountsService = {
         };
 
         // Guardar en caché con TTL diferenciado
-        const cacheTTL = optimizedStatements.some(s => !s.isSettled) ? 60 : 900; // 1 min vs 15 min
+        // Si el periodo no tiene movimientos reales (todo en 0), asignar TTL mínimo (5s)
+        // para evitar envenenar el caché con ceros si la consulta se ejecutó antes de evaluar sorteos o ventas.
+        const hasRealActivity = periodStatements.some(s => s.totalSales > 0 || s.totalPayouts > 0 || s.totalPaid > 0 || s.totalCollected > 0 || (s.id && !s.id.startsWith('gap-')));
+        const cacheTTL = !hasRealActivity
+            ? 5
+            : (optimizedStatements.some(s => !s.isSettled) ? 60 : 900); // 1 min vs 15 min
         setCachedStatement(cacheKey, result, cacheTTL).catch(() => {
             // Ignorar errores de caché
         });
