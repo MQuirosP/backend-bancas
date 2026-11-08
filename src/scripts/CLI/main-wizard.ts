@@ -93,7 +93,7 @@ async function main() {
     console.log(`  [4] 📈  Auditoría de Cierres Diarios por Banca (ResumenCierreDiario)`);
     console.log(`  [5] 🧮  Re-Agregación de Acopio de Ventas (DailyNumberSales)`);
     console.log(`  [6] 📡  Monitoreo en Tiempo Real de Sorteos y Terminales (Better Stack Logs)`);
-    console.log(`  [7] 🎟️   Anulación de Tickets por Consecutivo (Soft-Delete & Resincronización)`);
+    console.log(`  [7] 🎟️  Anulación de Tickets por Consecutivo (Soft-Delete & Resincronización)`);
     console.log(`  [8] 🔄  Traslado y Liquidación de Vendedores (Vendor Transfer & Balance Setup)`);
     console.log(`  [9] 🧹  Gestión y Limpieza de Claves en Redis (Por Banca y Vendedor)`);
     console.log(`  [0] 🚪  Salir`);
