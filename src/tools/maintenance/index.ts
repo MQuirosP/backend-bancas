@@ -150,9 +150,10 @@ async function handleNormalize(flags: Record<string, string | boolean>) {
 async function handlePurge(flags: Record<string, string | boolean>) {
   const before = requireFlag(flags, "before");
   const dryRun = flagAsBoolean(flags, "dry-run");
+  const batchSize = flags["batch-size"] ? parseInt(String(flags["batch-size"]), 10) : undefined;
 
-  info(`Purgando tickets con fecha <= ${before} (dryRun=${dryRun})`);
-  const outcome = await purgeTickets({ beforeDate: before, dryRun });
+  info(`Purgando tickets con fecha <= ${before} (dryRun=${dryRun}, batchSize=${batchSize || 2500})`);
+  const outcome = await purgeTickets({ beforeDate: before, dryRun, batchSize });
 
   const reportPath = join(process.cwd(), "debug", `purge-tickets-${before}.json`);
   mkdirSync(dirname(reportPath), { recursive: true });

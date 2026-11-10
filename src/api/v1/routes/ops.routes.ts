@@ -25,6 +25,8 @@ import {
   deleteVentanaKeysSchema,
   redisVendorKeysSchema,
   deleteVendorKeysSchema,
+  purgeTicketsPreviewSchema,
+  purgeTicketsExecuteSchema,
 } from '../validators/ops.validator';
 
 const router = Router();
@@ -60,5 +62,9 @@ router.post('/redis/ventana/delete', validateBody(deleteVentanaKeysSchema), OpsC
 router.post('/redis/vendors', validateBody(listRedisVendorsSchema), OpsController.listRedisVendors);
 router.post('/redis/vendor/keys', validateBody(redisVendorKeysSchema), OpsController.listVendorRedisKeys);
 router.post('/redis/vendor/delete', validateBody(deleteVendorKeysSchema), OpsController.deleteVendorRedisKeys);
+
+// Purga masiva de tickets y jugadas
+router.post('/purge/preview', validateBody(purgeTicketsPreviewSchema), OpsController.previewPurgeTickets);
+router.post('/purge/execute', validateBody(purgeTicketsExecuteSchema), OpsController.executePurgeTickets);
 
 export default router;

@@ -957,5 +957,38 @@ export class OpsController {
       res.status(500).json({ success: false, error: err.message });
     }
   }
+
+  /**
+   * Previsualización / Auditoría previa de purga de tickets y jugadas (dryRun)
+   */
+  static async previewPurgeTickets(req: Request, res: Response): Promise<void> {
+    try {
+      const { beforeDate } = req.body;
+      const { purgeTickets } = await import('../../../tools/maintenance/tasks/purgeTickets');
+      const outcome = await purgeTickets({ beforeDate, dryRun: true });
+      res.json({ success: true, preview: outcome });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  /**
+   * Ejecución real por lotes de purga de tickets y jugadas
+   */
+  static async executePurgeTickets(req: Request, res: Response): Promise<void> {
+    try {
+      const { beforeDate, batchSize } = req.body;
+      const { purgeTickets } = await import('../../../tools/maintenance/tasks/purgeTickets');
+      const outcome = await purgeTickets({
+        beforeDate,
+        dryRun: false,
+        batchSize: batchSize || 2500,
+        sleepMs: 100,
+      });
+      res.json({ success: true, result: outcome });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
 }
 

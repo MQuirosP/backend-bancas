@@ -1,5 +1,6 @@
 import readline from 'readline';
 import logger from '../../core/logger';
+import { crDateService } from '../../utils/crDateService';
 
 /**
  * helpers.ts
@@ -133,4 +134,53 @@ export function renderProgressBar(current: number, total: number, label: string 
   if (current >= total) {
     process.stdout.write('\r' + ' '.repeat(lineText.length + 5) + '\r');
   }
+}
+
+export async function selectBancaPrompt(): Promise<{ id: string | null; name: string; isBack: boolean }> {
+  let bancas: Array<{ id: string; name: string }> = [];
+
+  if (IS_RENDER) {
+    const res = await callOpsApi('/vendor/bancas', {});
+    bancas = res.bancas || [];
+  } else {
+    const { default: prisma } = await import('../../core/prismaClient');
+    bancas = await prisma.banca.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' }
+    });
+  }
+
+  console.log(`\n🏛️  Seleccione la Banca:`);
+  console.log(`   [0] Todas las Bancas / Global`);
+  bancas.forEach((b, index) => {
+    console.log(`   [${index + 1}] ${b.name} [ID: ${b.id}]`);
+  });
+  console.log(`   [B] ⬅️  Volver`);
+
+  const choice = await ask(`   Opción (0-${bancas.length} o B para volver): `);
+  if (isBack(choice)) {
+    return { id: null, name: '', isBack: true };
+  }
+
+  const idx = parseInt(choice, 10);
+  if (!isNaN(idx) && idx > 0 && idx <= bancas.length) {
+    return { id: bancas[idx - 1].id, name: bancas[idx - 1].name, isBack: false };
+  }
+  return { id: null, name: 'TODAS LAS BANCAS', isBack: false };
+}
+
+export async function promptDateRange(): Promise<{ fromStr: string; toStr: string; isBack: boolean }> {
+  const todayCR = crDateService.dateUTCToCRString(new Date());
+  const fromInput = await ask(`\n📅  Ingrese la Fecha Inicio (YYYY-MM-DD) [ENTER para hoy (${todayCR}), B para volver]: `);
+  if (isBack(fromInput)) return { fromStr: '', toStr: '', isBack: true };
+
+  const fromStr = fromInput || todayCR;
+
+  const toInput = await ask(`📅  Ingrese la Fecha Fin (YYYY-MM-DD) [ENTER para misma fecha (${fromStr}), B para volver]: `);
+  if (isBack(toInput)) return { fromStr: '', toStr: '', isBack: true };
+
+  const toStr = toInput || fromStr;
+
+  return { fromStr, toStr, isBack: false };
 }

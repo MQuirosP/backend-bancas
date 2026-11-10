@@ -1,28 +1,59 @@
 import 'dotenv/config';
 import { ask, isBack, colors, formatCRC, clearScreen, IS_RENDER, callOpsApi } from './helpers';
 import type { TicketPreviewInfo } from '../../domain/ticket/ticketsOps.service';
+import { runPurgeWizard } from './purge-cli';
 
 /**
  * tickets-cli.ts
  *
- * MÓDULO CLI PARA ANULACIÓN / BORRADO CONTROLADO DE TICKETS POR CONSECUTIVO (TICKET NUMBER)
+ * MÓDULO CLI PARA GESTIÓN DE TICKETS Y VENTAS
  *
- * Características:
- * - Inspección previa detallada con métricas de venta, comisiones, premios y pagos.
- * - Advertencias de seguridad si el ticket ya fue pagado o si el sorteo ya fue evaluado.
- * - Soft-delete atómico en base de datos (inactiva ticket y jugadas asociadas).
- * - Ajuste inteligente de `hasWinner` en Sorteo si correspondía al único ganador.
- * - Re-agregación de acopio (DailyNumberSales) y rollups (ResumenCierreDiario).
- * - Re-sincronización en cadena del libro contable (AccountStatement) y arrastre de saldos hasta hoy.
- * - Compatible con Render HTTP API y ejecución local con Prisma.
+ * Opciones:
+ * 1. Anulación de Tickets por Consecutivo (Soft-Delete & Resync)
+ * 2. Purga Masiva de Tickets y Jugadas Históricas (Batch Chunking & Dry-Run)
+ * 3. Sincronizar Estado Cerrado en Tickets Antiguos (isSorteoClosed)
  */
 
 export async function runTicketsWizard() {
+  while (true) {
+    clearScreen();
+    console.log(`======================================================================`);
+    console.log(`🎟️   ${colors.bold}${colors.brightCyan}GESTIÓN DE TICKETS Y VENTAS${colors.reset}`);
+    console.log(`======================================================================`);
+    console.log(`Seleccione una opción:`);
+    console.log(`  [1] 🚫  Anulación de Tickets por Consecutivo (Soft-Delete & Resync)`);
+    console.log(`  [2] 🗑️   Purga Masiva de Tickets y Jugadas Históricas (Batch Chunking & Dry-Run)`);
+    console.log(`  [3] 🔒  Sincronizar Estado Cerrado en Tickets Antiguos (isSorteoClosed)`);
+    console.log(`  [B] ⬅️   Volver al Menú Principal`);
+
+    const choice = await ask(`\nOpción (1-3 o B para volver): `);
+
+    if (isBack(choice)) {
+      break;
+    }
+
+    if (choice === '1') {
+      await runTicketCancellationWizard();
+      await ask(`\nPresione ENTER para continuar...`);
+    } else if (choice === '2') {
+      await runPurgeWizard();
+      await ask(`\nPresione ENTER para continuar...`);
+    } else if (choice === '3') {
+      await handleBackfillSorteoClosed();
+      await ask(`\nPresione ENTER para continuar...`);
+    } else {
+      console.log(`❌  Opción no válida.`);
+      await ask(`\nPresione ENTER para continuar...`);
+    }
+  }
+}
+
+async function runTicketCancellationWizard() {
   clearScreen();
   console.log(`======================================================================`);
   console.log(`🎟️   ${colors.bold}${colors.brightCyan}ANULACIÓN DE TICKETS POR CONSECUTIVO (SOFT-DELETE & RESYNC)${colors.reset}`);
   console.log(`======================================================================`);
-  console.log(`💡  ${colors.dim}Escriba "B" en cualquier momento para regresar al menú principal.${colors.reset}\n`);
+  console.log(`💡  ${colors.dim}Escriba "B" en cualquier momento para regresar al menú anterior.${colors.reset}\n`);
 
   const input = await ask(`1. Ingrese el consecutivo o números separados por coma\n   (Ej: T260928-03554, T260928-03559): `);
 
@@ -102,55 +133,46 @@ export async function runTicketsWizard() {
     console.log(`----------------------------------------------------------------------`);
   });
 
-  if (anyAlreadyCancelled && previewList.every(t => t.status === 'CANCELLED' || t.deletedAt !== null)) {
-    console.log(`\n⚠️  Todos los tickets seleccionados ya están cancelados. No hay acciones que ejecutar.`);
-    return;
-  }
-
-  // Advertencias críticas
-  if (anyHasPayments) {
-    console.log(`\n🚨  ${colors.bgRed}${colors.bold} ATENCIÓN CRÍTICA: PAGOS REGISTRADOS ${colors.reset}`);
-    console.log(`    Al menos uno de los tickets tiene pagos registrados. Anularlo eliminará esos registros de pago y revertirá los balances.`);
-  }
-
-  if (anyIsWinner) {
-    console.log(`\n💡  ${colors.brightYellow}${colors.bold}NOTA CONTABLE: PREMIOS ASIGNADOS ${colors.reset}`);
-    console.log(`    Se anularán los premios ganados y se recalcularán los cierres y el arrastre de saldos hasta hoy para que no afecten el balance.`);
-  }
-
-  const confirmChoice = await ask(`\n⚠️  ¿CONFIRMA PROCEDER CON LA ANULACIÓN? (si/no): `);
-  if (confirmChoice.toLowerCase() !== 'si' && confirmChoice.toLowerCase() !== 's') {
-    console.log(`❌  Operación cancelada por el usuario.`);
-    return;
+  if (anyAlreadyCancelled) {
+    console.log(`\nℹ️  ${colors.dim}Nota: Los tickets que ya estaban cancelados serán ignorados automáticamente.${colors.reset}`);
   }
 
   let forceWithPayments = false;
   if (anyHasPayments) {
-    const forceChoice = await ask(`⚠️  Re-confirme: ¿Desea ELIMINAR los pagos registrados de estos tickets y forzar anulación? (si/no): `);
-    if (forceChoice.toLowerCase() !== 'si' && forceChoice.toLowerCase() !== 's') {
-      console.log(`❌  Operación cancelada.`);
+    console.log(`\n🚨  ${colors.bgRed}${colors.bold} ADVERTENCIA CRÍTICA: UNO O MÁS TICKETS TIENEN PAGOS REGISTRADOS ${colors.reset}`);
+    console.log(`    Anular un ticket con pagos eliminará los registros de pago y revertirá el saldo pagado.`);
+    const forceInput = await ask(`    ¿Desea forzar la anulación de estos tickets pagados? (si/NO): `);
+    if (forceInput.toLowerCase() !== 'si' && forceInput.toLowerCase() !== 's') {
+      console.log(`\n❌  Operación cancelada para proteger la integridad financiera.`);
       return;
     }
     forceWithPayments = true;
   }
 
-  const reasonInput = await ask(`\n📝  Ingrese el motivo de la anulación [ENTER para 'Anulación de soporte técnico por error de digitación']: `);
-  const reason = reasonInput.trim() || 'Anulación de soporte técnico por error de digitación';
+  const reasonInput = await ask(`\n2. Ingrese el MOTIVO de la anulación (o ENTER para motivo estándar): `);
+  if (isBack(reasonInput)) return;
+  const reason = reasonInput.trim() || 'Anulación por soporte técnico administrativo';
 
-  console.log(`\n⏳  Procesando anulación y resincronización contable (Rollups, Statements y Acopio)...`);
+  const confirm = await ask(`\n⚠️  ¿CONFIRMA ANULAR DEFINITIVAMENTE LOS ${previewList.length} TICKET(S)? (si/no): `);
+  if (confirm.toLowerCase() !== 'si' && confirm.toLowerCase() !== 's') {
+    console.log(`\n❌  Operación cancelada por el usuario.`);
+    return;
+  }
+
+  console.log(`\n⏳  Procesando anulación y resincronizando cierres/saldos...`);
 
   try {
     let result: any;
     if (IS_RENDER) {
       result = await callOpsApi('/tickets/cancel', {
-        ticketNumbers,
+        ticketNumbers: previewList.map(t => t.ticketNumber),
         reason,
         forceWithPayments
       });
     } else {
       const { TicketsOpsService } = await import('../../domain/ticket/ticketsOps.service');
       result = await TicketsOpsService.cancelTickets({
-        ticketNumbers,
+        ticketNumbers: previewList.map(t => t.ticketNumber),
         reason,
         forceWithPayments
       });
@@ -181,5 +203,28 @@ export async function runTicketsWizard() {
 
   } catch (err: any) {
     console.log(`\n❌  ERROR AL PROCESAR ANULACIÓN: ${err.message}`);
+  }
+}
+
+async function handleBackfillSorteoClosed() {
+  console.log(`\n🔒  ${colors.bold}SINCRONIZACIÓN DE ESTADO CERRADO EN TICKETS (isSorteoClosed)${colors.reset}`);
+  console.log(`----------------------------------------------------------------------`);
+  console.log(`Marca isSorteoClosed=true en los tickets pertenecientes a sorteos CLOSED.`);
+
+  const limitInput = await ask(`Límite de sorteos a procesar [ENTER para ilimitado, B para volver]: `);
+  if (isBack(limitInput)) return;
+  const limit = limitInput.trim() ? parseInt(limitInput, 10) : undefined;
+
+  const dryRunInput = await ask(`¿Ejecutar en modo SIMULACIÓN (dryRun)? (S/n): `);
+  const dryRun = dryRunInput.toLowerCase() !== 'n' && dryRunInput.toLowerCase() !== 'no';
+
+  console.log(`\n⏳  Procesando backfill (dryRun=${dryRun})...`);
+
+  try {
+    const { backfillSorteoClosed } = await import('../../tools/maintenance/tasks/backfillSorteoClosed');
+    await backfillSorteoClosed({ dryRun, limit });
+    console.log(`\n✅  ${colors.brightGreen}Sincronización de isSorteoClosed completada.${colors.reset}`);
+  } catch (err: any) {
+    console.log(`\n❌  Error: ${err.message}`);
   }
 }

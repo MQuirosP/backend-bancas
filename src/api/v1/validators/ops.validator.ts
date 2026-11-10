@@ -121,3 +121,13 @@ export const deleteVendorKeysSchema = z.object({
   vendedorId: z.string().uuid('ID de vendedor inválido').optional(),
   deleteAll: z.boolean().optional(),
 });
+
+export const purgeTicketsPreviewSchema = z.object({
+  beforeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
+});
+
+export const purgeTicketsExecuteSchema = z.object({
+  beforeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
+  batchSize: z.number().int().min(100).max(10000).optional(),
+});
+

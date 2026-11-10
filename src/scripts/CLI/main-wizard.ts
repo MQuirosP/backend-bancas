@@ -8,97 +8,42 @@ if (fs.existsSync(envLocalPath)) {
   dotenv.config({ path: envLocalPath });
 }
 dotenv.config();
-import { ask, isBack, rl, clearScreen, IS_RENDER, callOpsApi } from './helpers';
-import { crDateService } from '../../utils/crDateService';
-import { runCheckStatements } from './check-statements-cli';
-import { runFixStatements } from './fix-statements-cli';
-import { runCheckCierres } from './check-cierres-cli';
+
+import { ask, isBack, rl, clearScreen, IS_RENDER } from './helpers';
 import { runSorteosWizard } from './sorteos-cli';
-import { runAcopioSalesRebuild } from './acopio-cli';
-import { runMonitorEvaluation } from './monitor-evaluation-cli';
 import { runTicketsWizard } from './tickets-cli';
+import { runCommissionsWizard } from './commissions-cli';
+import { runAccountingWizard } from './accounting-cli';
 import { runVendorOpsWizard } from './vendor-ops-cli';
-import { runRedisKeysWizard } from './redis-keys-cli';
+import { runInfraWizard } from './infra-cli';
 
 /**
  * main-wizard.ts
  *
  * ORQUESTADOR PRINCIPAL DE LA SUITE CLI DE SOPORTE TÉCNICO Y OPERACIONES (RENDER / CLI)
- * Punto de entrada único para ejecutar auditorías, reparaciones y operaciones sobre sorteos.
+ * Punto de entrada único centralizado para todas las tareas de mantenimiento y soporte.
  *
  * USO:
- *   node --max-old-space-size=40 dist/scripts/CLI/main-wizard.js
- *   npm run ops
+ *   npm run ops        (Producción / Render Shell)
+ *   npm run ops:dev    (Desarrollo Local con recarga TypeScript)
  */
-
-async function selectBancaPrompt(): Promise<{ id: string | null; name: string; isBack: boolean }> {
-  let bancas: Array<{ id: string; name: string }> = [];
-
-  if (IS_RENDER) {
-    const res = await callOpsApi('/vendor/bancas', {});
-    bancas = res.bancas || [];
-  } else {
-    const { default: prisma } = await import('../../core/prismaClient');
-    bancas = await prisma.banca.findMany({
-      where: { isActive: true },
-      select: { id: true, name: true },
-      orderBy: { name: 'asc' }
-    });
-  }
-
-  console.log(`\n🏛️  Seleccione la Banca:`);
-  console.log(`   [0] Todas las Bancas / Global`);
-  bancas.forEach((b, index) => {
-    console.log(`   [${index + 1}] ${b.name} [ID: ${b.id}]`);
-  });
-  console.log(`   [B] ⬅️  Volver al menú principal`);
-
-  const choice = await ask(`   Opción (0-${bancas.length} o B para volver): `);
-  if (isBack(choice)) {
-    return { id: null, name: '', isBack: true };
-  }
-
-  const idx = parseInt(choice, 10);
-  if (!isNaN(idx) && idx > 0 && idx <= bancas.length) {
-    return { id: bancas[idx - 1].id, name: bancas[idx - 1].name, isBack: false };
-  }
-  return { id: null, name: 'TODAS LAS BANCAS', isBack: false };
-}
-
-async function promptDateRange(): Promise<{ fromStr: string; toStr: string; isBack: boolean }> {
-  const todayCR = crDateService.dateUTCToCRString(new Date());
-  const fromInput = await ask(`\n📅  Ingrese la Fecha Inicio (YYYY-MM-DD) [ENTER para hoy (${todayCR}), B para volver]: `);
-  if (isBack(fromInput)) return { fromStr: '', toStr: '', isBack: true };
-
-  const fromStr = fromInput || todayCR;
-
-  const toInput = await ask(`📅  Ingrese la Fecha Fin (YYYY-MM-DD) [ENTER para misma fecha (${fromStr}), B para volver]: `);
-  if (isBack(toInput)) return { fromStr: '', toStr: '', isBack: true };
-
-  const toStr = toInput || fromStr;
-
-  return { fromStr, toStr, isBack: false };
-}
 
 async function main() {
   while (true) {
     clearScreen();
     console.log(`======================================================================`);
-    console.log(`🛠️   SUITE DE SOPORTE TÉCNICO Y OPERACIONES (RENDER SHELL & CLI)`);
+    console.log(`🛠️   SUITE DE SOPORTE TÉCNICO Y OPERACIONES (RENDER & LOCAL CLI)`);
     console.log(`======================================================================`);
-    console.log(`Seleccione el módulo de trabajo:`);
-    console.log(`  [1] 🎰  Operaciones sobre Sorteos (Listar, Evaluar, Revertir, Cerrar, Reabrir)`);
-    console.log(`  [2] 📊  Auditoría y Chequeo de Saldos por Banca (AccountStatement)`);
-    console.log(`  [3] 🔧  Corrección y Re-Sincronización de Saldos (AccountStatement Fix)`);
-    console.log(`  [4] 📈  Auditoría de Cierres Diarios por Banca (ResumenCierreDiario)`);
-    console.log(`  [5] 🧮  Re-Agregación de Acopio de Ventas (DailyNumberSales)`);
-    console.log(`  [6] 📡  Monitoreo en Tiempo Real de Sorteos y Terminales (Better Stack Logs)`);
-    console.log(`  [7] 🎟️  Anulación de Tickets por Consecutivo (Soft-Delete & Resincronización)`);
-    console.log(`  [8] 🔄  Traslado y Liquidación de Vendedores (Vendor Transfer & Balance Setup)`);
-    console.log(`  [9] 🧹  Gestión y Limpieza de Claves en Redis (Por Banca y Vendedor)`);
+    console.log(`Seleccione el módulo de trabajo:\n`);
+    console.log(`  [1] 🎰  Sorteos y Loterías`);
+    console.log(`  [2] 🎟️   Tickets y Ventas`);
+    console.log(`  [3] 💰  Políticas y Comisiones`);
+    console.log(`  [4] 📊  Contabilidad, Cierres y Balances`);
+    console.log(`  [5] 👥  Vendedores y Red de Ventas`);
+    console.log(`  [6] ⚡  Infraestructura, Caché y Telemetría`);
     console.log(`  [0] 🚪  Salir`);
 
-    const optionChoice = await ask(`\nOpción (0-9): `);
+    const optionChoice = await ask(`\nOpción (0-6): `);
 
     if (optionChoice === '0' || isBack(optionChoice)) {
       console.log(`\n👋  Saliendo de la Suite de Soporte.`);
@@ -108,52 +53,18 @@ async function main() {
     if (optionChoice === '1') {
       await runSorteosWizard();
     } else if (optionChoice === '2') {
-      const dates = await promptDateRange();
-      if (dates.isBack) continue;
-      const banca = await selectBancaPrompt();
-      if (banca.isBack) continue;
-      await runCheckStatements({ fromStr: dates.fromStr, toStr: dates.toStr, bancaId: banca.id });
-      await ask(`\nPresione ENTER para continuar...`);
-    } else if (optionChoice === '3') {
-      const dates = await promptDateRange();
-      if (dates.isBack) continue;
-      const banca = await selectBancaPrompt();
-      if (banca.isBack) continue;
-      const confirm = await ask(`⚠️  ¿CONFIRMA RE-SINCRONIZAR SALDOS PARA ${banca.name} (${dates.fromStr} a ${dates.toStr})? (si/no): `);
-      if (confirm.toLowerCase() === 'si' || confirm.toLowerCase() === 's') {
-        await runFixStatements({ fromStr: dates.fromStr, toStr: dates.toStr, bancaId: banca.id });
-      } else {
-        console.log(`❌  Operación cancelada.`);
-      }
-      await ask(`\nPresione ENTER para continuar...`);
-    } else if (optionChoice === '4') {
-      const dates = await promptDateRange();
-      if (dates.isBack) continue;
-      const banca = await selectBancaPrompt();
-      if (banca.isBack) continue;
-      await runCheckCierres({ fromStr: dates.fromStr, toStr: dates.toStr, bancaId: banca.id });
-      await ask(`\nPresione ENTER para continuar...`);
-    } else if (optionChoice === '5') {
-      const dates = await promptDateRange();
-      if (dates.isBack) continue;
-      const banca = await selectBancaPrompt();
-      if (banca.isBack) continue;
-      await runAcopioSalesRebuild({ fromStr: dates.fromStr, toStr: dates.toStr, bancaId: banca.id });
-      await ask(`\nPresione ENTER para continuar...`);
-    } else if (optionChoice === '6') {
-      const minInput = await ask(`\n⏱️  Ventana en minutos a consultar [ENTER para 15 minutos]: `);
-      const minutes = parseInt(minInput, 10) || 15;
-      await runMonitorEvaluation(minutes);
-      await ask(`\nPresione ENTER para continuar...`);
-    } else if (optionChoice === '7') {
       await runTicketsWizard();
-      await ask(`\nPresione ENTER para continuar...`);
-    } else if (optionChoice === '8') {
+    } else if (optionChoice === '3') {
+      await runCommissionsWizard();
+    } else if (optionChoice === '4') {
+      await runAccountingWizard();
+    } else if (optionChoice === '5') {
       await runVendorOpsWizard();
-    } else if (optionChoice === '9') {
-      await runRedisKeysWizard();
+    } else if (optionChoice === '6') {
+      await runInfraWizard();
     } else {
       console.log(`❌  Opción no válida.`);
+      await ask(`\nPresione ENTER para continuar...`);
     }
   }
 
