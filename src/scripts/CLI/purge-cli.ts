@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { ask, isBack, colors, clearScreen, renderProgressBar, IS_RENDER, callOpsApi } from './helpers';
 import type { PurgeSummaryResult, PurgeProgressInfo } from '../../tools/maintenance/tasks/purgeTickets';
+import { tz } from '../../utils/timezone';
 
 /**
  * purge-cli.ts
@@ -37,6 +38,13 @@ export async function runPurgeWizard() {
   const beforeDate = (inputDate || defaultBeforeDate).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(beforeDate)) {
     console.log(`\n❌  Formato de fecha inválido. Debe ser YYYY-MM-DD.`);
+    return;
+  }
+
+  const minOperatingDate = tz.getMinOperatingDateCR();
+  if (beforeDate > minOperatingDate) {
+    console.log(`\n❌  ${colors.brightRed}Error: No se permite purgar tickets dentro de la ventana operativa de ${tz.IMMUTABLE_HISTORY_DAYS} días (${minOperatingDate}).${colors.reset}`);
+    console.log(`    ${colors.yellow}Por seguridad, solo se pueden purgar boletos con fecha menor o igual a ${minOperatingDate}.${colors.reset}`);
     return;
   }
 

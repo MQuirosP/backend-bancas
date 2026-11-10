@@ -200,8 +200,18 @@ export class TicketsOpsService {
 
     const ticketsToCancel: typeof tickets = [];
     const skippedTickets: { ticketNumber: string; reason: string }[] = [];
+    const minOperatingDate = tz.getMinOperatingDateCR();
 
     for (const t of tickets) {
+      const ticketDate = t.businessDate ? tz.fromPrismaDate(t.businessDate) : tz.toDateStr(t.sorteo.scheduledAt);
+      if (ticketDate < minOperatingDate) {
+        throw new AppError(
+          `El ticket ${t.ticketNumber} corresponde a la fecha ${ticketDate}, anterior al límite operativo de ${tz.IMMUTABLE_HISTORY_DAYS} días (${minOperatingDate}). Los tickets de fechas congeladas son inmutables.`,
+          400,
+          'IMMUTABLE_HISTORY_WINDOW'
+        );
+      }
+
       if (t.status === TicketStatus.CANCELLED || t.deletedAt !== null) {
         skippedTickets.push({
           ticketNumber: t.ticketNumber,

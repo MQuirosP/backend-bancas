@@ -1,6 +1,7 @@
 import { Prisma } from "../../../generated/prisma/client";
 import prisma from "../../../core/prismaClient";
 import { info, success, warn } from "../utils/logger";
+import { tz } from "../../../utils/timezone";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -69,6 +70,13 @@ export async function purgeTickets({
   onProgress,
 }: PurgeTicketsParams): Promise<PurgeSummaryResult> {
   assertIsoDate(beforeDate);
+
+  const minOperatingDate = tz.getMinOperatingDateCR();
+  if (beforeDate > minOperatingDate) {
+    throw new Error(
+      `Operación rechazada por seguridad: beforeDate (${beforeDate}) es más reciente que el límite de retención (${minOperatingDate}, ${tz.IMMUTABLE_HISTORY_DAYS} días). Solo se permite purgar datos fuera de la ventana operativa de ${tz.IMMUTABLE_HISTORY_DAYS} días.`
+    );
+  }
 
   info(`Auditoría de tickets con fecha <= ${beforeDate} (dryRun=${dryRun}, batchSize=${batchSize})`);
 

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { validateQuery, validateBody } from "../../../middlewares/validate.middleware";
 import { ReportDimension, QueryScope } from "../../../types/enums/report.enum";
 import { ExportFormat } from "../../../types/enums/export.enum";
+import { getMinOperatingDateCR, IMMUTABLE_HISTORY_DAYS } from "../../../utils/timezone";
 
 /**
  * Schema para query parameters de GET /accounts/statement
@@ -71,7 +72,10 @@ export const GetStatementQuerySchema = z
  */
 export const CreatePaymentBodySchema = z
   .object({
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD"),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe ser en formato YYYY-MM-DD").refine(
+      (d) => d >= getMinOperatingDateCR(),
+      { message: `No se pueden registrar pagos en fechas anteriores a la ventana operativa de ${IMMUTABLE_HISTORY_DAYS} días (${getMinOperatingDateCR()})` }
+    ),
     time: z.string().regex(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/, "La hora debe ser en formato HH:MM (24 horas)").optional().nullable(), //  NUEVO: Hora opcional del movimiento
     ventanaId: z.uuid().optional().nullable(),
     vendedorId: z.uuid().optional().nullable(),

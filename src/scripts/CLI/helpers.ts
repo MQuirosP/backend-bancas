@@ -1,6 +1,7 @@
 import readline from 'readline';
 import logger from '../../core/logger';
 import { crDateService } from '../../utils/crDateService';
+import { getMinOperatingDateCR, IMMUTABLE_HISTORY_DAYS } from '../../utils/timezone';
 
 /**
  * helpers.ts
@@ -172,15 +173,40 @@ export async function selectBancaPrompt(): Promise<{ id: string | null; name: st
 
 export async function promptDateRange(): Promise<{ fromStr: string; toStr: string; isBack: boolean }> {
   const todayCR = crDateService.dateUTCToCRString(new Date());
-  const fromInput = await ask(`\n📅  Ingrese la Fecha Inicio (YYYY-MM-DD) [ENTER para hoy (${todayCR}), B para volver]: `);
-  if (isBack(fromInput)) return { fromStr: '', toStr: '', isBack: true };
+  const minOperatingDate = getMinOperatingDateCR();
 
-  const fromStr = fromInput || todayCR;
+  while (true) {
+    const fromInput = await ask(`\n📅  Ingrese la Fecha Inicio (YYYY-MM-DD) [ENTER para hoy (${todayCR}), B para volver]: `);
+    if (isBack(fromInput)) return { fromStr: '', toStr: '', isBack: true };
 
-  const toInput = await ask(`📅  Ingrese la Fecha Fin (YYYY-MM-DD) [ENTER para misma fecha (${fromStr}), B para volver]: `);
-  if (isBack(toInput)) return { fromStr: '', toStr: '', isBack: true };
+    const fromStr = fromInput || todayCR;
 
-  const toStr = toInput || fromStr;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fromStr)) {
+      console.log(`\n❌  ${colors.brightRed}Formato de fecha inválido. Debe ser YYYY-MM-DD.${colors.reset}`);
+      continue;
+    }
 
-  return { fromStr, toStr, isBack: false };
+    if (fromStr < minOperatingDate) {
+      console.log(`\n❌  ${colors.brightRed}Error: La fecha de inicio (${fromStr}) es anterior al límite operativo de ${IMMUTABLE_HISTORY_DAYS} días (${minOperatingDate}).${colors.reset}`);
+      console.log(`    ${colors.yellow}Por integridad contable y para proteger balances inmutables, solo se permite operar en los últimos ${IMMUTABLE_HISTORY_DAYS} días.${colors.reset}`);
+      continue;
+    }
+
+    const toInput = await ask(`📅  Ingrese la Fecha Fin (YYYY-MM-DD) [ENTER para misma fecha (${fromStr}), B para volver]: `);
+    if (isBack(toInput)) return { fromStr: '', toStr: '', isBack: true };
+
+    const toStr = toInput || fromStr;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(toStr)) {
+      console.log(`\n❌  ${colors.brightRed}Formato de fecha inválido. Debe ser YYYY-MM-DD.${colors.reset}`);
+      continue;
+    }
+
+    if (toStr < fromStr) {
+      console.log(`\n❌  ${colors.brightRed}Error: La fecha fin (${toStr}) no puede ser anterior a la fecha inicio (${fromStr}).${colors.reset}`);
+      continue;
+    }
+
+    return { fromStr, toStr, isBack: false };
+  }
 }

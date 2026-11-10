@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getMinOperatingDateCR, IMMUTABLE_HISTORY_DAYS } from '../../../utils/timezone';
 
 export const handleSorteoActionSchema = z.object({
   action: z.enum(['EVALUATE', 'REVERT', 'CLOSE', 'REOPEN']),
@@ -19,18 +20,24 @@ export const checkCierresSchema = z.object({
   fromStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
   toStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
   bancaId: z.string().uuid('ID de banca inválido').nullable().optional(),
+}).refine(data => !data.fromStr || data.fromStr >= getMinOperatingDateCR(), {
+  message: `fromStr no puede ser anterior a la ventana operativa de ${IMMUTABLE_HISTORY_DAYS} días (${getMinOperatingDateCR()})`,
 });
 
 export const checkStatementsSchema = z.object({
   fromStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
   toStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
   bancaId: z.string().uuid('ID de banca inválido').nullable().optional(),
+}).refine(data => !data.fromStr || data.fromStr >= getMinOperatingDateCR(), {
+  message: `fromStr no puede ser anterior a la ventana operativa de ${IMMUTABLE_HISTORY_DAYS} días (${getMinOperatingDateCR()})`,
 });
 
 export const fixStatementsSchema = z.object({
   fromStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
   toStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
   bancaId: z.string().uuid('ID de banca inválido').nullable().optional(),
+}).refine(data => !data.fromStr || data.fromStr >= getMinOperatingDateCR(), {
+  message: `fromStr no puede ser anterior a la ventana operativa de ${IMMUTABLE_HISTORY_DAYS} días (${getMinOperatingDateCR()})`,
 });
 
 export const acopioRebuildSchema = z.object({
@@ -40,6 +47,11 @@ export const acopioRebuildSchema = z.object({
   toDateStr: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
   bancaId: z.string().uuid('ID de banca inválido').nullable().optional(),
   executeRebuild: z.boolean().optional(),
+}).refine(data => {
+  const from = data.fromStr || data.fromDateStr;
+  return !from || from >= getMinOperatingDateCR();
+}, {
+  message: `La fecha de inicio no puede ser anterior a la ventana operativa de ${IMMUTABLE_HISTORY_DAYS} días (${getMinOperatingDateCR()})`,
 });
 
 export const previewTicketsSchema = z.object({
@@ -124,10 +136,14 @@ export const deleteVendorKeysSchema = z.object({
 
 export const purgeTicketsPreviewSchema = z.object({
   beforeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
+}).refine(data => data.beforeDate <= getMinOperatingDateCR(), {
+  message: `beforeDate no puede ser mayor a la fecha límite de retención (${getMinOperatingDateCR()})`,
 });
 
 export const purgeTicketsExecuteSchema = z.object({
   beforeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
   batchSize: z.number().int().min(100).max(10000).optional(),
+}).refine(data => data.beforeDate <= getMinOperatingDateCR(), {
+  message: `beforeDate no puede ser mayor a la fecha límite de retención (${getMinOperatingDateCR()})`,
 });
 

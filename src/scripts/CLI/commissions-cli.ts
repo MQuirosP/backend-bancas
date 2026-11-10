@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { ask, isBack, colors, clearScreen, IS_RENDER, callOpsApi } from './helpers';
+import { ask, isBack, colors, clearScreen, IS_RENDER, callOpsApi, promptDateRange } from './helpers';
 import { crDateService } from '../../utils/crDateService';
 
 /**
@@ -84,14 +84,8 @@ async function handleReapplyCommissions() {
   console.log(`----------------------------------------------------------------------`);
   console.log(`Recalcula comisiones históricas según las políticas actualmente configuradas.`);
 
-  const todayCR = crDateService.dateUTCToCRString(new Date());
-  const fromInput = await ask(`Fecha Inicio (YYYY-MM-DD) [ENTER para hoy (${todayCR}), B para volver]: `);
-  if (isBack(fromInput)) return;
-  const from = fromInput || todayCR;
-
-  const toInput = await ask(`Fecha Fin (YYYY-MM-DD) [ENTER para misma fecha (${from}), B para volver]: `);
-  if (isBack(toInput)) return;
-  const to = toInput || from;
+  const { fromStr: from, toStr: to, isBack: back } = await promptDateRange();
+  if (back) return;
 
   const ventanaIdInput = await ask(`UUID de Ventana específica [ENTER para todas]: `);
   const ventanaId = ventanaIdInput.trim() || undefined;
@@ -125,14 +119,8 @@ async function handleNormalizeMultipliers() {
   console.log(`----------------------------------------------------------------------`);
   console.log(`Ajusta finalMultiplierX en jugadas pasadas sin recalcular comisiones.`);
 
-  const todayCR = crDateService.dateUTCToCRString(new Date());
-  const fromInput = await ask(`Fecha Inicio (YYYY-MM-DD) [ENTER para hoy (${todayCR}), B para volver]: `);
-  if (isBack(fromInput)) return;
-  const from = fromInput || todayCR;
-
-  const toInput = await ask(`Fecha Fin (YYYY-MM-DD) [ENTER para misma fecha (${from}), B para volver]: `);
-  if (isBack(toInput)) return;
-  const to = toInput || from;
+  const { fromStr: from, toStr: to, isBack: back } = await promptDateRange();
+  if (back) return;
 
   const ventanaIdInput = await ask(`UUID de Ventana específica [ENTER para todas]: `);
   const ventanaId = ventanaIdInput.trim() || undefined;

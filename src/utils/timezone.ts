@@ -181,9 +181,40 @@ function toSqlLiteral(): string {
   return `'${BUSINESS_TZ}'`;
 }
 
+/**
+ * Constante del umbral de inmutabilidad histórica.
+ * Cualquier operación contable o administrativa anterior a estos días está congelada.
+ */
+export const IMMUTABLE_HISTORY_DAYS = 30;
+
+/**
+ * Devuelve la fecha mínima permitida de operación (YYYY-MM-DD en Costa Rica).
+ * Cualquier fecha anterior a esta está congelada/inmutable.
+ */
+export function getMinOperatingDateCR(): string {
+  return toDateStr(addDays(new Date(), -IMMUTABLE_HISTORY_DAYS));
+}
+
+/**
+ * Valida si una fecha (YYYY-MM-DD o Date) está dentro de la ventana operativa permitida (últimos 30 días).
+ */
+export function isWithinOperatingWindow(dateOrStr: string | Date): boolean {
+  const targetStr = typeof dateOrStr === 'string'
+    ? dateOrStr.slice(0, 10)
+    : (dateOrStr instanceof Date ? toDateStr(dateOrStr) : '');
+  if (!targetStr) return false;
+  return targetStr >= getMinOperatingDateCR();
+}
+
 export const tz = {
   /** Nombre IANA de la zona horaria del negocio */
   name: BUSINESS_TZ,
+  /** Días de ventana operativa permitida antes del congelamiento inmutable */
+  IMMUTABLE_HISTORY_DAYS,
+  /** Fecha mínima operativa permitida (YYYY-MM-DD en CR) */
+  getMinOperatingDateCR,
+  /** Validador de ventana operativa */
+  isWithinOperatingWindow,
   /** Literal SQL: 'America/Costa_Rica' */
   toSqlLiteral,
   /** Parser robusto que asume la TZ del negocio */

@@ -24,6 +24,7 @@ import { intercalateSorteosAndMovements } from "./accounts.intercalate";
 import { KeyedTaskQueue } from "../../core/keyedTaskQueue";
 import { ConcurrencyManager } from "../../utils/concurrency";
 import { CierreRollupService } from "../cierre/cierre.rollup.service";
+import { getMinOperatingDateCR, IMMUTABLE_HISTORY_DAYS } from "../../utils/timezone";
 
 
 const SYNC_BATCH_SIZE = 5;
@@ -66,7 +67,7 @@ export class AccountStatementSyncService {
     date: Date,
     dimension: "banca" | "ventana" | "vendedor",
     entityId?: string,
-    options?: { force?: boolean }
+    options?: { force?: boolean; allowHistorical?: boolean }
   ): Promise<void> {
     const queueKey = this.getQueueKey(dimension, entityId);
     return KeyedTaskQueue.enqueue(queueKey, () => 
@@ -81,12 +82,28 @@ export class AccountStatementSyncService {
     date: Date,
     dimension: "banca" | "ventana" | "vendedor",
     entityId?: string,
-    options?: { force?: boolean }
+    options?: { force?: boolean; allowHistorical?: boolean }
   ): Promise<void> {
     const dateStrCR = crDateService.postgresDateToCRString(date);
     const todayCR = crDateService.dateUTCToCRString(new Date());
 
     if (dateStrCR > todayCR && !options?.force) {
+      return;
+    }
+
+    const minOperatingDate = getMinOperatingDateCR();
+    if (dateStrCR < minOperatingDate && !options?.allowHistorical) {
+      logger.warn({
+        layer: "service",
+        action: "SYNC_DAY_STATEMENT_HISTORICAL_BLOCKED",
+        payload: {
+          date: dateStrCR,
+          minOperatingDate,
+          dimension,
+          entityId,
+          reason: `Date is older than ${IMMUTABLE_HISTORY_DAYS} days operating window and immutable`
+        }
+      });
       return;
     }
 
@@ -795,7 +812,11 @@ export class AccountStatementSyncService {
   ): Promise<void> {
     const startDateStr = crDateService.postgresDateToCRString(startDate);
     const todayCRStr = crDateService.dateUTCToCRString(new Date());
-    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+    const minOperatingDate = getMinOperatingDateCR();
+
+    // Si la fecha inicial es anterior a la ventana permitida, clampear para proteger historial inmutable
+    const effectiveStartStr = startDateStr < minOperatingDate ? minOperatingDate : startDateStr;
+    const [startYear, startMonth, startDay] = effectiveStartStr.split('-').map(Number);
     const curDate = new Date(Date.UTC(startYear, startMonth - 1, startDay + 1, 0, 0, 0, 0));
     const [endYear, endMonth, endDay] = todayCRStr.split('-').map(Number);
     const endDate = new Date(Date.UTC(endYear, endMonth - 1, endDay, 0, 0, 0, 0));
@@ -803,7 +824,7 @@ export class AccountStatementSyncService {
     logger.info({
       layer: "service",
       action: "PROPAGATE_BALANCE_CHANGE_START",
-      payload: { startDateStr, todayCRStr, dimension, entityId }
+      payload: { startDateStr, effectiveStartStr, minOperatingDate, todayCRStr, dimension, entityId }
     });
 
     while (curDate <= endDate) {

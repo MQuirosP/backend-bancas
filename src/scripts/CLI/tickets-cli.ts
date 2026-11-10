@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { ask, isBack, colors, formatCRC, clearScreen, IS_RENDER, callOpsApi } from './helpers';
 import type { TicketPreviewInfo } from '../../domain/ticket/ticketsOps.service';
 import { runPurgeWizard } from './purge-cli';
+import { tz } from '../../utils/timezone';
 
 /**
  * tickets-cli.ts
@@ -107,8 +108,13 @@ async function runTicketCancellationWizard() {
   let anyHasPayments = false;
   let anyIsWinner = false;
   let anyAlreadyCancelled = false;
+  let anyIsImmutable = false;
+  const minOperatingDate = tz.getMinOperatingDateCR();
 
   previewList.forEach((t, idx) => {
+    const isImmutable = t.businessDate < minOperatingDate;
+    if (isImmutable) anyIsImmutable = true;
+
     const isWinnerTag = t.isWinner
       ? ` ${colors.bgYellow}${colors.bold} GANADOR (#${t.sorteo.winningNumber || '?'}) ${colors.reset} ${colors.brightRed}Premio: ${formatCRC(t.totalPayout)}${colors.reset}`
       : ` ${colors.dim}(No premiado)${colors.reset}`;
@@ -121,6 +127,10 @@ async function runTicketCancellationWizard() {
       ? `\n    ⚠️  ${colors.yellow}${colors.bold}ESTADO: YA CANCELADO PREVIAMENTE${colors.reset} (Motivo: ${t.deletedReason || 'N/A'})`
       : '';
 
+    const immutableTag = isImmutable
+      ? `\n    🛑 ${colors.bgRed}${colors.bold} HISTORIAL INMUTABLE: ${colors.reset} ${colors.brightRed}La fecha del ticket (${t.businessDate}) supera el límite de ${tz.IMMUTABLE_HISTORY_DAYS} días (${minOperatingDate}). No se puede modificar.${colors.reset}`
+      : '';
+
     if (t.totalPaid > 0 || t.paymentsCount > 0) anyHasPayments = true;
     if (t.isWinner) anyIsWinner = true;
     if (t.status === 'CANCELLED' || t.deletedAt !== null) anyAlreadyCancelled = true;
@@ -129,9 +139,15 @@ async function runTicketCancellationWizard() {
     console.log(`    Fecha Negocio: ${colors.brightYellow}${t.businessDate}${colors.reset} │ Estado: ${t.status} │ Jugadas: ${t.jugadasCount}`);
     console.log(`    Sorteo: ${colors.bold}${t.sorteo.name}${colors.reset} [ID: ${colors.dim}${t.sorteo.id}${colors.reset}] │ Sorteo Estado: ${t.sorteo.status}`);
     console.log(`    Banca: ${colors.bold}${t.banca.name}${colors.reset} │ Ventana: ${colors.bold}${t.ventana.name}${colors.reset} │ Vendedor: ${colors.bold}${t.vendedor.name}${colors.reset}`);
-    console.log(`    Venta Total: ${colors.bold}${formatCRC(t.totalAmount)}${colors.reset} │${isWinnerTag}${paymentsTag}${cancelledTag}`);
+    console.log(`    Venta Total: ${colors.bold}${formatCRC(t.totalAmount)}${colors.reset} │${isWinnerTag}${paymentsTag}${cancelledTag}${immutableTag}`);
     console.log(`----------------------------------------------------------------------`);
   });
+
+  if (anyIsImmutable) {
+    console.log(`\n❌  ${colors.brightRed}${colors.bold}OPERACIÓN BLOQUEADA:${colors.reset} Uno o más tickets pertenecen a fechas anteriores a ${minOperatingDate}.`);
+    console.log(`    Por integridad financiera y protección contra recálculos históricos, los boletos con más de ${tz.IMMUTABLE_HISTORY_DAYS} días son inmutables.`);
+    return;
+  }
 
   if (anyAlreadyCancelled) {
     console.log(`\nℹ️  ${colors.dim}Nota: Los tickets que ya estaban cancelados serán ignorados automáticamente.${colors.reset}`);

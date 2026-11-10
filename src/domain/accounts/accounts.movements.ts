@@ -12,6 +12,7 @@ import { recalculateMonthlyClosingForDimension } from "./monthlyClosing.service"
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
 import { AccountStatementSyncService } from "./accounts.sync.service";
 import { buildTicketDateFilter } from "./accounts.dates.utils";
+import { getMinOperatingDateCR, IMMUTABLE_HISTORY_DAYS } from "../../utils/timezone";
 import ActivityService from "../../core/activity.service";
 import logger from "../../core/logger";
 
@@ -73,6 +74,15 @@ export async function registerPayment(data: {
     paidById: string;
     paidByName: string;
 }) {
+    const minOperatingDate = getMinOperatingDateCR();
+    if (data.date < minOperatingDate) {
+        throw new AppError(
+            `No se pueden registrar pagos en fechas anteriores a ${minOperatingDate} (ventana operativa de ${IMMUTABLE_HISTORY_DAYS} días). El historial previo es inmutable.`,
+            400,
+            "IMMUTABLE_HISTORY_WINDOW"
+        );
+    }
+
     const paymentDate = new Date(data.date + "T00:00:00.000Z");
     const month = data.date.substring(0, 7); // YYYY-MM
 
@@ -476,6 +486,16 @@ export async function reversePayment(
     const statement = payment.accountStatement;
     if (!statement) throw new AppError("Estado de cuenta no encontrado", 404, "STATEMENT_NOT_FOUND");
 
+    const paymentDateStr = crDateService.postgresDateToCRString(payment.date);
+    const minOperatingDate = getMinOperatingDateCR();
+    if (paymentDateStr < minOperatingDate) {
+        throw new AppError(
+            `No se pueden revertir pagos de fechas anteriores a ${minOperatingDate} (ventana operativa de ${IMMUTABLE_HISTORY_DAYS} días). El historial previo es inmutable.`,
+            400,
+            "IMMUTABLE_HISTORY_WINDOW"
+        );
+    }
+
     const dimension: "banca" | "ventana" | "vendedor" = statement.vendedorId ? "vendedor" : (statement.ventanaId ? "ventana" : "banca");
     const paymentDate = new Date(payment.date);
     const dateStr = crDateService.postgresDateToCRString(payment.date);
@@ -678,6 +698,16 @@ export async function deleteStatement(id: string) {
 
     if (!statement) {
         throw new AppError("Estado de cuenta no encontrado", 404, "STATEMENT_NOT_FOUND");
+    }
+
+    const statementDateStr = crDateService.postgresDateToCRString(statement.date);
+    const minOperatingDate = getMinOperatingDateCR();
+    if (statementDateStr < minOperatingDate) {
+        throw new AppError(
+            `No se pueden eliminar estados de cuenta de fechas anteriores a ${minOperatingDate} (ventana operativa de ${IMMUTABLE_HISTORY_DAYS} días). El historial previo es inmutable.`,
+            400,
+            "IMMUTABLE_HISTORY_WINDOW"
+        );
     }
 
     // Validar que no tenga tickets
