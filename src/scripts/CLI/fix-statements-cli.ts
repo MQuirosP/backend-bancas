@@ -37,6 +37,7 @@ export async function runFixStatements(options?: {
   const { default: prisma } = await import('../../core/prismaClient');
   const { AccountStatementSyncService } = await import('../../domain/accounts/accounts.sync.service');
   const { recalculateMonthlyClosingForDimension } = await import('../../domain/accounts/monthlyClosing.service');
+  const { CierreRollupService } = await import('../../domain/cierre/cierre.rollup.service');
   const { default: ActivityService } = await import('../../core/activity.service');
   const { ActivityType } = await import('../../generated/prisma/client');
 
@@ -79,6 +80,10 @@ export async function runFixStatements(options?: {
   });
 
   let totalProcessed = 0;
+
+  console.log(`⏳  Recalculando ResumenCierreDiario para el rango ${fromDateStr} a ${toDateStr}...`);
+  await CierreRollupService.aggregateRange(fromDateStr, toDateStr);
+  console.log(`   ✅  ResumenCierreDiario actualizado.\n`);
 
   for (const dateStr of dates) {
     const dateObj = new Date(dateStr + 'T00:00:00Z');

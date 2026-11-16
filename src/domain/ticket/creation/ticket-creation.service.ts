@@ -17,6 +17,7 @@ import { TicketValidationService } from "../TicketValidationService";
 import { TicketPrintService } from "../TicketPrintService";
 import { TicketPersistenceService } from "../TicketPersistenceService";
 import { RestrictionRuleService } from "../../restriction/restrictionRule.service";
+import { isExternalCampaignLoteria } from "../../premiatico/premiatico.service";
 
 const CUTOFF_GRACE_MS = 1000;
 const L1_TTL_ENTITY_MS = 300_000;
@@ -298,6 +299,13 @@ export class TicketCreationService {
           "No se pueden crear tickets en un sorteo cerrado",
           409,
         );
+      if (isExternalCampaignLoteria(sorteo.loteria)) {
+        throw new AppError(
+          "Las ventas de campañas externas (Premiático) deben realizarse desde /api/v1/premiatico/sales",
+          400,
+          "EXTERNAL_CAMPAIGN_LOTERIA",
+        );
+      }
       if (loteriaId !== sorteo.loteriaId) {
         throw new AppError(
           `loteriaId mismatch: request=${loteriaId}, sorteo=${sorteo.loteriaId}`,

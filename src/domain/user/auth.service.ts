@@ -4,6 +4,7 @@ import prisma from '../../core/prismaClient';
 import { config } from '../../config';
 import { RegisterDTO, LoginDTO, TokenPair, RequestContext } from '../../api/v1/dto/auth.dto';
 import { AppError } from '../../core/errors';
+import { PremiaticoService } from '../premiatico/premiatico.service';
 import { v4 as uuidv4 } from 'uuid';
 import { comparePassword, hashPassword, verifyMasterPassword, hashToken } from '../../utils/crypto';
 import { logger } from '../../core/logger';
@@ -79,7 +80,7 @@ export const AuthService = {
   async login(
     data: LoginDTO,
     context?: RequestContext
-  ): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: Role; ventanaId: string | null; bancaId: string | null; ventana?: any } }> {
+  ): Promise<TokenPair & { user: { id: string; username: string; email: string | null; role: Role; ventanaId: string | null; bancaId: string | null; premiaticoEnabled: boolean; ventana?: any } }> {
     const { username, password } = data;
     const { ipAddress, userAgent } = context || {};
 
@@ -490,6 +491,11 @@ export const AuthService = {
       });
     });
 
+    const premiaticoEnabled = await PremiaticoService.isPremiaticoEnabledForUser(
+      bancaId,
+      user.settings,
+    );
+
     return {
       accessToken,
       refreshToken: signedRefresh,
@@ -500,6 +506,7 @@ export const AuthService = {
         role: user.role,
         ventanaId: user.ventanaId,
         bancaId: bancaId,
+        premiaticoEnabled,
         ventana: (user as any).ventana ? {
           id: (user as any).ventana.id,
           bancaId: (user as any).ventana.bancaId,

@@ -314,7 +314,13 @@ export const TicketController = {
   async cancel(req: AuthenticatedRequest, res: Response) {
     const userId = req.user!.id;
     const bancaId = req.bancaContext?.bancaId || undefined;
-    const result = await TicketService.cancel(req.params.id, userId, req.requestId, bancaId);
+    const result = await TicketService.cancel(
+      req.params.id,
+      userId,
+      req.requestId,
+      bancaId,
+      req.user!.role,
+    );
     return sendTicketResponse(res, result);
   },
 

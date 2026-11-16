@@ -12,6 +12,9 @@ import { nowCR } from "../../../utils/datetime";
 import { TicketPrintService } from "../TicketPrintService";
 import { VendorCreditService } from "../../credit/vendorCredit.service";
 import { RestrictionRuleService } from "../../restriction/restrictionRule.service";
+import { PremiaticoClient } from "../../premiatico/premiatico.client";
+import { PREMIATICO_PAYMENT_METHOD } from "../../premiatico/premiatico.service";
+import { AccountStatementSyncService } from "../../accounts/accounts.sync.service";
 
 const CUTOFF_GRACE_MS = 1000;
 
@@ -128,43 +131,68 @@ export class TicketOperationsService {
     userId: string,
     requestId?: string,
     bancaId?: string,
+    actorRole?: Role,
   ) {
     const existing = await TicketRepository.getById(id, bancaId);
     if (!existing) {
       throw new AppError("Ticket no encontrado", 404, "NOT_FOUND");
     }
 
-    const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
-      bancaId: existing.ventana.bancaId,
-      ventanaId: existing.ventanaId,
-      userId: existing.vendedorId,
-      defaultCutoff: 1,
-    });
+    const isPremiaticoTicket =
+      (existing as any).paymentMethod === PREMIATICO_PAYMENT_METHOD;
 
-    const now = nowCR();
-    const safeMinutes =
-      typeof cutoff.minutes === "number" && !isNaN(cutoff.minutes)
-        ? cutoff.minutes
-        : 1;
+    if (isPremiaticoTicket) {
+      if (actorRole === Role.VENDEDOR) {
+        throw new AppError(
+          "Solo administradores, bancas o ventanas pueden anular ventas de Premiático",
+          403,
+          "FORBIDDEN",
+        );
+      }
 
-    const cutoffMs = safeMinutes * 60_000;
-    const limitTime = new Date(
-      existing.sorteo.scheduledAt.getTime() - cutoffMs,
-    );
-    const effectiveLimitTime = new Date(limitTime.getTime() + CUTOFF_GRACE_MS);
+      const publicReference =
+        (existing as any).paymentNotes ||
+        ((existing as any).paymentHistory as any)?.premiatico?.publicReference;
 
-    if (now >= effectiveLimitTime) {
-      const minsLeft = Math.max(
-        0,
-        Math.ceil(
-          (existing.sorteo.scheduledAt.getTime() - now.getTime()) / 60_000,
-        ),
+      if (publicReference) {
+        await PremiaticoClient.cancelOrder(publicReference, {
+          reason: "Anulado desde Bancas",
+          cancelledById: userId,
+        });
+      }
+    } else {
+      const cutoff = await RestrictionRuleRepository.resolveSalesCutoff({
+        bancaId: existing.ventana.bancaId,
+        ventanaId: existing.ventanaId,
+        userId: existing.vendedorId,
+        defaultCutoff: 1,
+      });
+
+      const now = nowCR();
+      const safeMinutes =
+        typeof cutoff.minutes === "number" && !isNaN(cutoff.minutes)
+          ? cutoff.minutes
+          : 1;
+
+      const cutoffMs = safeMinutes * 60_000;
+      const limitTime = new Date(
+        existing.sorteo.scheduledAt.getTime() - cutoffMs,
       );
-      throw new AppError(
-        `Anulación bloqueada: faltan ${minsLeft} min para el sorteo (cutoff=${safeMinutes} min, fuente=${cutoff.source})`,
-        409,
-        "SALES_CUTOFF_REACHED",
-      );
+      const effectiveLimitTime = new Date(limitTime.getTime() + CUTOFF_GRACE_MS);
+
+      if (now >= effectiveLimitTime) {
+        const minsLeft = Math.max(
+          0,
+          Math.ceil(
+            (existing.sorteo.scheduledAt.getTime() - now.getTime()) / 60_000,
+          ),
+        );
+        throw new AppError(
+          `Anulación bloqueada: faltan ${minsLeft} min para el sorteo (cutoff=${safeMinutes} min, fuente=${cutoff.source})`,
+          409,
+          "SALES_CUTOFF_REACHED",
+        );
+      }
     }
 
     const ticket = await TicketRepository.cancel(id, userId, bancaId);
@@ -180,6 +208,47 @@ export class TicketOperationsService {
         },
       );
       CacheService.invalidateTag(`user:${ticket.vendedorId}`).catch(() => { });
+    }
+
+    if (isPremiaticoTicket && ticket.businessDate) {
+      const cancelSyncTasks: Promise<void>[] = [];
+      if (ticket.vendedorId) {
+        cancelSyncTasks.push(
+          AccountStatementSyncService.syncDayStatement(
+            ticket.businessDate,
+            "vendedor",
+            ticket.vendedorId,
+            { force: true },
+          ),
+        );
+      }
+      if (existing.ventanaId) {
+        cancelSyncTasks.push(
+          AccountStatementSyncService.syncDayStatement(
+            ticket.businessDate,
+            "ventana",
+            existing.ventanaId,
+            { force: true },
+          ),
+        );
+      }
+      if (existing.ventana?.bancaId) {
+        cancelSyncTasks.push(
+          AccountStatementSyncService.syncDayStatement(
+            ticket.businessDate,
+            "banca",
+            existing.ventana.bancaId,
+            { force: true },
+          ),
+        );
+      }
+      Promise.all(cancelSyncTasks).catch((err) => {
+        logger.warn({
+          layer: "service",
+          action: "PREMIATICO_STATEMENT_SYNC_ON_CANCEL_WARN",
+          payload: { ticketId: id, vendedorId: ticket.vendedorId, error: err?.message },
+        });
+      });
     }
 
     await ActivityService.log({

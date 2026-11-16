@@ -208,7 +208,10 @@ export async function registerPayment(data: {
                 deletedAt: null,
                 isActive: true,
                 status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
-                sorteo: { status: "EVALUATED", deletedAt: null },
+                OR: [
+                    { sorteo: { status: "EVALUATED", deletedAt: null } },
+                    { paymentMethod: "PREMIATICO_POS", sorteo: { deletedAt: null } },
+                ],
                 ...(data.vendedorId ? { vendedorId: data.vendedorId } : {}),
                 ...(finalVentanaId && !data.vendedorId ? { ventanaId: finalVentanaId } : {}),
                 ...(finalBancaId && !data.vendedorId && !finalVentanaId ? { ventana: { bancaId: finalBancaId } } : {}),

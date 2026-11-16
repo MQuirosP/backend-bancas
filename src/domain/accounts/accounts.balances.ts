@@ -82,7 +82,7 @@ export async function calculatePreviousMonthBalanceFromSource(
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
             Prisma.sql`t."status" != 'CANCELLED'`,
-            Prisma.sql`EXISTS (SELECT 1 FROM "Sorteo" s WHERE s.id = t."sorteoId" AND s.status = 'EVALUATED')`,
+            Prisma.sql`(t."paymentMethod" = 'PREMIATICO_POS' OR EXISTS (SELECT 1 FROM "Sorteo" s WHERE s.id = t."sorteoId" AND s.status = 'EVALUATED'))`,
             Prisma.sql`t."businessDate" BETWEEN ${effectiveFirstDayCRStr}::date AND ${lastDayCRStr}::date`,
         ];
 

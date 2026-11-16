@@ -106,4 +106,9 @@ export const config = {
           .filter(Boolean)
       : [],
   },
+  premiatico: {
+    apiUrl: parsed.data.PREMIATICO_API_URL,
+    partnerId: parsed.data.PREMIATICO_PARTNER_ID,
+    partnerKey: parsed.data.PREMIATICO_PARTNER_KEY,
+  },
 }

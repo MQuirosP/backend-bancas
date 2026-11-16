@@ -11,6 +11,7 @@ import { RequestContext } from '../dto/auth.dto';
 import { AppError } from '../../../core/errors';
 import jwt from 'jsonwebtoken';
 import { config } from '../../../config';
+import { PremiaticoService } from '../../../domain/premiatico/premiatico.service';
 
 // Helper para extraer contexto del request
 function getRequestContext(req: Request): RequestContext {
@@ -208,6 +209,12 @@ export const AuthController = {
       activeBancaId = bancaContext?.bancaId || null;
     }
 
+    const effectiveBancaId = u.bancaId ?? (u as any).ventana?.bancaId ?? activeBancaId ?? null;
+    const premiaticoEnabled = await PremiaticoService.isPremiaticoEnabledForUser(
+      effectiveBancaId,
+      u.settings,
+    );
+
     // Normalización según rol:
     // - VENDEDOR: vendedorId = id, ventanaId = u.ventanaId
     // - VENTANA:  ventanaId = u.ventanaId, vendedorId = null
@@ -219,6 +226,7 @@ export const AuthController = {
       name: u.name,
       role: u.role,
       settings: u.settings,
+      premiaticoEnabled,
       platform: u.platform,
       appVersion: u.appVersion,
       vendedorId: u.role === Role.VENDEDOR ? u.id : null,

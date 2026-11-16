@@ -29,7 +29,10 @@ export class DailyNumberSalesService {
         COUNT(j.id)::integer
       FROM "Jugada" j
       INNER JOIN "Ticket" t ON j."ticketId" = t.id
-      WHERE t.id = ${ticketId}::uuid AND j."deletedAt" IS NULL
+      INNER JOIN "Loteria" l ON t."loteriaId" = l.id
+      WHERE t.id = ${ticketId}::uuid
+        AND j."deletedAt" IS NULL
+        AND COALESCE((l."rulesJson"->>'isExternalCampaign')::boolean, false) = false
       GROUP BY t."businessDate", t."bancaId", t."ventanaId", t."vendedorId", t."loteriaId", t."sorteoId", j.number, j.type
       ON CONFLICT ("businessDate", "sorteoId", "vendedorId", "number", "type")
       DO UPDATE SET
@@ -105,6 +108,7 @@ export class DailyNumberSalesService {
           COUNT(j.id)::integer
         FROM "Jugada" j
         INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        INNER JOIN "Loteria" l ON t."loteriaId" = l.id
         WHERE t."sorteoId" = ${sorteoId}::uuid
           AND t."deletedAt" IS NULL
           AND t."isActive" = true
@@ -112,6 +116,7 @@ export class DailyNumberSalesService {
           AND j."deletedAt" IS NULL
           AND j."isExcluded" = false
           AND j."isActive" = true
+          AND COALESCE((l."rulesJson"->>'isExternalCampaign')::boolean, false) = false
         GROUP BY t."businessDate", t."bancaId", t."ventanaId", t."vendedorId", t."loteriaId", t."sorteoId", j.number, j.type
         ON CONFLICT ("businessDate", "sorteoId", "vendedorId", "number", "type")
         DO UPDATE SET
@@ -173,6 +178,7 @@ export class DailyNumberSalesService {
           COUNT(j.id)::integer as "jugadasCount"
         FROM "Jugada" j
         INNER JOIN "Ticket" t ON j."ticketId" = t.id
+        INNER JOIN "Loteria" l ON t."loteriaId" = l.id
         WHERE t."sorteoId" = ${sorteoId}::uuid
           AND t."deletedAt" IS NULL
           AND t."isActive" = true
@@ -180,6 +186,7 @@ export class DailyNumberSalesService {
           AND j."deletedAt" IS NULL
           AND j."isExcluded" = false
           AND j."isActive" = true
+          AND COALESCE((l."rulesJson"->>'isExternalCampaign')::boolean, false) = false
         GROUP BY t."businessDate", t."bancaId", t."ventanaId", t."vendedorId", t."loteriaId", t."sorteoId", j.number, j.type
       `;
     }, {

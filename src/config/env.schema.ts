@@ -81,6 +81,11 @@ export const EnvSchema = z.object({
   // OPERACIONES DE SOPORTE PRIVILEGIADAS (/api/v1/ops)
   OPS_SECRET: z.preprocess((val) => (val === '' ? undefined : val), z.string().min(16, 'OPS_SECRET debe tener al menos 16 caracteres').optional()),
   OPS_ALLOWED_IPS: z.preprocess((val) => (val === '' ? undefined : val), z.string().optional()),
+
+  // INTEGRACION PREMIATICO (Partner API)
+  PREMIATICO_API_URL: z.preprocess((val) => (val === '' ? undefined : val), z.string().url().optional()),
+  PREMIATICO_PARTNER_ID: z.preprocess((val) => (val === '' ? undefined : val), z.string().optional()),
+  PREMIATICO_PARTNER_KEY: z.preprocess((val) => (val === '' ? undefined : val), z.string().optional()),
 }).superRefine((data, ctx) => {
   if (data.NODE_ENV === 'production') {
     if (!data.OPS_SECRET) {

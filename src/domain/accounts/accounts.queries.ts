@@ -64,11 +64,13 @@ export async function getAggregatedTicketsData(params: {
     const whereConditions: Prisma.Sql[] = [
         Prisma.sql`t."deletedAt" IS NULL`,
         Prisma.sql`t."isActive" = true`,
-        Prisma.sql`t."status" IN ('EVALUATED', 'PAID', 'PAGADO')`,
-        Prisma.sql`EXISTS (
-            SELECT 1 FROM "Sorteo" s
-            WHERE s.id = t."sorteoId"
-            AND s.status = 'EVALUATED'
+        Prisma.sql`(
+            (t."status" IN ('EVALUATED', 'PAID', 'PAGADO') AND EXISTS (
+                SELECT 1 FROM "Sorteo" s
+                WHERE s.id = t."sorteoId"
+                AND s.status = 'EVALUATED'
+            ))
+            OR (t."paymentMethod" = 'PREMIATICO_POS' AND t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO'))
         )`,
     ];
 
@@ -233,8 +235,10 @@ export async function getDailySummariesFromMaterializedView(
         const conditions: Prisma.Sql[] = [
             Prisma.sql`t."deletedAt" IS NULL`,
             Prisma.sql`t."isActive" = true`,
-            Prisma.sql`t."status" IN ('EVALUATED', 'PAID', 'PAGADO')`,
-            Prisma.sql`s.status = 'EVALUATED'`,
+            Prisma.sql`(
+                (t."status" IN ('EVALUATED', 'PAID', 'PAGADO') AND s.status = 'EVALUATED')
+                OR (t."paymentMethod" = 'PREMIATICO_POS' AND t."status" IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO'))
+            )`,
             Prisma.sql`j."deletedAt" IS NULL`,
             Prisma.sql`t."businessDate" >= ${startDateCR}::date`,
             Prisma.sql`t."businessDate" < ${endDateNextDayCR}::date`, // ️ CRÍTICO: Exclusivo para no incluir datos del día siguiente
@@ -470,6 +474,74 @@ export async function getSorteoBreakdownBatch(
         ORDER BY rcd."businessDate" ASC, s."scheduledAt" DESC
     `;
 
+    // Complemento O(tickets Premiático) para liquidación el mismo día (Opción B)
+    const premiaticoConditions: Prisma.Sql[] = [
+        Prisma.sql`t."paymentMethod" = 'PREMIATICO_POS'`,
+        Prisma.sql`t."deletedAt" IS NULL`,
+        Prisma.sql`t."isActive" = true`,
+        Prisma.sql`t."status" != 'CANCELLED'`,
+        Prisma.sql`s."deletedAt" IS NULL`,
+        Prisma.sql`s.status != 'EVALUATED'`,
+        Prisma.sql`t."businessDate" = ANY(${dateStrings}::date[])`,
+    ];
+    if (dimension === 'banca') {
+        if (bancaId) premiaticoConditions.push(Prisma.sql`v."bancaId" = CAST(${bancaId} AS uuid)`);
+    } else if (dimension === 'ventana') {
+        if (ventanaId) premiaticoConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
+        if (bancaId) premiaticoConditions.push(Prisma.sql`v."bancaId" = CAST(${bancaId} AS uuid)`);
+    } else {
+        if (vendedorId) premiaticoConditions.push(Prisma.sql`t."vendedorId" = CAST(${vendedorId} AS uuid)`);
+        if (ventanaId) premiaticoConditions.push(Prisma.sql`t."ventanaId" = CAST(${ventanaId} AS uuid)`);
+        if (bancaId) premiaticoConditions.push(Prisma.sql`v."bancaId" = CAST(${bancaId} AS uuid)`);
+    }
+    const premiaticoWhere = Prisma.join(premiaticoConditions, ' AND ');
+    const premiaticoEntityExpr: Prisma.Sql =
+        dimension === 'banca' ? Prisma.sql`v."bancaId"` :
+            dimension === 'ventana' ? Prisma.sql`t."ventanaId"` :
+                Prisma.sql`t."vendedorId"`;
+
+    const premiaticoRows = await prisma.$queryRaw<SorteoAggRow[]>`
+        SELECT
+            t."businessDate"                                                        AS business_date,
+            ${premiaticoEntityExpr}                                                 AS entity_id,
+            s.id                                                                    AS sorteo_id,
+            s.name                                                                  AS sorteo_name,
+            s."scheduledAt"                                                         AS sorteo_scheduled_at,
+            l.id                                                                    AS loteria_id,
+            l.name                                                                  AS loteria_name,
+            COALESCE(SUM(t."totalAmount"), 0)                                       AS total_sales,
+            0::double precision                                                     AS total_payouts,
+            COALESCE(SUM(jagg.comm_listero), 0)                                     AS commission_listero,
+            COALESCE(SUM(jagg.comm_vendedor), 0)                                    AS commission_vendedor,
+            COUNT(t.id)::integer                                                    AS ticket_count
+        FROM "Ticket" t
+        JOIN "Ventana" v ON v.id = t."ventanaId"
+        JOIN "Sorteo"  s ON s.id = t."sorteoId"
+        JOIN "Loteria" l ON l.id = s."loteriaId"
+        LEFT JOIN LATERAL (
+            SELECT
+                COALESCE(SUM(j."listeroCommissionAmount"), 0) AS comm_listero,
+                COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS comm_vendedor
+            FROM "Jugada" j
+            WHERE j."ticketId" = t.id
+              AND j."deletedAt" IS NULL
+              AND j."isActive" = true
+              AND j."isExcluded" = false
+        ) jagg ON true
+        WHERE ${premiaticoWhere}
+        GROUP BY
+            t."businessDate",
+            ${premiaticoEntityExpr},
+            s.id,
+            s.name,
+            s."scheduledAt",
+            l.id,
+            l.name
+        ORDER BY t."businessDate" ASC, s."scheduledAt" DESC
+    `;
+
+    const allRows = [...rows, ...premiaticoRows];
+
     // ── 6. Construir el Map de salida (misma firma que antes) ─────────────────────
     const finalMap = new Map<string, Array<{
         sorteoId: string;
@@ -485,7 +557,7 @@ export async function getSorteoBreakdownBatch(
         ticketCount: number;
     }>>();
 
-    for (const row of rows) {
+    for (const row of allRows) {
         // La fecha de businessDate viene como DATE de Postgres → tomamos YYYY-MM-DD
         const dateKey = tz.fromPrismaDate(row.business_date);
         const entityId = row.entity_id;
@@ -570,10 +642,10 @@ export async function getSorteoBreakdown(
         ...dateFilter,
         deletedAt: null,
         status: { not: "CANCELLED" },
-        //  CORRECCIÓN: Filtrar estrictamente solo sorteos EVALUADOS (no CERRADOS)
-        sorteo: {
-            status: "EVALUATED"
-        },
+        OR: [
+            { sorteo: { status: "EVALUATED" } },
+            { paymentMethod: "PREMIATICO_POS" },
+        ],
     };
 
     // Filtrar por banca activa (para ADMIN multibanca)

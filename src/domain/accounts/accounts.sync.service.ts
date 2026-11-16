@@ -16,10 +16,10 @@ import { AccountStatementRepository as ASRepo } from "../../repositories/account
 import { AccountPaymentRepository } from "../../repositories/accountPayment.repository";
 import { ACCOUNT_CARRY_OVER_NOTES, ACCOUNT_PREVIOUS_MONTH_METHOD } from "./accounts.types";
 import { calculateIsSettled } from "./accounts.commissions";
-import { buildTicketDateFilter } from "./accounts.dates.utils";
 import { crDateService } from "../../utils/crDateService";
 import { getPreviousMonthFinalBalance } from "./accounts.balances";
-import { getExcludedTicketIdsForDate } from "./accounts.calculations";
+import { isExclusionListEmpty } from "../../core/exclusionListCache";
+import { getCurrentTenant } from "../../core/tenantContext";
 import { intercalateSorteosAndMovements } from "./accounts.intercalate";
 import { KeyedTaskQueue } from "../../core/keyedTaskQueue";
 import { ConcurrencyManager } from "../../utils/concurrency";
@@ -155,79 +155,120 @@ export class AccountStatementSyncService {
     }
 
     const isResetDayOrAfter = balanceResetAtDayStr && dateStrCR >= balanceResetAtDayStr;
-    const ticketFilterAddon = (isResetDayOrAfter && balanceResetAt) ? { createdAt: { gte: balanceResetAt } } : {};
     const paymentFilterAddon = (isResetDayOrAfter && balanceResetAt) ? { createdAt: { gte: balanceResetAt } } : {};
 
-    const dateFilter = buildTicketDateFilter(date);
-    const excludedTicketIds = await getExcludedTicketIdsForDate(date);
+    // Agregación directa en PostgreSQL para evitar cargar miles de tickets/jugadas en Prisma
+    const dateYear = date.getUTCFullYear();
+    const dateMonthIdx = date.getUTCMonth();
+    const dateDayNum = date.getUTCDate();
+    const businessDateStart = new Date(Date.UTC(dateYear, dateMonthIdx, dateDayNum, 0, 0, 0, 0));
+    const createdAtStart = new Date(Date.UTC(dateYear, dateMonthIdx, dateDayNum, 6, 0, 0, 0));
+    const createdAtEndExclusive = new Date(Date.UTC(dateYear, dateMonthIdx, dateDayNum + 1, 6, 0, 0, 0));
 
-    // Obtener tickets del día (uso de prisma global para cómputo stateless)
-    const tickets = await prisma.ticket.findMany({
-      where: {
-        ...dateFilter,
-        ...ticketFilterAddon,
-        deletedAt: null,
-        isActive: true,
-        status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
-        sorteo: { status: "EVALUATED", deletedAt: null },
-        ...(excludedTicketIds.length > 0 ? { id: { notIn: excludedTicketIds } } : {}),
-        ...(bancaId ? { ventana: { bancaId: bancaId } } : {}),
-        ...(ventanaId ? { ventanaId: ventanaId } : {}),
-        ...(vendedorId ? { vendedorId: vendedorId } : {}),
-      },
-      select: { id: true, totalAmount: true, status: true }
-    });
+    const exclusionEmpty = await isExclusionListEmpty();
+    const tenant = getCurrentTenant();
 
-    const ticketsWithWinningJugadas = await prisma.ticket.findMany({
-      where: {
-        ...dateFilter,
-        ...ticketFilterAddon,
-        deletedAt: null,
-        isActive: true,
-        status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
-        ...(excludedTicketIds.length > 0 ? { id: { notIn: excludedTicketIds } } : {}),
-        sorteo: { status: "EVALUATED", deletedAt: null },
-        jugadas: { some: { isWinner: true, deletedAt: null } },
-        ...(bancaId ? { ventana: { bancaId: bancaId } } : {}),
-        ...(ventanaId ? { ventanaId: ventanaId } : {}),
-        ...(vendedorId ? { vendedorId: vendedorId } : {}),
-      },
-      select: { id: true, totalPayout: true }
-    });
+    const resetFilterSql =
+      isResetDayOrAfter && balanceResetAt
+        ? Prisma.sql`AND t."createdAt" >= ${balanceResetAt}`
+        : Prisma.empty;
+    const bancaFilterSql = bancaId
+      ? Prisma.sql`AND v."bancaId" = ${bancaId}::uuid`
+      : Prisma.empty;
+    const ventanaFilterSql = ventanaId
+      ? Prisma.sql`AND t."ventanaId" = ${ventanaId}::uuid`
+      : Prisma.empty;
+    const vendedorFilterSql = vendedorId
+      ? Prisma.sql`AND t."vendedorId" = ${vendedorId}::uuid`
+      : Prisma.empty;
+    const tenantFilterSql =
+      tenant && !tenant.bypassIsolation && tenant.bancaId && tenant.role !== Role.VENDEDOR
+        ? Prisma.sql`AND t."bancaId" = ${tenant.bancaId}::uuid`
+        : Prisma.empty;
+    const exclusionFilterSql = !exclusionEmpty
+      ? Prisma.sql`AND NOT EXISTS (
+          SELECT 1 FROM "sorteo_lista_exclusion" sle
+          WHERE sle.sorteo_id = t."sorteoId"
+            AND sle.ventana_id = t."ventanaId"
+            AND (sle.vendedor_id IS NULL OR sle.vendedor_id = t."vendedorId")
+        )`
+      : Prisma.empty;
 
-    const ticketsForCommissions = await prisma.ticket.findMany({
-      where: {
-        ...dateFilter,
-        ...ticketFilterAddon,
-        deletedAt: null,
-        isActive: true,
-        status: { in: ["ACTIVE", "EVALUATED", "PAID", "PAGADO"] },
-        ...(excludedTicketIds.length > 0 ? { id: { notIn: excludedTicketIds } } : {}),
-        sorteo: { status: "EVALUATED", deletedAt: null },
-        ...(bancaId ? { ventana: { bancaId: bancaId } } : {}),
-        ...(ventanaId ? { ventanaId: ventanaId } : {}),
-        ...(vendedorId ? { vendedorId: vendedorId } : {}),
-      },
-      select: {
-        id: true,
-        jugadas: {
-          where: { deletedAt: null, isActive: true, isExcluded: false },
-          select: { amount: true, listeroCommissionAmount: true, commissionAmount: true, commissionOrigin: true }
-        }
-      }
-    });
+    const [aggRow] = await prisma.$queryRaw<{
+      ticketCount: number;
+      totalSales: number;
+      totalPayouts: number;
+      listeroCommission: number;
+      vendedorCommission: number;
+    }[]>`
+      WITH matching_tickets AS (
+        SELECT
+          t.id,
+          t."totalAmount",
+          t."totalPayout"
+        FROM "Ticket" t
+        INNER JOIN "Sorteo" s ON s.id = t."sorteoId" AND s."deletedAt" IS NULL
+        ${bancaId ? Prisma.sql`INNER JOIN "Ventana" v ON v.id = t."ventanaId"` : Prisma.empty}
+        WHERE (
+            t."businessDate" = ${businessDateStart}::date
+            OR (
+              t."businessDate" IS NULL
+              AND t."createdAt" >= ${createdAtStart}
+              AND t."createdAt" < ${createdAtEndExclusive}
+            )
+          )
+          AND t."deletedAt" IS NULL
+          AND t."isActive" = true
+          AND t.status::text IN ('ACTIVE', 'EVALUATED', 'PAID', 'PAGADO')
+          AND (s.status::text = 'EVALUATED' OR t."paymentMethod" = 'PREMIATICO_POS')
+          ${resetFilterSql}
+          ${bancaFilterSql}
+          ${ventanaFilterSql}
+          ${vendedorFilterSql}
+          ${tenantFilterSql}
+          ${exclusionFilterSql}
+      ),
+      ticket_totals AS (
+        SELECT
+          COUNT(*)::int AS "ticketCount",
+          COALESCE(SUM(mt."totalAmount"), 0)::double precision AS "totalSales",
+          COALESCE(SUM(
+            CASE WHEN EXISTS (
+              SELECT 1 FROM "Jugada" jw
+              WHERE jw."ticketId" = mt.id
+                AND jw."isWinner" = true
+                AND jw."deletedAt" IS NULL
+            ) THEN COALESCE(mt."totalPayout", 0) ELSE 0 END
+          ), 0)::double precision AS "totalPayouts"
+        FROM matching_tickets mt
+      ),
+      jugada_totals AS (
+        SELECT
+          COALESCE(SUM(j."listeroCommissionAmount"), 0)::double precision AS "listeroCommission",
+          COALESCE(SUM(
+            CASE WHEN j."commissionOrigin" = 'USER' THEN COALESCE(j."commissionAmount", 0) ELSE 0 END
+          ), 0)::double precision AS "vendedorCommission"
+        FROM matching_tickets mt
+        INNER JOIN "Jugada" j ON j."ticketId" = mt.id
+        WHERE j."deletedAt" IS NULL
+          AND j."isActive" = true
+          AND j."isExcluded" = false
+      )
+      SELECT
+        tt."ticketCount",
+        tt."totalSales",
+        tt."totalPayouts",
+        jt."listeroCommission",
+        jt."vendedorCommission"
+      FROM ticket_totals tt
+      CROSS JOIN jugada_totals jt
+    `;
 
-    const totalSales = tickets.reduce((sum, t) => sum + Number(t.totalAmount || 0), 0);
-    const totalPayouts = ticketsWithWinningJugadas.reduce((sum, t) => sum + Number(t.totalPayout || 0), 0);
-
-    let listeroCommission = 0;
-    let vendedorCommission = 0;
-    for (const ticket of ticketsForCommissions) {
-      for (const jugada of ticket.jugadas) {
-        listeroCommission += Number(jugada.listeroCommissionAmount || 0);
-        if (jugada.commissionOrigin === "USER") vendedorCommission += Number(jugada.commissionAmount || 0);
-      }
-    }
+    const ticketCount = Number(aggRow?.ticketCount || 0);
+    const totalSales = Number(aggRow?.totalSales || 0);
+    const totalPayouts = Number(aggRow?.totalPayouts || 0);
+    const listeroCommission = Number(aggRow?.listeroCommission || 0);
+    const vendedorCommission = Number(aggRow?.vendedorCommission || 0);
 
     const [totalP, totalC] = await Promise.all([
       prisma.accountPayment.aggregate({
@@ -311,9 +352,9 @@ export class AccountStatementSyncService {
       totalCollected: parseFloat(totalCollected.toFixed(2)),
       remainingBalance: parseFloat(accumulatedBalance.toFixed(2)),
       accumulatedBalance: parseFloat(accumulatedBalance.toFixed(2)),
-      isSettled: calculateIsSettled(tickets.length, accumulatedBalance, totalPaid, totalCollected),
+      isSettled: calculateIsSettled(ticketCount, accumulatedBalance, totalPaid, totalCollected),
       canEdit: true,
-      ticketCount: tickets.length,
+      ticketCount: ticketCount,
       month: monthStr,
       bancaId: finalBancaId,
       ventanaId: dimension === "vendedor" ? null : (finalVentanaId || null),

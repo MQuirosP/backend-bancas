@@ -976,7 +976,30 @@ export class SorteoEvaluatedSummaryService {
 
               loteriaMultipliers = lotMultipliers;
 
-              // Agregación en memoria para multiplierMetricsRaw y ticketMetrics
+              // Deduplicar por (sorteoId, vendedorId, multiplierId) para proteger contra filas duplicadas
+              // con multiplierId = NULL (PostgreSQL UNIQUE permite múltiples NULLs sin NULLS NOT DISTINCT).
+              const dedupedRsmMap = new Map<string, (typeof rsmRows)[number]>();
+              for (const row of rsmRows) {
+                const dedupKey = `${row.sorteoId}:${row.vendedorId}:${row.multiplierId ?? 'NULL'}`;
+                const existing = dedupedRsmMap.get(dedupKey);
+                if (!existing || row.updatedAt > existing.updatedAt) {
+                  dedupedRsmMap.set(dedupKey, row);
+                }
+              }
+
+              // Agregación en memoria para multiplierMetricsRaw (por sorteoId + multiplierId) y ticketMetrics
+              const multiplierAggMap = new Map<string, {
+                sorteoId: string;
+                multiplierId: string | null;
+                mSales: number;
+                mCommission: number;
+                mCommNum: number;
+                mCommRev: number;
+                mPrizes: number;
+                mTickets: number;
+                mWinningTickets: number;
+                mPaidTickets: number;
+              }>();
               const ticketAggMap = new Map<string, {
                 sorteoId: string;
                 winningTicketsCount: number;
@@ -984,20 +1007,33 @@ export class SorteoEvaluatedSummaryService {
                 vendedorCommissionSum: number;
               }>();
 
-              for (const row of rsmRows) {
-                // 1. Mapeo para multiplierMetricsRaw (mantiene el contrato con by_multiplier)
-                multiplierMetricsRaw.push({
-                  sorteoId: row.sorteoId,
-                  multiplierId: row.multiplierId,
-                  mSales: row.totalSales,
-                  mCommission: row.totalCommission,
-                  mCommNum: row.commissionByNumber,
-                  mCommRev: row.commissionByReventado,
-                  mPrizes: row.totalPrizes,
-                  mTickets: row.ticketCount,
-                  mWinningTickets: row.winningTicketsCount,
-                  mPaidTickets: row.paidTicketsCount,
-                });
+              for (const row of dedupedRsmMap.values()) {
+                // 1. Mapeo agregado para multiplierMetricsRaw (mantiene el contrato con by_multiplier incluso sin vendedorId)
+                const multKey = `${row.sorteoId}:${row.multiplierId ?? 'NULL'}`;
+                let mEntry = multiplierAggMap.get(multKey);
+                if (!mEntry) {
+                  mEntry = {
+                    sorteoId: row.sorteoId,
+                    multiplierId: row.multiplierId,
+                    mSales: 0,
+                    mCommission: 0,
+                    mCommNum: 0,
+                    mCommRev: 0,
+                    mPrizes: 0,
+                    mTickets: 0,
+                    mWinningTickets: 0,
+                    mPaidTickets: 0,
+                  };
+                  multiplierAggMap.set(multKey, mEntry);
+                }
+                mEntry.mSales += row.totalSales;
+                mEntry.mCommission += row.totalCommission;
+                mEntry.mCommNum += row.commissionByNumber;
+                mEntry.mCommRev += row.commissionByReventado;
+                mEntry.mPrizes += row.totalPrizes;
+                mEntry.mTickets += row.ticketCount;
+                mEntry.mWinningTickets += row.winningTicketsCount;
+                mEntry.mPaidTickets += row.paidTicketsCount;
 
                 // 2. Acumulador para ticketMetrics por sorteoId
                 let tEntry = ticketAggMap.get(row.sorteoId);
@@ -1015,6 +1051,7 @@ export class SorteoEvaluatedSummaryService {
                 tEntry.vendedorCommissionSum += row.totalCommission;
               }
 
+              multiplierMetricsRaw = Array.from(multiplierAggMap.values());
               ticketMetrics = Array.from(ticketAggMap.values());
             }
 

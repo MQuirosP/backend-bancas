@@ -71,8 +71,9 @@ export const TicketService = {
     userId: string,
     requestId?: string,
     bancaId?: string,
+    actorRole?: Role,
   ) {
-    return TicketOperationsService.cancel(id, userId, requestId, bancaId);
+    return TicketOperationsService.cancel(id, userId, requestId, bancaId, actorRole);
   },
 
   /**
