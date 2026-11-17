@@ -543,15 +543,6 @@ export const TicketRepository = {
       }
       recordPrefetchTiming(options, 't_risk_prefetch', t_risk_prefetch_start);
 
-      // 2.4. [LOCK] Adquirir el Lock Distribuido ÚNICAMENTE tras resolver todo el prefetch y validaciones
-      // Esto minimiza el hold-time del lock en Redis a prácticamente solo la transacción interactiva
-      const t_lock_start = performance.now();
-      lock = await TicketConcurrencyManager.acquire(data.sorteoId, data.ventanaId, userId, options);
-      recordPrefetchTiming(options, 't_lock_acquire', t_lock_start, {
-        lock_wait_ms: lock?.waitDurationMs ?? 0,
-        lock_attempts: lock?.attempts ?? 0,
-      });
-
       // 2.6. [PRE-TX] Validación de Límite de Crédito del Vendedor en Redis (Atomic Lua)
       let creditReservedAmount = 0;
       let creditCheckPerformed = false;
@@ -665,6 +656,30 @@ export const TicketRepository = {
               Math.round((performance.now() - t_credit_start) * 100) / 100;
           }
         } catch {}
+      }
+
+      // 2.7. [LOCK] Adquirir el Lock Distribuido granular por número ÚNICAMENTE tras validar crédito
+      const jugadasNumbers = data.jugadas.map((j: any) =>
+        j.type === BetType.REVENTADO && j.reventadoNumber ? String(j.reventadoNumber) : String(j.number)
+      );
+      const t_lock_start = performance.now();
+      lock = await TicketConcurrencyManager.acquire(
+        data.sorteoId,
+        data.ventanaId,
+        userId,
+        options,
+        jugadasNumbers
+      );
+      recordPrefetchTiming(options, 't_lock_acquire', t_lock_start, {
+        lock_wait_ms: lock?.waitDurationMs ?? 0,
+        lock_attempts: lock?.attempts ?? 0,
+      });
+
+      // Si hubo espera por colisión del mismo número, invalidar el ScopeCache previo al lock
+      // para leer acumulados frescos tras el commit del ticket competidor
+      if (lock && (lock.attempts ?? 0) > 0 && prefetchedCache) {
+        prefetchedCache.numberTotals.clear();
+        prefetchedCache.salesTotals.clear();
       }
 
       let txResult;

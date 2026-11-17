@@ -61,6 +61,80 @@ export async function releaseLock(key: string, value: string): Promise<boolean> 
 }
 
 /**
+ * Adquiere múltiples locks distribuidos de forma atómica en un solo round-trip (Lua).
+ * Todo o nada: si cualquiera de las llaves ya existe, no adquiere ninguna y retorna false.
+ */
+export async function acquireMultiLock(
+  keys: string[],
+  value: string,
+  ttlSeconds: number
+): Promise<boolean> {
+  if (keys.length === 0) return true;
+  if (keys.length === 1) return acquireLock(keys[0], value, ttlSeconds);
+  if (!isRedisSalesAvailable()) return false;
+  const redis = getRedisSalesClient();
+  if (!redis) return false;
+
+  const luaScript = `
+    for i = 1, #KEYS do
+      if redis.call("exists", KEYS[i]) == 1 then
+        return 0
+      end
+    end
+    for i = 1, #KEYS do
+      redis.call("set", KEYS[i], ARGV[1], "EX", tonumber(ARGV[2]))
+    end
+    return 1
+  `;
+
+  try {
+    const result = await redis.eval(luaScript, keys.length, ...keys, value, String(ttlSeconds));
+    return result === 1;
+  } catch (err: any) {
+    logger.error({
+      layer: "redis-lock",
+      action: "ACQUIRE_MULTI_LOCK_ERROR",
+      payload: { keysCount: keys.length, error: err.message },
+    });
+    return false;
+  }
+}
+
+/**
+ * Libera múltiples locks distribuidos de forma segura y atómica en un solo round-trip (Lua).
+ */
+export async function releaseMultiLock(keys: string[], value: string): Promise<boolean> {
+  if (keys.length === 0) return true;
+  if (keys.length === 1) return releaseLock(keys[0], value);
+  if (!isRedisSalesAvailable()) return false;
+  const redis = getRedisSalesClient();
+  if (!redis) return false;
+
+  const luaScript = `
+    local released = 0
+    for i = 1, #KEYS do
+      if redis.call("get", KEYS[i]) == ARGV[1] then
+        redis.call("del", KEYS[i])
+        released = released + 1
+      end
+    end
+    return released
+  `;
+
+  try {
+    await redis.eval(luaScript, keys.length, ...keys, value);
+    return true;
+  } catch (err: any) {
+    logger.error({
+      layer: "redis-lock",
+      action: "RELEASE_MULTI_LOCK_ERROR",
+      payload: { keysCount: keys.length, error: err.message },
+    });
+    return false;
+  }
+}
+
+/**
  * Caché interno para optimizar validaciones durante una transacción de creación de ticket.
  * Evita repetir queries agregadas (SUM) para el mismo ámbito o números.
  */

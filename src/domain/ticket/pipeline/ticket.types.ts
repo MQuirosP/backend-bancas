@@ -95,6 +95,7 @@ export type CreateTicketOptions = {
 
 export type TicketLockHandle = {
   lockKey: string;
+  lockKeys?: string[];
   lockValue: string;
   lockAcquired: boolean;
   waitDurationMs?: number;
