@@ -8,7 +8,7 @@ export interface PartnerComboDto {
   description: string | null;
   price: number;
   passQuantity: number;
-  chanceQuantity: number;
+  fichaQuantity: number;
   badgeLabel: string | null;
 }
 
@@ -18,10 +18,10 @@ export interface PartnerCampaignDto {
   title: string;
   drawAt: string;
   drawReference: string | null;
-  totalChances: number;
+  totalFichas: number;
   digits: number;
   enableInverseNumbers: boolean;
-  remainingChances: number;
+  remainingFichas: number;
   combos: PartnerComboDto[];
 }
 
@@ -54,7 +54,7 @@ export interface PartnerOrderResponseDto {
     id: string;
     title: string;
     drawAt: string;
-    totalChances: number;
+    totalFichas: number;
     digits: number;
   };
   combo: {

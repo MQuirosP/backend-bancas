@@ -13,14 +13,20 @@ const createSaleSchema = z.object({
   customer: z.object({
     name: z.string().trim().min(2, "Nombre del cliente requerido").max(120),
     phone: z.string().trim().min(6, "Teléfono del cliente requerido").max(30),
-    email: z.string().trim().email("Correo inválido").optional().or(z.literal("")),
-    idNumber: z.string().trim().max(40).optional(),
+    email: z
+      .string()
+      .trim()
+      .email("Correo inválido")
+      .nullable()
+      .optional()
+      .or(z.literal("")),
+    idNumber: z.string().trim().max(40).nullable().optional(),
   }),
   selectionMode: z.enum(["RANDOM", "MANUAL"]),
-  selectedNumbers: z.array(z.string().trim().min(1).max(10)).optional(),
-  includeInverse: z.boolean().optional(),
-  idempotencyKey: z.string().trim().min(4).max(120).optional(),
-  vendedorId: z.string().uuid().optional(),
+  selectedNumbers: z.array(z.string().trim().min(1).max(10)).nullable().optional(),
+  includeInverse: z.boolean().nullable().optional(),
+  idempotencyKey: z.string().trim().min(4).max(120).nullable().optional(),
+  vendedorId: z.string().uuid().nullable().optional(),
 });
 
 const toggleConfigSchema = z.object({
@@ -59,10 +65,18 @@ export const PremiaticoController = {
     const body = parsed.data;
     const result = await PremiaticoService.createSale(
       {
-        ...body,
+        campaignId: body.campaignId,
+        comboId: body.comboId,
+        selectionMode: body.selectionMode,
+        selectedNumbers: body.selectedNumbers ?? undefined,
+        includeInverse: body.includeInverse ?? undefined,
+        idempotencyKey: body.idempotencyKey ?? undefined,
+        vendedorId: body.vendedorId ?? undefined,
         customer: {
-          ...body.customer,
+          name: body.customer.name,
+          phone: body.customer.phone,
           email: body.customer.email ? body.customer.email : undefined,
+          idNumber: body.customer.idNumber ?? undefined,
         },
       },
       {
