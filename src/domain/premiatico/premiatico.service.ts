@@ -311,8 +311,8 @@ export class PremiaticoService {
         include: {
           jugadas: true,
           loteria: { select: { id: true, name: true } },
-          sorteo: { select: { id: true, name: true, scheduledAt: true } },
-          vendedor: { select: { id: true, name: true, code: true } },
+          sorteo: { select: { id: true, name: true, scheduledAt: true, status: true, loteriaId: true } },
+          vendedor: { select: { id: true, name: true, code: true, settings: true } },
           ventana: { select: { id: true, name: true, code: true, bancaId: true } },
         },
       });
@@ -515,8 +515,8 @@ export class PremiaticoService {
             include: {
               jugadas: true,
               loteria: { select: { id: true, name: true } },
-              sorteo: { select: { id: true, name: true, scheduledAt: true } },
-              vendedor: { select: { id: true, name: true, code: true } },
+              sorteo: { select: { id: true, name: true, scheduledAt: true, status: true, loteriaId: true } },
+              vendedor: { select: { id: true, name: true, code: true, settings: true } },
               ventana: { select: { id: true, name: true, code: true, bancaId: true } },
             },
           });

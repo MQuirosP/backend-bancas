@@ -17,6 +17,77 @@ import { SingleFlight } from "../../../utils/concurrency";
 import { buildSummaryCacheKey, formatDateOnly, formatTime12h } from "../types/sorteo.types";
 
 export class SorteoEvaluatedSummaryService {
+  private static async getPremiaticoSummaryRows(params: {
+    fromDateCR: string;
+    toDateCR: string;
+    vendedorId?: string;
+    ventanaId?: string;
+    bancaId?: string;
+    loteriaId?: string;
+  }): Promise<any[]> {
+    const conditions: Prisma.Sql[] = [
+      Prisma.sql`t."paymentMethod" = 'PREMIATICO_POS'`,
+      Prisma.sql`t."deletedAt" IS NULL`,
+      Prisma.sql`t."isActive" = true`,
+      Prisma.sql`t."status" != 'CANCELLED'`,
+      Prisma.sql`s."deletedAt" IS NULL`,
+      Prisma.sql`s.status::text != ${SorteoStatus.EVALUATED}`,
+      Prisma.sql`t."businessDate" >= ${params.fromDateCR}::date`,
+      Prisma.sql`t."businessDate" <= ${params.toDateCR}::date`,
+    ];
+
+    if (params.vendedorId) {
+      conditions.push(Prisma.sql`t."vendedorId" = CAST(${params.vendedorId} AS uuid)`);
+    }
+    if (params.ventanaId) {
+      conditions.push(Prisma.sql`t."ventanaId" = CAST(${params.ventanaId} AS uuid)`);
+    }
+    if (params.bancaId) {
+      conditions.push(Prisma.sql`v."bancaId" = CAST(${params.bancaId} AS uuid)`);
+    }
+    if (params.loteriaId) {
+      conditions.push(Prisma.sql`s."loteriaId" = CAST(${params.loteriaId} AS uuid)`);
+    }
+
+    const whereClause = Prisma.join(conditions, " AND ");
+    const commissionExpr = params.vendedorId
+      ? Prisma.sql`COALESCE(SUM(jagg.comm_vendedor), 0)`
+      : Prisma.sql`COALESCE(SUM(jagg.comm_listero), 0)`;
+
+    return prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT
+        s.id as "sorteoId",
+        s."scheduledAt",
+        s."loteriaId",
+        s.name as "sorteoName",
+        s."extraMultiplierId",
+        s."extraMultiplierX",
+        s."winningNumber",
+        l.name as "loteriaName",
+        COALESCE(SUM(t."totalAmount"), 0) as "totalSales",
+        ${commissionExpr} as "totalCommission",
+        0::double precision as "totalPrizes",
+        COUNT(t.id)::integer as "ticketCount"
+      FROM "Ticket" t
+      JOIN "Ventana" v ON v.id = t."ventanaId"
+      JOIN "Sorteo" s ON s.id = t."sorteoId"
+      JOIN "Loteria" l ON l.id = s."loteriaId"
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(j."listeroCommissionAmount"), 0) AS comm_listero,
+          COALESCE(SUM(CASE WHEN j."commissionOrigin" = 'USER' THEN j."commissionAmount" ELSE 0 END), 0) AS comm_vendedor
+        FROM "Jugada" j
+        WHERE j."ticketId" = t.id
+          AND j."deletedAt" IS NULL
+          AND j."isActive" = true
+          AND j."isExcluded" = false
+      ) jagg ON true
+      WHERE ${whereClause}
+      GROUP BY s.id, s."scheduledAt", s."loteriaId", s.name, s."extraMultiplierId", s."extraMultiplierX", s."winningNumber", l.name
+      ORDER BY s."scheduledAt" ASC, s."loteriaId" ASC, s.id ASC
+    `);
+  }
+
   /**
    * Fast-Path de alto rendimiento para GET /evaluated-summary con summaryOnly=true.
    * Consulta directamente AccountStatement (O(1) B-Tree) y AccountPayment sin escanear Ticket ni Jugada.
@@ -726,8 +797,52 @@ export class SorteoEvaluatedSummaryService {
                   }
 
                   const dayData = fullPayload?.data?.[0];
+                  const fromDateCR = crDateService.dateUTCToCRString(dateRange.fromAt);
+                  const toDateCR = crDateService.dateUTCToCRString(dateRange.toAt);
+                  const premiaticoBatchRows = await this.getPremiaticoSummaryRows({
+                    fromDateCR,
+                    toDateCR,
+                    vendedorId,
+                    ventanaId: params.ventanaId,
+                    bancaId: targetBancaId ?? params.bancaId,
+                    loteriaId: params.loteriaId,
+                  });
 
-                  if (dayData?.sorteos && Array.isArray(dayData.sorteos) && dayData.sorteos.length > 0) {
+                  const existingSorteos: any[] =
+                    dayData?.sorteos && Array.isArray(dayData.sorteos) ? [...dayData.sorteos] : [];
+
+                  for (const pr of premiaticoBatchRows) {
+                    if (!existingSorteos.some((s: any) => s.sorteoId === pr.sorteoId)) {
+                      const sales = Number(pr.totalSales) || 0;
+                      const commission = Number(pr.totalCommission) || 0;
+                      const prizes = Number(pr.totalPrizes) || 0;
+                      const subtotal = sales - commission - prizes;
+                      existingSorteos.push({
+                        sorteoId: pr.sorteoId,
+                        sorteoName: pr.sorteoName,
+                        loteriaId: pr.loteriaId,
+                        loteriaName: pr.loteriaName,
+                        scheduledAt: pr.scheduledAt instanceof Date ? pr.scheduledAt.toISOString() : pr.scheduledAt,
+                        winningNumber: null,
+                        extraMultiplierId: pr.extraMultiplierId ?? null,
+                        extraMultiplierX: pr.extraMultiplierX ?? null,
+                        sales,
+                        totalSales: sales,
+                        commission,
+                        totalCommission: commission,
+                        prizes,
+                        totalPrizes: prizes,
+                        net: subtotal,
+                        subtotal,
+                        ticketCount: Number(pr.ticketCount) || 0,
+                        winningTicketsCount: 0,
+                        paidTicketsCount: 0,
+                      });
+                    }
+                  }
+
+                  if (existingSorteos.length > 0 && dayData) {
+                    dayData.sorteos = existingSorteos;
                     const rawEvents: any[] = dayData.sorteos;
                     const totalChronological = rawEvents.length;
                     let evAccumulated = initialAccumulated;
@@ -899,9 +1014,13 @@ export class SorteoEvaluatedSummaryService {
 
             const fromAtComponents = getCRLocalComponents(dateRange.fromAt);
             const rangeEffectiveMonth = `${fromAtComponents.year}-${String(fromAtComponents.month).padStart(2, '0')}`;
+            const { startDateCRStr, endDateCRStr } = crDateService.dateRangeUTCToCRStrings(
+              dateRange.fromAt,
+              dateRange.toAt,
+            );
 
             // Tareas de ejecución paralela para métricas principales
-            const [sorteoMetricsRaw, movementsByDate, rangePreviousMonthBalance] = await Promise.all([
+            const [evaluatedMetricsRaw, premiaticoMetricsRaw, movementsByDate, rangePreviousMonthBalance] = await Promise.all([
               prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT 
             s.id as "sorteoId", s."scheduledAt", s."loteriaId", s.name as "sorteoName", s."extraMultiplierId", s."extraMultiplierX", s."winningNumber",
@@ -923,6 +1042,14 @@ export class SorteoEvaluatedSummaryService {
           GROUP BY s.id, s."scheduledAt", s."loteriaId", s.name, s."extraMultiplierId", s."extraMultiplierX", s."winningNumber", l.name
           ORDER BY s."scheduledAt" ASC, s."loteriaId" ASC, s.id ASC
         `),
+              this.getPremiaticoSummaryRows({
+                fromDateCR: startDateCRStr,
+                toDateCR: endDateCRStr,
+                vendedorId,
+                ventanaId: params.ventanaId,
+                bancaId: params.bancaId,
+                loteriaId: params.loteriaId,
+              }),
               AccountPaymentRepository.findMovementsByDateRange(
                 dateRange.fromAt,
                 dateRange.toAt,
@@ -938,6 +1065,13 @@ export class SorteoEvaluatedSummaryService {
                 undefined
               )
             ]);
+
+            const sorteoMetricsRaw = [...evaluatedMetricsRaw];
+            for (const pr of premiaticoMetricsRaw) {
+              if (!sorteoMetricsRaw.some((sm) => sm.sorteoId === pr.sorteoId)) {
+                sorteoMetricsRaw.push(pr);
+              }
+            }
 
             const sorteoIds = sorteoMetricsRaw.map((sm) => sm.sorteoId);
 
@@ -1059,7 +1193,7 @@ export class SorteoEvaluatedSummaryService {
               const tm = ticketMetrics.find((t) => t.sorteoId === sm.sorteoId);
               return {
                 ...sm,
-                totalCommission: Number(tm?.vendedorCommissionSum || 0),
+                totalCommission: tm ? Number(tm.vendedorCommissionSum || 0) : Number(sm.totalCommission || 0),
                 winningTicketsCount: Number(tm?.winningTicketsCount || 0),
                 paidTicketsCount: Number(tm?.paidTicketsCount || 0)
               };
