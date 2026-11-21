@@ -355,17 +355,25 @@ export const RestrictionRuleService = {
     });
 
     // 5. Invalidar caché e Invalidar logs (fuera de la transacción para no bloquear)
-    // invalidateRestrictionCaches ya es llamado por el repository, pero como usamos tx aquí, 
-    // debemos asegurarnos de invalidar después.
+    // Como usamos tx.restrictionRule.create aquí (en lugar de RestrictionRuleRepository.create),
+    // debemos replicar la invalidación completa de L1, L2 (tag 'rules') y versión compilada.
     const first = createdRules[0];
     if (first) {
       const { invalidateRestrictionCaches } = require("../../utils/restrictionCache");
+      const { invalidateRestrictionRulesCache } = require("../../repositories/ticket.repository");
       await invalidateRestrictionCaches({
         bancaId: first.bancaId || undefined,
         ventanaId: first.ventanaId || undefined,
         userId: first.userId || undefined,
       });
-      await clearL1CutoffCache(first.bancaId || undefined);
+      await invalidateRestrictionRulesCache();
+      const touchedBancas = new Set<string | null>(
+        createdRules.map((r) => r.bancaId || null)
+      );
+      for (const bId of touchedBancas) {
+        await bumpRestrictionsVersion(bId);
+        await clearL1CutoffCache(bId || undefined);
+      }
     }
 
     // 6. Registro de Actividad
