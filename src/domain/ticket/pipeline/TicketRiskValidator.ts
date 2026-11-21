@@ -16,6 +16,7 @@ import {
   calculateAccumulatedForMultipleScopes,
   validateRulesInParallel,
   resolveNumbersToValidate,
+  isReventadoMultiplier,
 } from "../../../repositories/helpers/ticket-restriction.helper";
 import {
   CreateTicketInput,
@@ -83,7 +84,8 @@ export class TicketRiskValidator {
    * Extrae los alcances (scopes) que requieren precarga de acumulados para las reglas aplicables.
    */
   static extractScopesToPreload(
-    applicable: RestrictionRuleWithRelations[]
+    applicable: RestrictionRuleWithRelations[],
+    userId?: string | null
   ): Array<{ scopeType: any; scopeId: string; multiplierFilter: any }> {
     const scopesToPreload = new Set<string>();
 
@@ -92,16 +94,19 @@ export class TicketRiskValidator {
         (rule.baseAmount != null && rule.baseAmount > 0) ||
         (rule.salesPercentage != null && rule.salesPercentage > 0);
       if (rule.maxTotal != null || hasDynamicLimitConfig) {
-        const scopeType = rule.userId
+        const isPerVendedor = rule.appliesToVendedor === true || !!rule.userId;
+        const scopeType = isPerVendedor
           ? ReportDimension.VENDEDOR
           : rule.ventanaId
             ? ReportDimension.VENTANA
             : rule.bancaId
               ? ReportDimension.BANCA
               : null;
-        const scopeId = rule.userId || rule.ventanaId || rule.bancaId;
+        const scopeId = isPerVendedor
+          ? (rule.userId || userId || null)
+          : (rule.ventanaId || rule.bancaId);
         const multiplierId = rule.multiplierId
-          ? rule.multiplier?.kind === BetType.REVENTADO
+          ? isReventadoMultiplier(rule.multiplier)
             ? "REVENTADO"
             : rule.multiplierId
           : "NONE";
@@ -153,7 +158,7 @@ export class TicketRiskValidator {
     return rules.filter((rule) => {
       // 1. Filtrar por multiplicador / tipo de jugada si la regla lo especifica
       if (rule.multiplierId) {
-        if (rule.multiplier?.kind === BetType.REVENTADO) {
+        if (isReventadoMultiplier(rule.multiplier)) {
           if (!hasReventado) return false;
         } else {
           if (!activeMultiplierIds.has(rule.multiplierId)) return false;
@@ -248,7 +253,7 @@ export class TicketRiskValidator {
         uniqueNumbers,
         jugadas
       );
-      const scopesArray = TicketRiskValidator.extractScopesToPreload(relevantRules);
+      const scopesArray = TicketRiskValidator.extractScopesToPreload(relevantRules, userId);
 
       // 1. Hidratar acumulados de scopes fuera de la TX interactiva
       if (scopesArray.length > 0 && uniqueNumbers.length > 0) {

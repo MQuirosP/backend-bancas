@@ -1161,6 +1161,51 @@ function organizeValidationTasks(rules: any[]): {
 }
 
 /**
+ * Determina si un multiplicador corresponde a jugadas de tipo REVENTADO.
+ * Usa `kind === REVENTADO` como fuente principal y el nombre como respaldo defensivo
+ * en caso de registros creados con el valor por defecto `NUMERO`.
+ */
+export function isReventadoMultiplier(
+  multiplier?: { kind?: string | null; name?: string | null } | null
+): boolean {
+  if (!multiplier) return false;
+  if (multiplier.kind === BetType.REVENTADO) return true;
+  return typeof multiplier.name === "string" && multiplier.name.toUpperCase().includes("REVENTADO");
+}
+
+function filterMatchingJugadasForRule<
+  T extends { number: string; type: BetType; multiplierId?: string | null }
+>(
+  numbers: T[],
+  num: string,
+  rule: { multiplierId?: string | null; multiplier?: { kind?: string | null; name?: string | null } | null }
+): T[] {
+  return numbers.filter((n) => {
+    if (n.number !== num) return false;
+    if (rule.multiplierId) {
+      if (isReventadoMultiplier(rule.multiplier)) {
+        return n.type === BetType.REVENTADO;
+      }
+      return n.multiplierId === rule.multiplierId;
+    }
+    return true;
+  });
+}
+
+function buildRuleMultiplierFilter(rule: {
+  multiplierId?: string | null;
+  multiplier?: { kind?: string | null; name?: string | null } | null;
+}): { id: string; kind: BetType } | null {
+  if (!rule.multiplierId) return null;
+  return {
+    id: rule.multiplierId,
+    kind: isReventadoMultiplier(rule.multiplier)
+      ? BetType.REVENTADO
+      : ((rule.multiplier?.kind || BetType.NUMERO) as BetType),
+  };
+}
+
+/**
  * Ejecuta una tarea de validación individual
  */
 async function executeValidationTask(
@@ -1208,16 +1253,7 @@ async function executeValidationTask(
       if (effectiveMaxAmount != null) {
         // Validar maxAmount por número
         for (const num of numbersToValidate) {
-          const jugadasDelNumero = context.numbers.filter(n => {
-            if (n.number !== num) return false;
-            if (rule.multiplierId) {
-              if (rule.multiplier?.kind === BetType.REVENTADO) {
-                return n.type === BetType.REVENTADO;
-              }
-              return n.multiplierId === rule.multiplierId;
-            }
-            return true;
-          });
+          const jugadasDelNumero = filterMatchingJugadasForRule(context.numbers, num, rule);
           const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amountForNumber, 0);
 
           if (sumForNumber > effectiveMaxAmount) {
@@ -1267,22 +1303,13 @@ async function executeValidationTask(
         const effectiveMaxTotal = task.dynamicLimit ?? rule.maxTotal ?? Infinity;
 
         const numbersToCheck = numbersToValidate.map(num => {
-          const matchingJugadas = context.numbers.filter(n => {
-            if (n.number !== num) return false;
-            if (rule.multiplierId) {
-              if (rule.multiplier?.kind === BetType.REVENTADO) {
-                return n.type === BetType.REVENTADO;
-              }
-              return n.multiplierId === rule.multiplierId;
-            }
-            return true;
-          });
+          const matchingJugadas = filterMatchingJugadasForRule(context.numbers, num, rule);
           const amount = matchingJugadas.reduce((sum, j) => sum + j.amountForNumber, 0);
           return { number: num, amountForNumber: amount };
         }).filter(n => n.amountForNumber > 0);
 
         if (numbersToCheck.length > 0) {
-          const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
+          const multiplierFilter = buildRuleMultiplierFilter(rule);
           await validateMaxTotalForNumbers(tx, {
             numbers: numbersToCheck,
             rule: { ...rule, maxTotal: effectiveMaxTotal },
@@ -1309,16 +1336,7 @@ async function executeValidationTask(
 
       if (effectiveMaxAmount != null) {
         for (const num of uniqueNumbers) {
-          const jugadasDelNumero = context.numbers.filter(n => {
-            if (n.number !== num) return false;
-            if (rule.multiplierId) {
-              if (rule.multiplier?.kind === BetType.REVENTADO) {
-                return n.type === BetType.REVENTADO;
-              }
-              return n.multiplierId === rule.multiplierId;
-            }
-            return true;
-          });
+          const jugadasDelNumero = filterMatchingJugadasForRule(context.numbers, num, rule);
           const sumForNumber = jugadasDelNumero.reduce((acc, j) => acc + j.amountForNumber, 0);
 
           if (sumForNumber > effectiveMaxAmount) {
@@ -1369,26 +1387,14 @@ async function executeValidationTask(
         // - Si la regla TIENE multiplierId: solo contamos jugadas de ese multiplicador.
         // - Si la regla NO tiene multiplierId: sumamos TODO lo del número (Número + Reventado).
         const numbersToCheck = uniqueNumbers.map(num => {
-          const matchingJugadas = context.numbers.filter(n => {
-            if (n.number !== num) return false;
-            // Si la regla es específica de multiplicador, filtrar por él
-            if (rule.multiplierId) {
-              if (rule.multiplier?.kind === BetType.REVENTADO) {
-                return n.type === BetType.REVENTADO;
-              }
-              return n.multiplierId === rule.multiplierId;
-            }
-            // Si la regla no tiene multiplicador pero pedimos "REVENTADO" (en algunos casos esto se maneja por tipo)
-            // Aquí sumamos todo si la regla es de "Techo Global" del número.
-            return true;
-          });
+          const matchingJugadas = filterMatchingJugadasForRule(context.numbers, num, rule);
 
           const amount = matchingJugadas.reduce((sum, j) => sum + j.amountForNumber, 0);
           return { number: num, amountForNumber: amount };
         }).filter(n => n.amountForNumber > 0);
 
         if (numbersToCheck.length > 0) {
-          const multiplierFilter = rule.multiplierId ? { id: rule.multiplierId, kind: (rule.multiplier?.kind || 'NUMERO') as any } : null;
+          const multiplierFilter = buildRuleMultiplierFilter(rule);
           await validateMaxTotalForNumbers(tx, {
             numbers: numbersToCheck,
             rule: { ...rule, maxTotal: effectiveMaxTotal },
