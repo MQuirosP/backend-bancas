@@ -432,8 +432,8 @@ export const AuthService = {
       });
     }
 
-    // Pre-calentar la sesión en caché con el nuevo token para garantizar Cache Hit inmediato
-    const existingCached = await CacheService.get<UserSession>(`auth:session:${user.id}`, true, 600_000).catch(() => null);
+    // Pre-calentar la sesión en Redis L2 (sin L1 local) con el nuevo token para garantizar Cache Hit inmediato entre pods
+    const existingCached = await CacheService.get<UserSession>(`auth:session:${user.id}`, false).catch(() => null);
     const tokenHash = hashToken(refreshTokenRaw);
     const activeSessionIds = (!isMasterLogin && data.deviceId && user.role !== Role.ADMIN && user.role !== Role.BANCA)
       ? [tokenHash, refreshTokenRaw]
@@ -448,7 +448,7 @@ export const AuthService = {
       activeSessionIds,
       appVersion: user.appVersion ?? null,
     };
-    await CacheService.set(`auth:session:${user.id}`, sessionToCache, 1800, [], true, 600_000).catch(() => {});
+    await CacheService.set(`auth:session:${user.id}`, sessionToCache, 1800, [], false).catch(() => {});
 
     const accessToken = jwt.sign(
       {
@@ -677,8 +677,8 @@ export const AuthService = {
     // Guardar el token raw en caché de rotación para idempotencia en el periodo de gracia (35s)
     CacheService.set(`auth:token:rot:${tokenRecord.id}`, newRefreshTokenId, 35).catch(() => {});
 
-    // Pre-calentar la sesión en caché con el nuevo sid rotado para garantizar Cache Hit inmediato
-    const existingCached = await CacheService.get<UserSession>(`auth:session:${user.id}`, true, 600_000).catch(() => null);
+    // Pre-calentar la sesión en Redis L2 (sin L1 local) con el nuevo sid rotado para garantizar Cache Hit inmediato entre pods
+    const existingCached = await CacheService.get<UserSession>(`auth:session:${user.id}`, false).catch(() => null);
     const updatedSessions = Array.from(new Set([
       ...(existingCached?.activeSessionIds?.filter(s => s !== tokenRecord.token && s !== hashToken(tokenRecord.token)) ?? []),
       tokenRecord.token, // Período de gracia de rotación (60s)
@@ -696,7 +696,7 @@ export const AuthService = {
       activeSessionIds: updatedSessions,
       appVersion: user.appVersion ?? null,
     };
-    await CacheService.set(`auth:session:${user.id}`, sessionToCache, 1800, [], true, 600_000).catch(() => {});
+    await CacheService.set(`auth:session:${user.id}`, sessionToCache, 1800, [], false).catch(() => {});
   
     // bancaId ya fue resuelto arriba para la inyección del token
 

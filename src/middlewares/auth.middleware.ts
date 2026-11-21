@@ -32,8 +32,8 @@ export interface UserSession {
 export async function getCachedUser(userId: string): Promise<UserSession | null> {
   const cacheKey = `auth:session:${userId}`;
   
-  // 1. Intentar obtener de L1 (Memoria) o L2 (Redis) con TTL L1 de 10 min
-  const cached = await CacheService.get<UserSession>(cacheKey, true, 600_000);
+  // 1. Obtener desde Redis L2 compartido entre pods (sin L1 local para evitar desincronización en autoscaling)
+  const cached = await CacheService.get<UserSession>(cacheKey, false);
   if (cached) {
     // Expiración deslizante: refrescar TTL en Redis (1800s / 30m) para mantener caliente la sesión de vendedores activos
     CacheService.touch(cacheKey, 1800).catch(() => {});
@@ -44,7 +44,7 @@ export async function getCachedUser(userId: string): Promise<UserSession | null>
   // para el mismo userId consulten a la base de datos simultáneamente (Thundering Herd)
   return await SingleFlight.do(cacheKey, async () => {
     // Doble verificación dentro de SingleFlight por si otra promesa en vuelo ya pobló la caché
-    const doubleCheck = await CacheService.get<UserSession>(cacheKey, true, 600_000);
+    const doubleCheck = await CacheService.get<UserSession>(cacheKey, false);
     if (doubleCheck) {
       return doubleCheck;
     }
@@ -102,8 +102,8 @@ export async function getCachedUser(userId: string): Promise<UserSession | null>
       appVersion: user.appVersion ?? null
     };
 
-    // 3. Persistir en caché (1800s / 30 min en Redis, 600s / 10 min en Memoria L1)
-    await CacheService.set(cacheKey, session, 1800, [], true, 600_000);
+    // 3. Persistir solo en Redis L2 (1800s / 30 min, sin L1 para evitar desincronización multi-pod)
+    await CacheService.set(cacheKey, session, 1800, [], false);
 
     return session;
   });
@@ -187,8 +187,8 @@ export const protect = async (
         appVersion: null,
       };
 
-      // Almacenar temporalmente en L1 (60s) para no golpear la DB mientras se recupera
-      CacheService.set(`auth:session:${decoded.sub}`, user, 60, [], true, 60_000).catch(() => {});
+      // Almacenar temporalmente en Redis L2 (60s) para no golpear la DB mientras se recupera
+      CacheService.set(`auth:session:${decoded.sub}`, user, 60, [], false).catch(() => {});
     } else {
       throw err;
     }
@@ -207,10 +207,27 @@ export const protect = async (
   // Soporta formato dual: hash SHA-256 (nuevos) y UUID plano (legados en transición)
   if (decoded.sid) {
     const hashedSid = hashToken(decoded.sid);
-    const isValid = user.activeSessionIds && (
-      user.activeSessionIds.includes(decoded.sid) ||
-      user.activeSessionIds.includes(hashedSid)
-    );
+    const hasSid = (session: UserSession | null): boolean =>
+      Boolean(
+        session?.activeSessionIds &&
+        (session.activeSessionIds.includes(decoded.sid) ||
+          session.activeSessionIds.includes(hashedSid))
+      );
+
+    let isValid = hasSid(user);
+    if (!isValid) {
+      // Revalidar una vez directo contra DB antes de revocar por posible carrera de caché
+      await CacheService.del(`auth:session:${user.id}`).catch(() => {});
+      const freshUser = await getCachedUser(decoded.sub).catch(() => null);
+      if (freshUser) {
+        user = freshUser;
+        if (!user.isActive) {
+          throw new AppError("Tu cuenta ha sido desactivada. Contacta al administrador.", 401, "USER_INACTIVE");
+        }
+        isValid = hasSid(user);
+      }
+    }
+
     if (!isValid) {
       throw new AppError("Sesión cerrada en otro dispositivo", 401, "SESSION_REVOKED");
     }
@@ -252,8 +269,7 @@ export const protect = async (
           { ...updatedUser, appVersion: headerVersion },
           1800,
           [],
-          true,
-          600_000
+          false
         );
       }).catch(() => {});
     });
