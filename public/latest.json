@@ -2,16 +2,16 @@
   "versionName": "1.0.31",
   "versionCode": 37,
   "buildNumber": 37,
-  "minSupportedVersion": "1.0.29",
+  "minSupportedVersion": "1.0.30",
   "forceUpdate": true,
   "changelog": "Mejoras en la interfaz de usuario para dispositivos Android",
   "releasedAt": "2026-11-21T00:00:00Z",
   "downloads": {
     "armeabi-v7a": {
-      "sha256": "0f26c366fa37997d6453d57cac09c3febdb0199d1f8bc4f64bca4d8112e5c5bb"
+      "sha256": "5cf748f51415f9e5cd06f9d73f353e4c42841ef5c55bc04bb34d9f19b6fe9144"
     },
     "arm64-v8a": {
-      "sha256": "0f26c366fa37997d6453d57cac09c3febdb0199d1f8bc4f64bca4d8112e5c5bb"
+      "sha256": "5cf748f51415f9e5cd06f9d73f353e4c42841ef5c55bc04bb34d9f19b6fe9144"
     }
   }
 }
