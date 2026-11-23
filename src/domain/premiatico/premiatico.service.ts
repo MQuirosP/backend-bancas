@@ -106,9 +106,9 @@ export class PremiaticoService {
   ): Promise<boolean> {
     if (!bancaId) return false;
     if (
-      userSettings &&
-      typeof userSettings === "object" &&
-      (userSettings as Record<string, unknown>).premiaticoEnabled === false
+      !userSettings ||
+      typeof userSettings !== "object" ||
+      (userSettings as Record<string, unknown>).premiaticoEnabled !== true
     ) {
       return false;
     }
